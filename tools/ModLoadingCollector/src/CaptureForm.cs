@@ -153,7 +153,7 @@ namespace XxmiCollector
             var footer = new FlowLayoutPanel { Name = "CaptureActions", Dock = DockStyle.Bottom, AutoSize = true,
                 Padding = new Padding(20, 12, 20, 12), BackColor = Card, WrapContents = true };
             footer.Controls.AddRange(new Control[] { start, stop, openReport, openZip, openFolder });
-            var scroll = new CaptureScrollPanel { Name = "CaptureContent", Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(20) };
+            var scroll = new Panel { Name = "CaptureContent", Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(20) };
             var root = Stack("CaptureLayout"); root.Dock = DockStyle.Top;
             scroll.Controls.Add(root); Controls.Add(scroll); Controls.Add(footer);
 
@@ -526,24 +526,6 @@ namespace XxmiCollector
             return new CaptureButton { Text = text, AccessibleName = text, Name = text.Replace(" ", ""), Primary = primary,
                 AutoSize = true, MinimumSize = new Size(108, 38), Padding = new Padding(12, 6, 12, 6),
                 Margin = new Padding(0, 0, 8, 0), Cursor = Cursors.Hand };
-        }
-
-        private sealed class CaptureScrollPanel : Panel
-        {
-            protected override Point ScrollToControl(Control activeControl)
-            {
-                if (activeControl == null || !Contains(activeControl)) return base.ScrollToControl(activeControl);
-                // WinForms' default calculation uses the target's parent-local Bounds.
-                // Translate nested fields to this viewport so focus and explicit
-                // ScrollControlIntoView calls reach the actual descendant.
-                var bounds = RectangleToClient(activeControl.RectangleToScreen(activeControl.ClientRectangle));
-                int y = AutoScrollPosition.Y;
-                int top = Padding.Top;
-                int bottom = ClientSize.Height - Padding.Bottom;
-                if (bounds.Height > bottom - top || bounds.Top < top) y += top - bounds.Top;
-                else if (bounds.Bottom > bottom) y -= bounds.Bottom - bottom;
-                return new Point(AutoScrollPosition.X, y);
-            }
         }
 
         // Windows themes can override disabled button colors. Paint every state explicitly

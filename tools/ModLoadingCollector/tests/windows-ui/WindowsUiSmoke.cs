@@ -87,12 +87,19 @@ internal static class WindowsUiSmoke
                 var scroll = (ScrollableControl)Find(form, "CaptureContent");
                 foreach (string target in new[] { "OutputFolder", "PresentMonPath", "RunNotes", "ObservationNote", "Observations" })
                 {
-                    Control control = Find(form, target); scroll.ScrollControlIntoView(control); Layout(form);
+                    Control control = Find(form, target);
+                    Check(control.Focus(), name + ": expanded " + target + " accepts keyboard focus");
+                    scroll.ScrollControlIntoView(control);
+                    string beforeLayout = "preLayout=" + scroll.AutoScrollPosition + ", target=" + control.RectangleToScreen(control.ClientRectangle);
+                    Layout(form);
                     Rectangle visible = scroll.RectangleToScreen(scroll.ClientRectangle);
                     Rectangle bounds = control.RectangleToScreen(control.ClientRectangle);
+                    Console.WriteLine(name + ": scroll " + target + " [" + beforeLayout
+                        + "; postLayout=" + scroll.AutoScrollPosition + ", target=" + bounds + ", focused=" + control.Focused + "]");
                     Check(visible.IntersectsWith(bounds), name + ": expanded " + target + " reachable by scrolling"
                         + " [viewport=" + visible + ", target=" + bounds + ", display=" + scroll.DisplayRectangle
-                        + ", verticalValue=" + scroll.VerticalScroll.Value + ", autoScroll=" + scroll.AutoScrollPosition + "]");
+                        + ", verticalValue=" + scroll.VerticalScroll.Value + ", autoScroll=" + scroll.AutoScrollPosition
+                        + ", focused=" + control.Focused + ", " + beforeLayout + "]");
                 }
                 Snapshot(form, name + "-expanded-scrolled");
                 Check(FullyInside(form, Find(form, "CaptureActions")), name + ": footer remains visible with expanded sections");
@@ -108,6 +115,7 @@ internal static class WindowsUiSmoke
                     Check(Find(form, "GameSelection").Visible, name + ": multiple games expose explicit selection");
                     Check(combo.SelectedItem == null && !start.Enabled, name + ": multiple games require a choice before capture");
                     Check(combo.Items.Count == 2, name + ": ambiguous chooser excludes unrelated processes");
+                    Check(combo.Focus(), name + ": ambiguous game chooser accepts keyboard focus");
                     scroll.ScrollControlIntoView(combo); Layout(form);
                     combo.SelectedIndex = 0;
                     typeof(ComboBox).GetMethod("OnSelectionChangeCommitted", BindingFlags.Instance | BindingFlags.NonPublic)
@@ -121,6 +129,7 @@ internal static class WindowsUiSmoke
                     changeGame.PerformClick(); Layout(form);
                     Check(Find(form, "GameSelection").Visible && combo.Items.Count == 3,
                         name + ": explicit manual chooser offers all processes");
+                    Check(combo.Focus(), name + ": explicit game chooser accepts keyboard focus");
                     scroll.ScrollControlIntoView(combo); Layout(form);
                     object previousSelection = combo.SelectedItem;
                     object[] previousItems = combo.Items.Cast<object>().ToArray();
