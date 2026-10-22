@@ -87,19 +87,26 @@ internal static class WindowsUiSmoke
                 var scroll = (ScrollableControl)Find(form, "CaptureContent");
                 foreach (string target in new[] { "OutputFolder", "PresentMonPath", "RunNotes", "ObservationNote", "Observations" })
                 {
-                    Control control = Find(form, target);
-                    Check(control.Focus(), name + ": expanded " + target + " accepts keyboard focus");
-                    scroll.ScrollControlIntoView(control);
-                    string beforeLayout = "preLayout=" + scroll.AutoScrollPosition + ", target=" + control.RectangleToScreen(control.ClientRectangle);
-                    Layout(form);
-                    Rectangle visible = scroll.RectangleToScreen(scroll.ClientRectangle);
-                    Rectangle bounds = control.RectangleToScreen(control.ClientRectangle);
-                    Console.WriteLine(name + ": scroll " + target + " [" + beforeLayout
-                        + "; postLayout=" + scroll.AutoScrollPosition + ", target=" + bounds + ", focused=" + control.Focused + "]");
-                    Check(visible.IntersectsWith(bounds), name + ": expanded " + target + " reachable by scrolling"
-                        + " [viewport=" + visible + ", target=" + bounds + ", display=" + scroll.DisplayRectangle
-                        + ", verticalValue=" + scroll.VerticalScroll.Value + ", autoScroll=" + scroll.AutoScrollPosition
-                        + ", focused=" + control.Focused + ", " + beforeLayout + "]");
+                    bool syntheticRecording = target == "ObservationNote";
+                    try
+                    {
+                        if (syntheticRecording) SetUiOnlyRecording(form, true);
+                        Control control = Find(form, target);
+                        Check(control.Focus(), name + ": expanded " + target + " accepts keyboard focus");
+                        scroll.ScrollControlIntoView(control);
+                        string beforeLayout = "preLayout=" + scroll.AutoScrollPosition + ", target=" + control.RectangleToScreen(control.ClientRectangle);
+                        Layout(form);
+                        Rectangle visible = scroll.RectangleToScreen(scroll.ClientRectangle);
+                        Rectangle bounds = control.RectangleToScreen(control.ClientRectangle);
+                        Console.WriteLine(name + ": scroll " + target + " [" + beforeLayout
+                            + "; postLayout=" + scroll.AutoScrollPosition + ", target=" + bounds + ", focused=" + control.Focused + "]");
+                        Check(visible.IntersectsWith(bounds), name + ": expanded " + target + " reachable by scrolling"
+                            + " [viewport=" + visible + ", target=" + bounds + ", display=" + scroll.DisplayRectangle
+                            + ", verticalValue=" + scroll.VerticalScroll.Value + ", autoScroll=" + scroll.AutoScrollPosition
+                            + ", focused=" + control.Focused + ", " + beforeLayout + "]");
+                        if (syntheticRecording) Snapshot(form, name + "-synthetic-recording-note");
+                    }
+                    finally { if (syntheticRecording) SetUiOnlyRecording(form, false); }
                 }
                 Snapshot(form, name + "-expanded-scrolled");
                 Check(FullyInside(form, Find(form, "CaptureActions")), name + ": footer remains visible with expanded sections");
@@ -163,6 +170,14 @@ internal static class WindowsUiSmoke
 
     private static int SelectedPid(ComboBox combo)
     { return combo.SelectedItem == null ? 0 : (int)combo.SelectedItem.GetType().GetProperty("Id").GetValue(combo.SelectedItem); }
+
+    private static void SetUiOnlyRecording(Form form, bool value)
+    {
+        // Exercise the product's control-state mapping only. No session is created,
+        // and neither capture timer nor Start/Finish handlers are invoked.
+        form.GetType().GetField("running", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(form, value);
+        form.GetType().GetMethod("UpdateControls", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, null);
+    }
 
     private static void ApplyChoices(Form form, Assembly app, string[] names, int[] ids)
     {
