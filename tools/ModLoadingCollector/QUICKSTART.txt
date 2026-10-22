@@ -45,6 +45,7 @@ attachments can contain local paths, account names, and configuration text.
 Runtime: Windows 10/11 x64 with .NET Framework 4.8 (normally included).
 No Python or .NET SDK is needed to run the prebuilt app.
 
-This build was compiled for Windows and portable logic was tested on Linux.
-Its actual Windows UI/WMI/PresentMon/screenshot behavior still needs a local
-smoke test. No game performance improvement or acceptance verdict is claimed.
+This build compiles for Windows; portable logic and synthetic native Windows
+UI checks passed. Real game/WMI/PresentMon/screenshot capture and actual monitor
+DPI/high-contrast behavior still need local qualification. No game performance
+improvement or acceptance verdict is claimed.

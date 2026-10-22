@@ -125,9 +125,19 @@ dotnet run --project tools/ModLoadingCollector/tests/detection/DetectionTests.cs
 The PresentMon lifecycle harness additionally requires Linux and Python 3; see
 `tests/presentmon/README.md`. It uses fake child processes, not real ETW.
 
-The Windows x64 executable has been cross-compiled in Linux. Portable tests cover
-parsing, percentiles, export completeness, stable snapshots, PID filtering,
-stopping, attachments, archive bounds and owned child processes. Actual Windows
-UI layout/scaling, WMI/module permissions, screenshot behavior and real PresentMon
-capture remain local qualification tasks. These checks do not pass the plan's
-Windows/D3D11/ZZMI baseline gate or establish a performance improvement.
+The Windows x64 executable builds with zero warnings or errors. Portable tests
+cover parsing, percentiles, export completeness, stable snapshots, PID filtering,
+stopping, attachments, archive bounds, owned child processes and automatic game
+detection (18 assertions).
+
+[Native Windows UI smoke checks passed](https://github.com/wunderay/XXMI-Launcher/actions/runs/39856694366)
+for the source at `93838a0d8631d10eb4d0f305e23d4dfba2d0a3b8`. The synthetic-only
+harness checks single/multiple/no-game selection, manual override, selection
+stability, contrast values, default/minimum layouts, and keyboard access to
+expanded fields. Font/geometry simulations at 125% and 150% passed; they do not
+establish actual monitor DPI behavior. See `tests/windows-ui/README.md`.
+
+Live game capture, WMI/module permissions, actual monitor DPI/high-contrast
+settings, screenshot behavior and real PresentMon capture remain local
+qualification tasks. These checks do not pass the plan's Windows/D3D11/ZZMI
+baseline gate or establish a performance improvement.
