@@ -30,7 +30,7 @@ namespace XxmiCollector
         private readonly NumericUpDown duration = new NumericUpDown();
         private readonly ListView timeline = new ListView();
         private readonly Label status = TextLabel("Ready when you are", 18, Ink);
-        private readonly Label detail = TextLabel("Choose the running game, then start a capture.", 10.5f, Muted);
+        private readonly Label detail = TextLabel("Your game appears automatically above. Press Start capture when you are ready.", 10.5f, Muted);
         private readonly Label elapsedLabel = TextLabel("00:00", 24, Ink);
         private readonly Label frameLabel = TextLabel("Optional", 11, Muted);
         private readonly Label markerLabel = TextLabel("0 markers", 11, Muted);
@@ -46,6 +46,16 @@ namespace XxmiCollector
         private readonly Button openFolder = ActionButton("Open folder", false);
         private readonly Button refreshTraces = ActionButton("Refresh exported traces", false);
         private readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
+        private readonly System.Windows.Forms.Timer detectionTimer = new System.Windows.Forms.Timer();
+        private readonly Label gameDetectionStatus = TextLabel("Looking for a running game…", 12, Ink);
+        private readonly Button changeGame = ActionButton("Choose manually", false);
+        private TableLayoutPanel manualGameSelection;
+        private List<DetectedGame> detectedGames = new List<DetectedGame>();
+        private int manuallySelectedPid;
+        private bool updatingProcessChoices;
+        private bool manualChooserRequested;
+        private bool keepGameChooserOpen;
+        private List<ProcessChoice> availableProcesses = new List<ProcessChoice>();
         private readonly Stopwatch recordingClock = new Stopwatch();
         private readonly List<Control> setupControls = new List<Control>();
         private CaptureSession session;
@@ -99,13 +109,28 @@ namespace XxmiCollector
                 if (!busy && (recordingClock.Elapsed.TotalSeconds >= targetSeconds || !session.IsRunning))
                     await FinishCaptureAsync();
             };
-            Shown += async (s, e) => await RefreshProcessesAsync();
+            processes.SelectedIndexChanged += (s, e) => { if (!updatingProcessChoices) UpdateControls(); };
+            processes.SelectionChangeCommitted += (s, e) => {
+                var selected = processes.SelectedItem as ProcessChoice;
+                manuallySelectedPid = selected == null ? 0 : selected.Id;
+                keepGameChooserOpen = true; UpdateGameDetectionDisplay(); UpdateControls();
+            };
+            changeGame.Click += (s, e) => {
+                bool hide = manualGameSelection.Visible && (manualChooserRequested || processes.SelectedItem != null);
+                manualChooserRequested = !hide; keepGameChooserOpen = !hide;
+                SetProcessItems(processes.SelectedItem as ProcessChoice);
+                UpdateGameDetectionDisplay(); UpdateControls();
+                if (!hide) processes.Focus();
+            };
+            detectionTimer.Interval = 3000;
+            detectionTimer.Tick += async (s, e) => { if (!running && !busy) await RefreshProcessesAsync(); };
+            Shown += async (s, e) => { detectionTimer.Start(); await RefreshProcessesAsync(); };
             FormClosing += async (s, e) => {
                 if (allowClose) return;
                 if (busy) { e.Cancel = true; closingRequested = true; return; }
                 if (running) { e.Cancel = true; closingRequested = true; await FinishCaptureAsync(); }
             };
-            FormClosed += (s, e) => { timer.Dispose(); tips.Dispose(); if (frameCapture != null) frameCapture.Dispose(); };
+            FormClosed += (s, e) => { timer.Dispose(); detectionTimer.Dispose(); tips.Dispose(); if (frameCapture != null) frameCapture.Dispose(); };
             UpdateControls();
         }
 
@@ -128,21 +153,27 @@ namespace XxmiCollector
             var footer = new FlowLayoutPanel { Name = "CaptureActions", Dock = DockStyle.Bottom, AutoSize = true,
                 Padding = new Padding(20, 12, 20, 12), BackColor = Card, WrapContents = true };
             footer.Controls.AddRange(new Control[] { start, stop, openReport, openZip, openFolder });
-            var scroll = new Panel { Name = "CaptureContent", Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(20) };
+            var scroll = new CaptureScrollPanel { Name = "CaptureContent", Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(20) };
             var root = Stack("CaptureLayout"); root.Dock = DockStyle.Top;
             scroll.Controls.Add(root); Controls.Add(scroll); Controls.Add(footer);
 
             AddRow(root, TextLabel("XXMI Capture", 22, Ink));
-            AddRow(root, TextLabel("Choose your game, capture what happens, then open the report.", 11, Muted));
+            AddRow(root, TextLabel("Your running game is detected automatically. Capture what happens, then open the report.", 11, Muted));
             var notice = TextLabel("Screenshots are optional. You can complete and share a capture without taking any.", 11, Ink);
             notice.Padding = new Padding(12); notice.BackColor = Card; AddRow(root, notice);
 
-            var game = SettingsGrid("GameSelection");
-            AddSetting(game, 0, "Running game", processes, "Refresh games", async () => await RefreshProcessesAsync());
-            AddRow(root, game);
-            AddRow(root, TextLabel("Launch your game first. Choose its process from the list; use Refresh games if it is missing.", 10.5f, Muted));
+            var detection = new TableLayoutPanel { Name = "GameDetection", Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 2, RowCount = 1 };
+            detection.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); detection.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            NameControl(gameDetectionStatus, "GameDetectionStatus", "Detected game");
+            NameControl(changeGame, "ChangeGame", "Choose game manually");
+            detection.Controls.Add(gameDetectionStatus, 0, 0); detection.Controls.Add(changeGame, 1, 0);
+            setupControls.Add(changeGame); AddRow(root, detection);
+            manualGameSelection = SettingsGrid("GameSelection");
+            AddSetting(manualGameSelection, 0, "Running game", processes, "Refresh games", async () => await RefreshProcessesAsync());
+            manualGameSelection.Visible = false; AddRow(root, manualGameSelection);
             processes.DropDownWidth = 560;
-            tips.SetToolTip(processes, "Select the running game process, not the launcher. The process ID helps distinguish multiple windows.");
+            tips.SetToolTip(processes, "Manual override: select the running game process, not the launcher. Process IDs distinguish multiple windows.");
+            tips.SetToolTip(changeGame, "Choose a different process manually. Your choice is retained while that process stays running.");
 
             var state = Stack("CaptureStatus"); state.BackColor = Card; state.Padding = new Padding(12);
             status.Font = new Font("Segoe UI", 17); status.AccessibleRole = AccessibleRole.StaticText;
@@ -256,19 +287,63 @@ namespace XxmiCollector
 
         private async Task RefreshProcessesAsync()
         {
-            if (running || busy || refreshingProcesses) return;
+            if (running || busy || refreshingProcesses || processes.DroppedDown || (manualGameSelection.Visible && processes.Focused)) return;
             refreshingProcesses = true;
             try {
-                int previous = processes.SelectedItem is ProcessChoice ? ((ProcessChoice)processes.SelectedItem).Id : 0;
                 var choices = await Task.Run(() => CaptureSession.ListProcesses());
-                if (running || busy || IsDisposed) return;
-                processes.BeginUpdate(); processes.Items.Clear();
-                foreach (var item in choices) processes.Items.Add(item);
-                processes.EndUpdate();
-                var selected = choices.FirstOrDefault(p => p.Id == previous) ?? choices.FirstOrDefault(p => p.Name.IndexOf("Zenless", StringComparison.OrdinalIgnoreCase) >= 0);
-                if (selected != null) processes.SelectedItem = selected;
+                if (running || busy || IsDisposed || processes.DroppedDown || (manualGameSelection.Visible && processes.Focused)) return;
+                ApplyProcessChoices(choices);
             } catch (Exception ex) { if (!IsDisposed) ShowError(ex); }
             finally { refreshingProcesses = false; }
+        }
+
+        // Kept separate from enumeration so synthetic process lists can exercise the
+        // same detection/selection UI in Windows smoke tests without accessing games.
+        private void ApplyProcessChoices(List<ProcessChoice> choices)
+        {
+            if (running || busy || IsDisposed || processes.DroppedDown) return;
+            availableProcesses = choices;
+            detectedGames = GameDetection.Find(choices);
+            var manual = choices.FirstOrDefault(p => p.Id == manuallySelectedPid);
+            if (manual == null) manuallySelectedPid = 0;
+            var selected = manual ?? (detectedGames.Count == 1 ? detectedGames[0].Process : null);
+            SetProcessItems(selected);
+            UpdateGameDetectionDisplay(); UpdateControls();
+        }
+
+        private void SetProcessItems(ProcessChoice selected)
+        {
+            // An ambiguous automatic match offers only supported game candidates.
+            // The explicit manual chooser offers every available process.
+            var offered = !manualChooserRequested && detectedGames.Count > 1
+                ? detectedGames.Select(g => g.Process).ToList() : availableProcesses.ToList();
+            if (selected != null && !offered.Any(p => p.Id == selected.Id)) offered.Add(selected);
+            updatingProcessChoices = true;
+            processes.BeginUpdate();
+            try {
+                processes.Items.Clear();
+                foreach (var item in offered) processes.Items.Add(item);
+                processes.SelectedItem = selected;
+            }
+            finally { processes.EndUpdate(); updatingProcessChoices = false; }
+        }
+
+        private void UpdateGameDetectionDisplay()
+        {
+            var selected = processes.SelectedItem as ProcessChoice;
+            var detected = selected == null ? null : detectedGames.FirstOrDefault(g => g.Process.Id == selected.Id);
+            if (selected != null)
+                gameDetectionStatus.Text = detected != null ? "Detected: " + detected.GameName : "Selected manually: " + selected.Name;
+            else if (detectedGames.Count > 1)
+                gameDetectionStatus.Text = "Multiple games detected — choose the game to capture below.";
+            else
+                gameDetectionStatus.Text = "Waiting for a game. Launch your game, or choose its process manually.";
+            gameDetectionStatus.AccessibleName = gameDetectionStatus.Text;
+            manualGameSelection.Visible = keepGameChooserOpen || manualChooserRequested || (selected == null && detectedGames.Count > 1);
+            changeGame.Text = manualGameSelection.Visible && (manualChooserRequested || selected != null)
+                ? "Hide game choices" : selected == null ? "Choose manually" : "Change game";
+            changeGame.AccessibleName = changeGame.Text;
+            changeGame.AccessibleDescription = manualGameSelection.Visible ? "Game choices expanded" : "Game choices collapsed";
         }
 
         private async Task BeginCaptureAsync()
@@ -277,6 +352,7 @@ namespace XxmiCollector
             var process = processes.SelectedItem as ProcessChoice;
             if (process == null) { SetStatus("Choose a running game", "Use Refresh after launching the game."); return; }
             if (String.IsNullOrWhiteSpace(output.Text)) { SetStatus("Choose a save folder", "Each capture gets a separate local folder."); return; }
+            manualChooserRequested = false; keepGameChooserOpen = false; UpdateGameDetectionDisplay();
             busy = true; UpdateControls(); SetStatus("Preparing capture…", "Collecting hardware and loaded-DLL details. The window remains available.");
             try
             {
@@ -415,7 +491,7 @@ namespace XxmiCollector
         private void UpdateControls()
         {
             foreach (var control in setupControls) control.Enabled = !busy && !running;
-            start.Enabled = !busy && !running; stop.Enabled = !busy && running;
+            start.Enabled = !busy && !running && processes.SelectedItem is ProcessChoice; stop.Enabled = !busy && running;
             marker.Enabled = markerNote.Enabled = addMarker.Enabled = screen.Enabled = !busy && running;
             evidence.Enabled = !busy && session != null;
             openReport.Enabled = !busy && !running && reportPath != null && File.Exists(reportPath);
@@ -427,7 +503,7 @@ namespace XxmiCollector
             ((CaptureButton)stop).Primary = true;
             ((CaptureButton)openReport).Primary = reportPath != null && !running;
             // Enter only starts a ready capture; stopping always requires an explicit action.
-            AcceptButton = !busy && !running && reportPath == null ? start : null;
+            AcceptButton = start.Enabled && reportPath == null ? start : null;
             progress.Style = busy || running ? ProgressBarStyle.Marquee : ProgressBarStyle.Blocks;
             progress.MarqueeAnimationSpeed = busy || running ? 30 : 0;
         }
@@ -450,6 +526,24 @@ namespace XxmiCollector
             return new CaptureButton { Text = text, AccessibleName = text, Name = text.Replace(" ", ""), Primary = primary,
                 AutoSize = true, MinimumSize = new Size(108, 38), Padding = new Padding(12, 6, 12, 6),
                 Margin = new Padding(0, 0, 8, 0), Cursor = Cursors.Hand };
+        }
+
+        private sealed class CaptureScrollPanel : Panel
+        {
+            protected override Point ScrollToControl(Control activeControl)
+            {
+                if (activeControl == null || !Contains(activeControl)) return base.ScrollToControl(activeControl);
+                // WinForms' default calculation uses the target's parent-local Bounds.
+                // Translate nested fields to this viewport so focus and explicit
+                // ScrollControlIntoView calls reach the actual descendant.
+                var bounds = RectangleToClient(activeControl.RectangleToScreen(activeControl.ClientRectangle));
+                int y = AutoScrollPosition.Y;
+                int top = Padding.Top;
+                int bottom = ClientSize.Height - Padding.Bottom;
+                if (bounds.Height > bottom - top || bounds.Top < top) y += top - bounds.Top;
+                else if (bounds.Bottom > bottom) y -= bounds.Bottom - bottom;
+                return new Point(AutoScrollPosition.X, y);
+            }
         }
 
         // Windows themes can override disabled button colors. Paint every state explicitly

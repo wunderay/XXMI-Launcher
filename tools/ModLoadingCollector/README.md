@@ -6,14 +6,23 @@ and attachments, and a ZIP you can review and share. Captures run only when you
 start them. The app uses Windows Forms and .NET Framework 4.8 on Windows 10/11 x64;
 the prebuilt executable needs no Python, launcher integration, or .NET SDK.
 
-Read `QUICKSTART.txt` for the guided workflow. Start the game, select it in the
-game list, and click **Start capture**. The default capture lasts 60 seconds.
+Read `QUICKSTART.txt` for the guided workflow. Launch the game; a single supported
+running game is detected automatically. Click **Start capture**. The default capture lasts 60 seconds.
 Settings and evidence controls are collapsed initially; screenshots are optional.
 Expand the optional settings to change the duration, scenario, baseline/candidate
 label, save folder, native trace folder or PresentMon path. Record baseline and
 candidate with identical game/mod settings. Finish early or let the timer finish,
 then open the report or saved ZIP. **Open folder** exposes retained partial data
 even when collection fails.
+
+Game detection checks the launcher's known executable names for Zenless Zone
+Zero (including beta), Genshin Impact (including YuanShen), Honkai: Star Rail,
+Honkai Impact 3rd and Arknights: Endfield. Wuthering Waves uses a generic Unreal
+executable, so its window title or branded installation path must corroborate
+its identity; the branded launcher wrapper is excluded. Multiple detected games
+require a choice. **Change game** exposes manual selection when detection is
+uncertain. Idle detection refreshes periodically and never changes an active
+capture's target.
 
 The desktop UI uses a light background, dark text, readable input controls and
 explicit action states. Optional sections scroll on smaller screens while the
@@ -110,6 +119,7 @@ Portable logic tests use a .NET 10 SDK; they do not require Windows:
 dotnet run --project tools/ModLoadingCollector/tests/report/ReportTests.csproj -- work/report-tests
 dotnet run --project tools/ModLoadingCollector/tests/backend/BackendTests.csproj -- work/backend-tests
 dotnet run --project tools/ModLoadingCollector/tests/archive/ArchiveTests.csproj -- work/archive-tests
+dotnet run --project tools/ModLoadingCollector/tests/detection/DetectionTests.csproj
 ```
 
 The PresentMon lifecycle harness additionally requires Linux and Python 3; see

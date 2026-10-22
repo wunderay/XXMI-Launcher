@@ -1,7 +1,8 @@
 XXMI Capture — portable Windows x64 collector
 
 1. Extract the ZIP to a folder. Double-click XXMI.Capture.exe.
-2. Launch your game and select it in the game list. Refresh the list if needed.
+2. Launch your game. The app automatically detects supported running games.
+   If several are running, choose one. Change game lets you choose manually.
 3. Click Start capture. Switch back to the game and reproduce the issue.
    The default capture lasts 60 seconds and needs no screenshots or setup paths.
 4. Finish the capture early or let the timer finish. Open the report or saved ZIP.
@@ -9,6 +10,11 @@ XXMI Capture — portable Windows x64 collector
 Optional capture settings let you change the duration, scenario, run type,
 save folder, diagnostic trace folder, or PresentMon executable. These are
 not required for a basic hardware/DLL/process capture.
+
+Automatic detection recognizes Zenless Zone Zero, Genshin Impact, Honkai:
+Star Rail, Honkai Impact 3rd, Arknights: Endfield and corroborated Wuthering
+Waves game processes. If detection is uncertain, choose the game manually.
+An active capture keeps its original target even if other games start.
 
 Screenshots, attachments and observation markers are optional. Expand their
 section only if you want to add them. Capturing a screen gives you three

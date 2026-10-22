@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
@@ -61,12 +62,13 @@ internal static class WindowsUiSmoke
                 if (name == "minimum") form.Size = size;
                 else form.ClientSize = size;
                 var combo = (ComboBox)Find(form, "RunningGame");
-                Type choiceType = app.GetType("XxmiCollector.ProcessChoice", true);
-                object choice = Activator.CreateInstance(choiceType);
-                choiceType.GetProperty("Name").SetValue(choice, "Synthetic UI sample (no game access)");
-                choiceType.GetProperty("Id").SetValue(choice, 4242);
-                combo.Items.Add(choice); combo.SelectedIndex = 0;
+                ApplyChoices(form, app, new[] { "ZenlessZoneZero" }, new[] { 4242 });
                 form.Show(); Layout(form);
+                Check(combo.SelectedItem != null && (int)combo.SelectedItem.GetType().GetProperty("Id").GetValue(combo.SelectedItem) == 4242,
+                    name + ": one supported game automatically selected");
+                Check(Find(form, "GameDetectionStatus").Text.IndexOf("Detected", StringComparison.OrdinalIgnoreCase) >= 0,
+                    name + ": detected-game status shown");
+                Check(!Find(form, "GameSelection").Visible, name + ": manual process list hidden for one detected game");
                 Check(!Find(form, "OptionalSettings").Visible && !Find(form, "OptionalEvidence").Visible, name + ": optional sections initially collapsed");
                 Snapshot(form, name + "-ready");
                 CheckBasic(form, name);
@@ -88,14 +90,82 @@ internal static class WindowsUiSmoke
                     Control control = Find(form, target); scroll.ScrollControlIntoView(control); Layout(form);
                     Rectangle visible = scroll.RectangleToScreen(scroll.ClientRectangle);
                     Rectangle bounds = control.RectangleToScreen(control.ClientRectangle);
-                    Check(visible.IntersectsWith(bounds), name + ": expanded " + target + " reachable by scrolling");
+                    Check(visible.IntersectsWith(bounds), name + ": expanded " + target + " reachable by scrolling"
+                        + " [viewport=" + visible + ", target=" + bounds + ", display=" + scroll.DisplayRectangle
+                        + ", verticalValue=" + scroll.VerticalScroll.Value + ", autoScroll=" + scroll.AutoScrollPosition + "]");
                 }
                 Snapshot(form, name + "-expanded-scrolled");
                 Check(FullyInside(form, Find(form, "CaptureActions")), name + ": footer remains visible with expanded sections");
+                if (name == "default")
+                {
+                    ApplyChoices(form, app, new string[0], new int[0]); Layout(form);
+                    Check(combo.SelectedItem == null, name + ": no running game leaves no stale selection");
+                    Control start = Walk(form).Single(c => c is Button && c.Text.StartsWith("Start ", StringComparison.Ordinal));
+                    Check(!start.Enabled, name + ": no running game disables capture");
+                    string[] names = { "ZenlessZoneZero", "GenshinImpact", "SyntheticNotAGame" };
+                    int[] ids = { 4243, 4244, 4245 };
+                    ApplyChoices(form, app, names, ids); Layout(form);
+                    Check(Find(form, "GameSelection").Visible, name + ": multiple games expose explicit selection");
+                    Check(combo.SelectedItem == null && !start.Enabled, name + ": multiple games require a choice before capture");
+                    Check(combo.Items.Count == 2, name + ": ambiguous chooser excludes unrelated processes");
+                    scroll.ScrollControlIntoView(combo); Layout(form);
+                    combo.SelectedIndex = 0;
+                    typeof(ComboBox).GetMethod("OnSelectionChangeCommitted", BindingFlags.Instance | BindingFlags.NonPublic)
+                        .Invoke(combo, new object[] { EventArgs.Empty }); Layout(form);
+                    Check(Find(form, "GameSelection").Visible, name + ": choosing a game keeps the chooser open");
+                    ApplyChoices(form, app, names, ids); Layout(form);
+                    Check(SelectedPid(combo) == 4243, name + ": refreshed objects preserve manually selected PID");
+                    var changeGame = (Button)Find(form, "ChangeGame");
+                    changeGame.PerformClick(); Layout(form);
+                    Check(!Find(form, "GameSelection").Visible, name + ": explicit game toggle hides chooser");
+                    changeGame.PerformClick(); Layout(form);
+                    Check(Find(form, "GameSelection").Visible && combo.Items.Count == 3,
+                        name + ": explicit manual chooser offers all processes");
+                    scroll.ScrollControlIntoView(combo); Layout(form);
+                    object previousSelection = combo.SelectedItem;
+                    object[] previousItems = combo.Items.Cast<object>().ToArray();
+                    combo.DroppedDown = true; Layout(form);
+                    Check(combo.DroppedDown, name + ": native dropdown opened for interaction guard");
+                    try
+                    {
+                        ApplyChoices(form, app, new[] { "ZenlessZoneZero" }, new[] { 4242 });
+                        Check(ReferenceEquals(combo.SelectedItem, previousSelection) && combo.Items.Cast<object>().SequenceEqual(previousItems),
+                            name + ": refresh leaves open dropdown items and selection unchanged");
+                    }
+                    finally { combo.DroppedDown = false; }
+                    FieldInfo running = form.GetType().GetField("running", BindingFlags.Instance | BindingFlags.NonPublic);
+                    running.SetValue(form, true);
+                    try
+                    {
+                        ApplyChoices(form, app, new[] { "ZenlessZoneZero" }, new[] { 4242 });
+                        Check(SelectedPid(combo) == 4243, name + ": active-capture guard preserves selected PID");
+                    }
+                    finally { running.SetValue(form, false); }
+                    changeGame.PerformClick();
+                    ApplyChoices(form, app, new[] { "ZenlessZoneZero" }, new[] { 4242 }); Layout(form);
+                    Check(SelectedPid(combo) == 4242 && !Find(form, "GameSelection").Visible,
+                        name + ": known single-game state restored after interaction checks");
+                }
             }
             catch (Exception ex) { failures.Add(name + ": " + ex); try { Snapshot(form, name + "-error"); } catch { } }
             finally { form.Close(); }
         }
+    }
+
+    private static int SelectedPid(ComboBox combo)
+    { return combo.SelectedItem == null ? 0 : (int)combo.SelectedItem.GetType().GetProperty("Id").GetValue(combo.SelectedItem); }
+
+    private static void ApplyChoices(Form form, Assembly app, string[] names, int[] ids)
+    {
+        Type choiceType = app.GetType("XxmiCollector.ProcessChoice", true);
+        var choices = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(choiceType));
+        for (int i = 0; i < names.Length; i++)
+        {
+            object choice = Activator.CreateInstance(choiceType);
+            choiceType.GetProperty("Name").SetValue(choice, names[i]);
+            choiceType.GetProperty("Id").SetValue(choice, ids[i]); choices.Add(choice);
+        }
+        form.GetType().GetMethod("ApplyProcessChoices", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, new object[] { choices });
     }
 
     private static void CheckBasic(Form form, string name)

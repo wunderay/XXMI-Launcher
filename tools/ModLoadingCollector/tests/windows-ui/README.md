@@ -2,7 +2,7 @@
 
 This small .NET Framework 4.8 x64 executable renders the actual WinForms collector on Windows. It checks default and minimum client sizes, plus 125% and 150% **font/geometry stress simulations** in a client area that fits a 1280×720 display. These simulations do not establish real per-monitor DPI behavior.
 
-It loads `CaptureForm` directly without calling the collector entry point. Before showing the native form, it removes its `Shown` event handlers so process enumeration never runs. A clearly synthetic process item provides sample text. It never clicks Start, enumerates games, invokes WMI, starts PresentMon, captures a game screen, uploads, or requests elevation.
+It loads `CaptureForm` directly without calling the collector entry point. Before showing the native form, it removes its `Shown` event handlers so process enumeration and idle polling never run. Synthetic supported-game process items exercise the real automatic selection path, including no-game and multiple-game cases. Screenshots are explicitly annotated as synthetic. It never clicks Start, enumerates games, invokes WMI, starts PresentMon, captures a game screen, uploads, or requests elevation.
 
 Build and run from the repository root on Windows:
 

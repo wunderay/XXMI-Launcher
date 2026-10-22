@@ -4,7 +4,11 @@ on:
   push:
     branches: [codex/xxmi-capture-collector]
     paths:
-      - 'tools/ModLoadingCollector/**'
+      - 'tools/ModLoadingCollector/src/**'
+      - 'tools/ModLoadingCollector/ModLoadingCollector.csproj'
+      - 'tools/ModLoadingCollector/app.manifest'
+      - 'tools/ModLoadingCollector/tests/windows-ui/**'
+      - 'Themes/Default/window-icon.ico'
       - '.github/workflows/collector-ui-smoke.yml'
   workflow_dispatch:
 
