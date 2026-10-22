@@ -6,11 +6,19 @@ and attachments, and a ZIP you can review and share. Captures run only when you
 start them. The app uses Windows Forms and .NET Framework 4.8 on Windows 10/11 x64;
 the prebuilt executable needs no Python, launcher integration, or .NET SDK.
 
-Read `QUICKSTART.txt` for the guided workflow. Start the game, select its process,
-choose a scenario and capture duration, and click **Start capture**. Record an
-unmodified baseline and candidate with identical game/mod settings. **Finish &
-save** generates the report and ZIP, or the timer finishes the capture for you.
-**Open folder** exposes retained partial data even when collection fails.
+Read `QUICKSTART.txt` for the guided workflow. Start the game, select it in the
+game list, and click **Start capture**. The default capture lasts 60 seconds.
+Settings and evidence controls are collapsed initially; screenshots are optional.
+Expand the optional settings to change the duration, scenario, baseline/candidate
+label, save folder, native trace folder or PresentMon path. Record baseline and
+candidate with identical game/mod settings. Finish early or let the timer finish,
+then open the report or saved ZIP. **Open folder** exposes retained partial data
+even when collection fails.
+
+The desktop UI uses a light background, dark text, readable input controls and
+explicit action states. Optional sections scroll on smaller screens while the
+main capture and result actions remain available. Windows high-contrast colors
+are respected when that mode is active.
 
 ## Available evidence
 

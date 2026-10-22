@@ -1,14 +1,18 @@
 XXMI Capture — portable Windows x64 collector
 
 1. Extract the ZIP to a folder. Double-click XXMI.Capture.exe.
-2. Launch your game, click Refresh, and select its process.
-3. Optionally choose the diagnostic DLL's trace folder and PresentMon.exe.
-   Leave these blank for hardware/DLL/process evidence only.
-4. Choose a scenario, Baseline/Candidate/Investigation, and duration.
-5. Click Start capture. Reproduce the issue. Add observation markers or
-   click Capture game screen (a three-second delay lets you switch back).
-6. Click Finish & save, or allow the timer to finish. Open the HTML report.
-   A ZIP beside the capture folder contains the recorded evidence.
+2. Launch your game and select it in the game list. Refresh the list if needed.
+3. Click Start capture. Switch back to the game and reproduce the issue.
+   The default capture lasts 60 seconds and needs no screenshots or setup paths.
+4. Finish the capture early or let the timer finish. Open the report or saved ZIP.
+
+Optional capture settings let you change the duration, scenario, run type,
+save folder, diagnostic trace folder, or PresentMon executable. These are
+not required for a basic hardware/DLL/process capture.
+
+Screenshots, attachments and observation markers are optional. Expand their
+section only if you want to add them. Capturing a screen gives you three
+seconds to switch to the game; it does not prove rendering correctness.
 
 For native phase timings, the instrumented diagnostic DLL must already be
 installed through your existing development setup. Stock DLLs do not emit

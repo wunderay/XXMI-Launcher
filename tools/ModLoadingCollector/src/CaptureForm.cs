@@ -14,11 +14,10 @@ namespace XxmiCollector
 {
     internal sealed class CaptureForm : Form
     {
-        private static readonly Color Ink = Color.FromArgb(226, 234, 242);
-        private static readonly Color Muted = Color.FromArgb(151, 171, 188);
-        private static readonly Color Canvas = Color.FromArgb(15, 23, 34);
-        private static readonly Color Card = Color.FromArgb(24, 36, 50);
-        private static readonly Color Accent = Color.FromArgb(61, 218, 184);
+        private static readonly Color Ink = CapturePalette.Text;
+        private static readonly Color Muted = CapturePalette.SecondaryText;
+        private static readonly Color Canvas = CapturePalette.Canvas;
+        private static readonly Color Card = CapturePalette.Surface;
         private readonly ComboBox processes = Combo();
         private readonly ComboBox scenario = Combo();
         private readonly ComboBox runKind = Combo();
@@ -31,17 +30,19 @@ namespace XxmiCollector
         private readonly NumericUpDown duration = new NumericUpDown();
         private readonly ListView timeline = new ListView();
         private readonly Label status = TextLabel("Ready when you are", 18, Ink);
-        private readonly Label detail = TextLabel("Choose the running game, then start a capture.", 10, Muted);
+        private readonly Label detail = TextLabel("Choose the running game, then start a capture.", 10.5f, Muted);
         private readonly Label elapsedLabel = TextLabel("00:00", 24, Ink);
         private readonly Label frameLabel = TextLabel("Optional", 11, Muted);
         private readonly Label markerLabel = TextLabel("0 markers", 11, Muted);
         private readonly ProgressBar progress = new ProgressBar();
-        private readonly Button start = ActionButton("Start capture", true);
+        private readonly Button start = ActionButton("Start 60-second capture", true);
         private readonly Button stop = ActionButton("Finish & save", false);
         private readonly Button addMarker = ActionButton("Add marker", false);
         private readonly Button screen = ActionButton("Capture game screen", false);
         private readonly Button evidence = ActionButton("Attach evidence", false);
         private readonly Button openReport = ActionButton("Open report", false);
+        private readonly Button openZip = ActionButton("Open saved ZIP", false);
+        private readonly ToolTip tips = new ToolTip();
         private readonly Button openFolder = ActionButton("Open folder", false);
         private readonly Button refreshTraces = ActionButton("Refresh exported traces", false);
         private readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
@@ -62,12 +63,12 @@ namespace XxmiCollector
         public CaptureForm()
         {
             Text = "XXMI Capture";
-            ClientSize = new Size(1120, 900);
-            MinimumSize = new Size(1000, 820);
+            ClientSize = new Size(940, 600);
+            MinimumSize = new Size(640, 480);
             StartPosition = FormStartPosition.CenterScreen;
             BackColor = Canvas;
             ForeColor = Ink;
-            Font = new Font("Segoe UI", 10);
+            Font = new Font("Segoe UI", 11);
             AutoScaleMode = AutoScaleMode.Dpi;
             Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
             BuildLayout();
@@ -79,12 +80,14 @@ namespace XxmiCollector
             marker.Items.AddRange(new object[] { "Action requested", "Character appeared", "Outfit / toggle", "LOD transition", "F10 pressed", "Correct appearance observed", "Stall observed", "Other observation" });
             marker.SelectedIndex = 0;
             duration.Minimum = 5; duration.Maximum = 3600; duration.Value = 60;
-            duration.BackColor = Canvas; duration.ForeColor = Ink; duration.BorderStyle = BorderStyle.FixedSingle;
+            duration.BackColor = Card; duration.ForeColor = Ink; duration.BorderStyle = BorderStyle.FixedSingle;
             start.Click += async (s, e) => await BeginCaptureAsync();
             stop.Click += async (s, e) => await FinishCaptureAsync();
             addMarker.Click += (s, e) => AddManualMarker();
             screen.Click += async (s, e) => await CaptureScreenAsync();
             evidence.Click += async (s, e) => await AttachEvidenceAsync();
+            duration.ValueChanged += (s, e) => { start.Text = "Start " + duration.Value + "-second capture"; start.AccessibleName = start.Text; };
+            openZip.Click += (s, e) => { if (session != null) OpenPath(session.DirectoryPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + ".zip"); };
             openReport.Click += (s, e) => OpenPath(reportPath);
             openFolder.Click += (s, e) => { if (session != null) OpenPath(session.DirectoryPath); };
             refreshTraces.Click += async (s, e) => await RefreshTracesAsync();
@@ -102,73 +105,151 @@ namespace XxmiCollector
                 if (busy) { e.Cancel = true; closingRequested = true; return; }
                 if (running) { e.Cancel = true; closingRequested = true; await FinishCaptureAsync(); }
             };
-            FormClosed += (s, e) => { timer.Dispose(); if (frameCapture != null) frameCapture.Dispose(); };
+            FormClosed += (s, e) => { timer.Dispose(); tips.Dispose(); if (frameCapture != null) frameCapture.Dispose(); };
             UpdateControls();
+        }
+
+        protected override void OnLoad(EventArgs e)
+        {
+            base.OnLoad(e);
+            var area = Screen.FromControl(this).WorkingArea;
+            const int margin = 16;
+            int availableWidth = Math.Max(1, area.Width - margin * 2);
+            int availableHeight = Math.Max(1, area.Height - margin * 2);
+            // Autoscaling may grow MinimumSize beyond a small display's work area.
+            MinimumSize = new Size(Math.Min(MinimumSize.Width, availableWidth), Math.Min(MinimumSize.Height, availableHeight));
+            Size = new Size(Math.Min(Width, availableWidth), Math.Min(Height, availableHeight));
+            Location = new Point(area.Left + (area.Width - Width) / 2, area.Top + (area.Height - Height) / 2);
         }
 
         private void BuildLayout()
         {
-            var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(26), ColumnCount = 1, RowCount = 7, BackColor = Canvas };
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 204));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 120));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 116));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));
-            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 62));
-            Controls.Add(root);
+            // The footer remains reachable while optional sections scroll.
+            var footer = new FlowLayoutPanel { Name = "CaptureActions", Dock = DockStyle.Bottom, AutoSize = true,
+                Padding = new Padding(20, 12, 20, 12), BackColor = Card, WrapContents = true };
+            footer.Controls.AddRange(new Control[] { start, stop, openReport, openZip, openFolder });
+            var scroll = new Panel { Name = "CaptureContent", Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(20) };
+            var root = Stack("CaptureLayout"); root.Dock = DockStyle.Top;
+            scroll.Controls.Add(root); Controls.Add(scroll); Controls.Add(footer);
 
-            var header = new Panel { Dock = DockStyle.Fill };
-            var title = TextLabel("XXMI  /  CAPTURE", 22, Accent); title.Dock = DockStyle.None; title.Location = new Point(0, 0); title.Size = new Size(500, 38);
-            var subtitle = TextLabel("A clear record of what happened, ready to compare and share.", 10, Muted); subtitle.Dock = DockStyle.None; subtitle.Location = new Point(2, 43); subtitle.AutoSize = true;
-            var badge = TextLabel("LOCAL ONLY  •  ON DEMAND", 9, Accent); badge.Dock = DockStyle.None; badge.AutoSize = true; badge.Anchor = AnchorStyles.Top | AnchorStyles.Right; badge.Location = new Point(790, 14);
-            header.Controls.AddRange(new Control[] { title, subtitle, badge }); root.Controls.Add(header, 0, 0);
+            AddRow(root, TextLabel("XXMI Capture", 22, Ink));
+            AddRow(root, TextLabel("Choose your game, capture what happens, then open the report.", 11, Muted));
+            var notice = TextLabel("Screenshots are optional. You can complete and share a capture without taking any.", 11, Ink);
+            notice.Padding = new Padding(12); notice.BackColor = Card; AddRow(root, notice);
 
-            var settings = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Card, Padding = new Padding(14), ColumnCount = 3, RowCount = 4 };
-            settings.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160)); settings.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); settings.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 100));
-            for (int i = 0; i < 4; ++i) settings.RowStyles.Add(new RowStyle(SizeType.Percent, 25));
-            AddSetting(settings, 0, "Running game", processes, "Refresh", async () => await RefreshProcessesAsync());
-            AddSetting(settings, 1, "Native trace folder", traces, "Browse…", () => { ChooseFolder(traces); return Task.CompletedTask; });
-            AddSetting(settings, 2, "Save captures to", output, "Browse…", () => { ChooseFolder(output); return Task.CompletedTask; });
-            AddSetting(settings, 3, "PresentMon (optional)", presentMon, "Browse…", () => { ChooseFile(presentMon, "PresentMon executable|*.exe"); return Task.CompletedTask; });
-            root.Controls.Add(settings, 0, 1);
+            var game = SettingsGrid("GameSelection");
+            AddSetting(game, 0, "Running game", processes, "Refresh games", async () => await RefreshProcessesAsync());
+            AddRow(root, game);
+            AddRow(root, TextLabel("Launch your game first. Choose its process from the list; use Refresh games if it is missing.", 10.5f, Muted));
+            processes.DropDownWidth = 560;
+            tips.SetToolTip(processes, "Select the running game process, not the launcher. The process ID helps distinguish multiple windows.");
 
-            var sessionPanel = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(0, 12, 0, 4), ColumnCount = 6, RowCount = 3 };
-            sessionPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 76)); sessionPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55)); sessionPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 72)); sessionPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45)); sessionPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90)); sessionPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 88));
-            sessionPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 36)); sessionPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 36)); sessionPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
-            sessionPanel.Controls.Add(TextLabel("Scenario", 10, Muted), 0, 0); sessionPanel.Controls.Add(scenario, 1, 0);
-            sessionPanel.Controls.Add(TextLabel("Run", 10, Muted), 2, 0); sessionPanel.Controls.Add(runKind, 3, 0);
-            sessionPanel.Controls.Add(TextLabel("Seconds", 10, Muted), 4, 0); sessionPanel.Controls.Add(duration, 5, 0);
-            sessionPanel.Controls.Add(TextLabel("Notes", 10, Muted), 0, 1); sessionPanel.Controls.Add(notes, 1, 1); sessionPanel.SetColumnSpan(notes, 5);
-            var note = TextLabel("Keep the same scene and settings for baseline/candidate runs. Review the ZIP before sharing it.", 9, Muted); note.AutoSize = true; sessionPanel.Controls.Add(note, 0, 2); sessionPanel.SetColumnSpan(note, 6);
-            setupControls.AddRange(new Control[] { scenario, runKind, duration, notes }); root.Controls.Add(sessionPanel, 0, 2);
+            var state = Stack("CaptureStatus"); state.BackColor = Card; state.Padding = new Padding(12);
+            status.Font = new Font("Segoe UI", 17); status.AccessibleRole = AccessibleRole.StaticText;
+            AddRow(state, status); AddRow(state, detail);
+            var counters = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = true };
+            elapsedLabel.AutoSize = true; elapsedLabel.Margin = new Padding(0, 4, 20, 4);
+            markerLabel.AutoSize = true; markerLabel.Margin = new Padding(0, 12, 0, 4);
+            counters.Controls.AddRange(new Control[] { elapsedLabel, markerLabel }); AddRow(state, counters);
+            progress.Dock = DockStyle.Fill; progress.Height = 8; AddRow(state, progress); AddRow(root, state);
 
-            var state = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Card, Padding = new Padding(15), ColumnCount = 2, RowCount = 3 };
-            state.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 80)); state.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20));
-            state.RowStyles.Add(new RowStyle(SizeType.Absolute, 34)); state.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); state.RowStyles.Add(new RowStyle(SizeType.Absolute, 8));
-            state.Controls.Add(status, 0, 0); state.Controls.Add(elapsedLabel, 1, 0); state.Controls.Add(detail, 0, 1); state.Controls.Add(markerLabel, 1, 1);
-            progress.Dock = DockStyle.Fill; state.Controls.Add(progress, 0, 2); state.SetColumnSpan(progress, 2); root.Controls.Add(state, 0, 3);
+            var settings = Stack("OptionalSettings");
+            var paths = SettingsGrid("CaptureSettings");
+            AddSetting(paths, 0, "Save captures to", output, "Browse…", () => { ChooseFolder(output); return Task.CompletedTask; });
+            AddSetting(paths, 1, "Native trace folder", traces, "Browse…", () => { ChooseFolder(traces); return Task.CompletedTask; });
+            AddSetting(paths, 2, "PresentMon (optional)", presentMon, "Browse…", () => { ChooseFile(presentMon, "PresentMon executable|*.exe"); return Task.CompletedTask; });
+            AddRow(settings, paths);
+            var metadata = SettingsGrid("RunDetails");
+            AddField(metadata, 0, "Duration (seconds)", duration);
+            AddField(metadata, 1, "Scenario", scenario); AddField(metadata, 2, "Run type", runKind); AddField(metadata, 3, "Notes", notes);
+            setupControls.AddRange(new Control[] { duration, scenario, runKind, notes }); AddRow(settings, metadata);
+            AddRow(settings, TextLabel("Native traces only: with the diagnostic DLL, set mod_load_trace=1 in [Logging] and press F10. Before saving, set it to 0 and press F10 to export. This app does not change game settings.", 10.5f, Muted));
+            AddRow(settings, TextLabel("Exported a trace after saving? Refresh below to update the report and ZIP. Review coverage and loss counts before comparing runs.", 10.5f, Muted));
+            AddRow(settings, refreshTraces);
+            AddOptional(root, "Capture settings and native traces (optional)", settings);
 
-            var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(0, 12, 0, 6), WrapContents = false };
-            actions.Controls.AddRange(new Control[] { start, stop, screen, evidence, frameLabel }); frameLabel.Width = 300; frameLabel.Height = 40; root.Controls.Add(actions, 0, 4);
+            var events = Stack("OptionalEvidence");
+            AddRow(events, TextLabel("Optional evidence and observations. Observer timestamps do not identify an exact rendered frame.", 10.5f, Muted));
+            var evidenceActions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = true };
+            evidenceActions.Controls.AddRange(new Control[] { screen, evidence }); AddRow(events, evidenceActions);
+            AddRow(events, frameLabel);
+            var observations = SettingsGrid("ObservationEntry");
+            AddField(observations, 0, "Observation", marker); AddField(observations, 1, "Observation note", markerNote);
+            AddRow(events, observations); AddRow(events, addMarker);
+            timeline.Dock = DockStyle.Fill; timeline.Height = 160; timeline.View = View.Details;
+            timeline.FullRowSelect = true; timeline.HideSelection = false; timeline.BackColor = Card; timeline.ForeColor = Ink;
+            timeline.BorderStyle = BorderStyle.FixedSingle;
+            timeline.Columns.Add("Time", 90); timeline.Columns.Add("Observation", 230); timeline.Columns.Add("Note", 420);
+            AddRow(events, timeline); AddOptional(root, "Screenshots, evidence and observations (optional)", events);
 
-            var events = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 };
-            events.RowStyles.Add(new RowStyle(SizeType.Absolute, 42)); events.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            var markerRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1 };
-            markerRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 245)); markerRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); markerRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
-            markerRow.Controls.Add(marker, 0, 0); markerRow.Controls.Add(markerNote, 1, 0); markerRow.Controls.Add(addMarker, 2, 0); events.Controls.Add(markerRow, 0, 0);
-            timeline.Dock = DockStyle.Fill; timeline.View = View.Details; timeline.FullRowSelect = true; timeline.HideSelection = false; timeline.BackColor = Card; timeline.ForeColor = Ink; timeline.BorderStyle = BorderStyle.None;
-            timeline.Columns.Add("Time", 90); timeline.Columns.Add("Observation", 250); timeline.Columns.Add("Note", 620); events.Controls.Add(timeline, 0, 1); root.Controls.Add(events, 0, 5);
+            NameControl(processes, "RunningGame", "Running game"); NameControl(duration, "CaptureDuration", "Capture duration in seconds");
+            NameControl(traces, "NativeTraceFolder", "Optional native trace folder"); NameControl(output, "OutputFolder", "Capture save folder");
+            NameControl(presentMon, "PresentMonPath", "Optional PresentMon executable"); NameControl(scenario, "Scenario", "Capture scenario");
+            NameControl(runKind, "RunKind", "Run type"); NameControl(notes, "RunNotes", "Run notes");
+            NameControl(marker, "Observation", "Observation type"); NameControl(markerNote, "ObservationNote", "Observation note");
+            NameControl(timeline, "Observations", "Recorded observations"); NameControl(status, "CaptureState", "Capture status");
+            NameControl(detail, "CaptureDetail", "Capture status details");
+            tips.SetToolTip(screen, "Optional: minimizes this window and waits three seconds so you can switch to the game.");
+            tips.SetToolTip(evidence, "Optional: attach a screenshot, recording or configuration during or after capture.");
+            tips.SetToolTip(openZip, "Opens the saved ZIP beside the capture folder. Review its contents before sharing.");
+            tips.SetToolTip(refreshTraces, "After exporting native traces, rebuild the saved report and ZIP with the new traces.");
+            AssignTabOrder(this);
+            AcceptButton = start;
+        }
 
-            var results = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(0, 14, 0, 0), WrapContents = false };
-            results.Controls.AddRange(new Control[] { openReport, openFolder, refreshTraces }); root.Controls.Add(results, 0, 6);
+        private static void AssignTabOrder(Control parent)
+        {
+            int index = 0;
+            foreach (Control child in parent.Controls) { child.TabIndex = index++; AssignTabOrder(child); }
+        }
+
+        private static void NameControl(Control control, string name, string accessibleName)
+        { control.Name = name; control.AccessibleName = accessibleName; }
+
+        private static TableLayoutPanel Stack(string name)
+        {
+            var panel = new TableLayoutPanel { Name = name, ColumnCount = 1, RowCount = 0, AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink, Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 12) };
+            panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); return panel;
+        }
+
+        private static void AddRow(TableLayoutPanel panel, Control control)
+        {
+            int row = panel.RowCount++; panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            control.Margin = new Padding(0, 0, 0, 10); panel.Controls.Add(control, 0, row);
+        }
+
+        private static TableLayoutPanel SettingsGrid(string name)
+        {
+            var panel = new TableLayoutPanel { Name = name, Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 3, RowCount = 0 };
+            panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 168));
+            panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            return panel;
+        }
+
+        private static void AddField(TableLayoutPanel panel, int row, string label, Control control)
+        {
+            panel.RowCount = row + 1; panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            var caption = TextLabel(label, 10.5f, Muted); caption.Margin = new Padding(0, 7, 8, 7);
+            panel.Controls.Add(caption, 0, row); control.Dock = DockStyle.Fill;
+            control.Margin = new Padding(0, 5, 8, 5); panel.Controls.Add(control, 1, row);
+            panel.SetColumnSpan(control, 2);
+        }
+
+        private void AddOptional(TableLayoutPanel root, string title, Control content)
+        {
+            var toggle = ActionButton("Show " + title, false); toggle.TextAlign = ContentAlignment.MiddleLeft;
+            toggle.AccessibleName = toggle.Text; toggle.AccessibleDescription = "Collapsed"; toggle.Name = content.Name + "Toggle"; toggle.Dock = DockStyle.Fill;
+            content.Visible = false;
+            toggle.Click += (s, e) => { content.Visible = !content.Visible; toggle.Text = (content.Visible ? "Hide " : "Show ") + title; toggle.AccessibleName = toggle.Text; toggle.AccessibleDescription = content.Visible ? "Expanded" : "Collapsed"; };
+            AddRow(root, toggle); AddRow(root, content);
         }
 
         private void AddSetting(TableLayoutPanel panel, int row, string label, Control control, string buttonText, Func<Task> action)
         {
-            panel.Controls.Add(TextLabel(label, 10, Muted), 0, row);
-            control.Dock = DockStyle.Fill; control.Margin = new Padding(4, 7, 10, 7); panel.Controls.Add(control, 1, row);
-            var button = ActionButton(buttonText, false); button.Dock = DockStyle.Fill; button.Margin = new Padding(0, 4, 0, 4);
+            AddField(panel, row, label, control); panel.SetColumnSpan(control, 1);
+            var button = ActionButton(buttonText, false); button.Margin = new Padding(0, 3, 0, 3);
+            button.AccessibleName = buttonText + " " + label; button.Name = panel.Name + "Action" + row;
             button.Click += async (s, e) => { if (!busy && !running) { try { await action(); } catch (Exception ex) { ShowError(ex); } } };
             panel.Controls.Add(button, 2, row); setupControls.Add(control); setupControls.Add(button);
         }
@@ -210,7 +291,7 @@ namespace XxmiCollector
                     frameCapture = await PresentMonCapture.StartAsync(presentMon.Text, selectedPid, targetSeconds, session.DirectoryPath);
                 recordingClock.Restart(); running = true; timer.Start();
                 session.AddMarker("guided_recording_started", "Requested duration: " + targetSeconds + " seconds. Setup precedes this marker.");
-                SetStatus("Recording — perform your scenario", "With the diagnostic DLL: set mod_load_trace=1 in [Logging], then F10. Before finishing, set it to 0 and F10 to export. No settings are changed by this app.");
+                SetStatus("Recording — switch back to your game", "Play the scene you want to capture. This saves automatically after " + targetSeconds + " seconds; Finish & save ends it sooner. Screenshots are optional.");
                 frameLabel.Text = frameCapture == null ? "No frame capture selected" : frameCapture.Status;
             }
             catch (Exception ex)
@@ -234,7 +315,7 @@ namespace XxmiCollector
                 if (frameCapture != null) await frameCapture.StopAsync();
                 await processStop;
                 await BuildReportAsync();
-                SetStatus("Capture saved", "Open the report to see available measurements. If the native trace was exported afterward, click Refresh exported traces to update the report and ZIP.");
+                SetStatus("Capture saved", "Open the report or saved ZIP below. Saved to: " + session.DirectoryPath + ". Native trace refresh is in optional capture settings.");
             }
             catch (Exception ex) { ShowError(ex); }
             finally { busy = false; UpdateControls(); if (closingRequested) { allowClose = true; Close(); } }
@@ -340,6 +421,13 @@ namespace XxmiCollector
             openReport.Enabled = !busy && !running && reportPath != null && File.Exists(reportPath);
             openFolder.Enabled = !busy && session != null;
             refreshTraces.Enabled = !busy && !running && session != null;
+            openZip.Enabled = !busy && !running && reportPath != null && session != null && File.Exists(session.DirectoryPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + ".zip");
+            start.Visible = !running; stop.Visible = running;
+            ((CaptureButton)start).Primary = reportPath == null;
+            ((CaptureButton)stop).Primary = true;
+            ((CaptureButton)openReport).Primary = reportPath != null && !running;
+            // Enter only starts a ready capture; stopping always requires an explicit action.
+            AcceptButton = !busy && !running && reportPath == null ? start : null;
             progress.Style = busy || running ? ProgressBarStyle.Marquee : ProgressBarStyle.Blocks;
             progress.MarqueeAnimationSpeed = busy || running ? 30 : 0;
         }
@@ -354,12 +442,49 @@ namespace XxmiCollector
         }
         private void ChooseFolder(TextBox target) { using (var dialog = new FolderBrowserDialog { SelectedPath = target.Text }) if (dialog.ShowDialog(this) == DialogResult.OK) target.Text = dialog.SelectedPath; }
         private void ChooseFile(TextBox target, string filter) { using (var dialog = new OpenFileDialog { Filter = filter }) if (dialog.ShowDialog(this) == DialogResult.OK) target.Text = dialog.FileName; }
-        private static ComboBox Combo() { return new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill, BackColor = Card, ForeColor = Ink, FlatStyle = FlatStyle.Flat, Margin = new Padding(4, 4, 8, 4) }; }
-        private static TextBox Input() { return new TextBox { Dock = DockStyle.Fill, BackColor = Canvas, ForeColor = Ink, BorderStyle = BorderStyle.FixedSingle, Margin = new Padding(4, 4, 8, 4), MaxLength = 16384 }; }
-        private static Label TextLabel(string text, float size, Color color) { return new Label { Text = text, Font = new Font("Segoe UI", size), ForeColor = color, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }; }
-        private static Button ActionButton(string text, bool primary) {
-            var button = new Button { Text = text, AutoSize = true, Height = 38, MinimumSize = new Size(104, 38), Padding = new Padding(10, 0, 10, 0), Margin = new Padding(0, 0, 8, 0), FlatStyle = FlatStyle.Flat, BackColor = primary ? Accent : Card, ForeColor = primary ? Canvas : Ink, Cursor = Cursors.Hand };
-            button.FlatAppearance.BorderColor = primary ? Accent : Color.FromArgb(57, 78, 96); return button;
+        private static ComboBox Combo() { return new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill, BackColor = Card, ForeColor = Ink, FlatStyle = FlatStyle.Standard, Margin = new Padding(0, 4, 8, 4) }; }
+        private static TextBox Input() { return new TextBox { Dock = DockStyle.Fill, BackColor = Card, ForeColor = Ink, BorderStyle = BorderStyle.FixedSingle, Margin = new Padding(0, 4, 8, 4), MaxLength = 16384 }; }
+        private static Label TextLabel(string text, float size, Color color) { return new Label { Text = text, Font = new Font("Segoe UI", size), ForeColor = color, Dock = DockStyle.Fill, AutoSize = true, TextAlign = ContentAlignment.MiddleLeft }; }
+        private static Button ActionButton(string text, bool primary)
+        {
+            return new CaptureButton { Text = text, AccessibleName = text, Name = text.Replace(" ", ""), Primary = primary,
+                AutoSize = true, MinimumSize = new Size(108, 38), Padding = new Padding(12, 6, 12, 6),
+                Margin = new Padding(0, 0, 8, 0), Cursor = Cursors.Hand };
+        }
+
+        // Windows themes can override disabled button colors. Paint every state explicitly
+        // so its label and boundary stay readable, including in Windows high contrast.
+        private sealed class CaptureButton : Button
+        {
+            private bool primary;
+            private bool pressed;
+            internal CaptureButton()
+            {
+                FlatStyle = FlatStyle.Flat; UseVisualStyleBackColor = false; UseMnemonic = false;
+                SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
+            }
+            protected override void OnMouseDown(MouseEventArgs e) { pressed = true; Invalidate(); base.OnMouseDown(e); }
+            protected override void OnMouseUp(MouseEventArgs e) { pressed = false; Invalidate(); base.OnMouseUp(e); }
+            protected override void OnMouseLeave(EventArgs e) { pressed = false; Invalidate(); base.OnMouseLeave(e); }
+            internal bool Primary { get { return primary; } set { primary = value; Invalidate(); } }
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                Color background = !Enabled ? CapturePalette.DisabledSurface : primary ? CapturePalette.Primary : Card;
+                Color foreground = !Enabled ? CapturePalette.DisabledText : primary ? CapturePalette.OnPrimary : Ink;
+                e.Graphics.Clear(background);
+                ControlPaint.DrawBorder(e.Graphics, ClientRectangle, CapturePalette.Border, ButtonBorderStyle.Solid);
+                var bounds = ClientRectangle; bounds.Inflate(-8, -4);
+                TextFormatFlags alignment = TextFormatFlags.VerticalCenter;
+                if (TextAlign == ContentAlignment.TopLeft || TextAlign == ContentAlignment.MiddleLeft || TextAlign == ContentAlignment.BottomLeft)
+                    alignment |= TextFormatFlags.Left;
+                else if (TextAlign == ContentAlignment.TopRight || TextAlign == ContentAlignment.MiddleRight || TextAlign == ContentAlignment.BottomRight)
+                    alignment |= TextFormatFlags.Right;
+                else alignment |= TextFormatFlags.HorizontalCenter;
+                TextRenderer.DrawText(e.Graphics, Text, Font, bounds, foreground,
+                    alignment | TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
+                if (pressed && Enabled) ControlPaint.DrawBorder(e.Graphics, Rectangle.Inflate(ClientRectangle, -2, -2), foreground, ButtonBorderStyle.Solid);
+                if (Focused && ShowFocusCues) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(ClientRectangle, -4, -4), foreground, background);
+            }
         }
         [StructLayout(LayoutKind.Sequential)] private struct Rect { public int Left, Top, Right, Bottom; }
         [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr window, out Rect rect);

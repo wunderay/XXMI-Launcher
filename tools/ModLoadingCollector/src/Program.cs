@@ -4,8 +4,8 @@ using System.Windows.Forms;
 
 [assembly: AssemblyTitle("XXMI Capture")]
 [assembly: AssemblyDescription("On-demand local diagnostics for XXMI mod loading")]
-[assembly: AssemblyVersion("0.1.0.0")]
-[assembly: AssemblyFileVersion("0.1.0.0")]
+[assembly: AssemblyVersion("0.1.1.0")]
+[assembly: AssemblyFileVersion("0.1.1.0")]
 
 namespace XxmiCollector
 {
