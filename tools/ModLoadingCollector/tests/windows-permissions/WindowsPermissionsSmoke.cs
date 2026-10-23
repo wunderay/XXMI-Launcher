@@ -45,7 +45,7 @@ internal static class WindowsPermissionsSmoke
             Directory.CreateDirectory(destination);
             Run().GetAwaiter().GetResult();
             Console.WriteLine("PASS: synthetic Windows process permission checks.");
-            File.WriteAllText(Path.Combine(destination, "assertions.txt"), "PASS: limited-query capture, exit code 259, retained process identity, unknown lifetime duration and user stop.\n");
+            File.WriteAllText(Path.Combine(destination, "assertions.txt"), "PASS: real process discovery and game detection, limited-query capture, exit code 259, retained process identity, unknown lifetime duration and user stop.\n");
             return 0;
         }
         catch (Exception ex)
@@ -73,10 +73,20 @@ internal static class WindowsPermissionsSmoke
 
     private static async Task LimitedQueryExit()
     {
-        using (var child = new OwnedChild(Query | Synchronize))
+        using (var image = new CopiedFixtureImage())
+        using (var child = new OwnedChild(Query | Synchronize, image.Path))
         {
             child.AssertDenied(Query, "full query");
             child.AssertDenied(Synchronize, "synchronize");
+            // Real enumeration reads process names; restrict by our owned PID
+            // before detection so no hint probing can touch another process.
+            var choices = CaptureSession.ListProcesses().Where(x => x.Id == child.Id).ToList();
+            Require(choices.Count == 1 && choices[0].Name.Equals("ZenlessZoneZero", StringComparison.OrdinalIgnoreCase),
+                "Real process discovery must return the owned renamed fixture as ZenlessZoneZero, PID " + child.Id);
+            var detected = GameDetection.Find(choices);
+            Require(detected.Count == 1 && detected[0].Process.Id == child.Id && detected[0].GameName == "Zenless Zone Zero",
+                "Real game detection must identify exactly the owned discovered fixture.");
+            Console.WriteLine("PASS: real ListProcesses -> GameDetection.Find discovered owned synthetic Zenless Zone Zero, PID " + detected[0].Process.Id + ".");
             using (var original = Process.GetProcessById(child.Id))
             {
                 try { bool ignored = original.HasExited; throw new Exception("Precondition: old Process.HasExited unexpectedly succeeded under the restricted DACL."); }
@@ -95,7 +105,7 @@ internal static class WindowsPermissionsSmoke
             CaptureSession session = null;
             try
             {
-                session = await Start(child, "limited-query", 15);
+                session = await Start(detected[0].Process.Id, "limited-query", 15);
                 IntPtr identityHandle = SessionIdentityHandle(session);
                 Require(identityHandle != IntPtr.Zero && GetProcessId(identityHandle) == child.Id, "Capture must retain a handle to the selected original process.");
                 await Task.Delay(1200);
@@ -157,7 +167,7 @@ internal static class WindowsPermissionsSmoke
             CaptureSession session = null;
             try
             {
-                session = await Start(child, userStop ? "unknown-user-stop" : "unknown-duration", userStop ? 0 : 3);
+                session = await Start(child.Id, userStop ? "unknown-user-stop" : "unknown-duration", userStop ? 0 : 3);
                 await Task.Delay(1100);
                 Require(child.IsAlive && session.IsRunning, "Unknown lifetime must keep recording while owned child exists; " + Diagnostics(session));
                 var rows = SampleRows(session);
@@ -176,9 +186,9 @@ internal static class WindowsPermissionsSmoke
         }
     }
 
-    private static Task<CaptureSession> Start(OwnedChild child, string scenario, int duration)
+    private static Task<CaptureSession> Start(int processId, string scenario, int duration)
     {
-        return CaptureSession.StartAsync(new SessionOptions { ProcessId = child.Id, OutputRoot = Path.Combine(destination, scenario),
+        return CaptureSession.StartAsync(new SessionOptions { ProcessId = processId, OutputRoot = Path.Combine(destination, scenario),
             Scenario = scenario, RunKind = "synthetic-permission-smoke", DurationSeconds = duration });
     }
 
@@ -265,6 +275,43 @@ internal static class WindowsPermissionsSmoke
         }
     }
 
+    private sealed class CopiedFixtureImage : IDisposable
+    {
+        private readonly string directory;
+        public string Path { get; private set; }
+
+        public CopiedFixtureImage()
+        {
+            directory = System.IO.Path.Combine(destination, "owned-detection-image-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            Path = System.IO.Path.Combine(directory, "ZenlessZoneZero.exe");
+            try
+            {
+                string source = typeof(WindowsPermissionsSmoke).Assembly.Location;
+                File.Copy(source, Path);
+                if (File.Exists(source + ".config")) File.Copy(source + ".config", Path + ".config");
+            }
+            catch { Dispose(); throw; }
+        }
+
+        public void Dispose()
+        {
+            // The surrounding using disposes the owned process first. Retry only
+            // this fixture-owned directory for transient image mapping release.
+            var clock = Stopwatch.StartNew();
+            while (Directory.Exists(directory))
+            {
+                try { Directory.Delete(directory, true); }
+                catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+                {
+                    if (clock.Elapsed.TotalSeconds >= 3)
+                        throw new IOException("Cannot remove owned detection fixture after children stopped: " + directory, ex);
+                    Thread.Sleep(100);
+                }
+            }
+        }
+    }
+
     private sealed class OwnedChild : IDisposable
     {
         private readonly Process child;
@@ -273,9 +320,9 @@ internal static class WindowsPermissionsSmoke
         public int Id { get { return child.Id; } }
         public bool IsAlive { get { return WaitForSingleObject(Handle, 0) == 0x102; } }
 
-        public OwnedChild(uint denied)
+        public OwnedChild(uint denied, string executable = null)
         {
-            child = Process.Start(new ProcessStartInfo(typeof(WindowsPermissionsSmoke).Assembly.Location, "--child")
+            child = Process.Start(new ProcessStartInfo(executable ?? typeof(WindowsPermissionsSmoke).Assembly.Location, "--child")
             { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true, RedirectStandardOutput = true });
             try
             {

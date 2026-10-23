@@ -1,7 +1,7 @@
 # Windows process permissions smoke test
 
 Run on Windows x64 with .NET Framework 4.8. The project links the production
-`CaptureSession.cs`; its minimal `NativeInventory` stub writes JSON and performs
+`CaptureSession.cs` and `GameDetection.cs`; its minimal `NativeInventory` stub writes JSON and performs
 no WMI, module enumeration, or game access.
 
 ```powershell
@@ -10,7 +10,16 @@ dotnet build tools/ModLoadingCollector/tests/windows-permissions/WindowsPermissi
 if ($LASTEXITCODE -ne 0) { throw "Windows permissions smoke failed" }
 ```
 
-The executable starts only copies of itself. It retains a cleanup handle before
+The executable starts only copies of itself. The limited-query scenario copies
+the fixture into a uniquely owned evidence subdirectory as `ZenlessZoneZero.exe`,
+then uses real `CaptureSession.ListProcesses` enumeration and `GameDetection.Find`
+to discover it and start capture from the detected PID. Enumeration reads process
+names; results are restricted to the owned PID before detection, so no other
+process receives detector hint probes. The copied image and optional config are
+deleted with bounded retries after its child has stopped. This is a synthetic
+process, not an actual game.
+
+It retains a cleanup handle before
 applying a process DACL using `SetKernelObjectSecurity`. Explicit deny ACEs for
 the current user reproduce access denied without elevation,
 injection, or access to any actual game. DACLs disappear with those disposable
@@ -26,6 +35,9 @@ privilege run the same strict denied-access assertions.
 
 Assertions cover:
 
+- Real process discovery and known-executable game detection identify exactly
+  the owned renamed process under restricted permissions and supply its PID to
+  production capture.
 - Denied full-query/synchronize rights make the original .NET Framework
   `Process.HasExited` call fail with Win32 error 5, while limited query and
   `GetProcessTimes` succeed. Production capture stays recording and emits CPU

@@ -10,5 +10,6 @@
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" Version="1.0.3" PrivateAssets="all" />
     <Reference Include="System.Runtime.Serialization" />
     <Compile Include="../../src/CaptureSession.cs" Link="CaptureSession.cs" />
+    <Compile Include="../../src/GameDetection.cs" Link="GameDetection.cs" />
   </ItemGroup>
 </Project>
