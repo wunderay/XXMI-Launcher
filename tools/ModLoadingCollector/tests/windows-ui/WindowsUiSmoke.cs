@@ -161,6 +161,16 @@ internal static class WindowsUiSmoke
                     ApplyChoices(form, app, new[] { "ZenlessZoneZero" }, new[] { 4242 }); Layout(form);
                     Check(SelectedPid(combo) == 4242 && !Find(form, "GameSelection").Visible,
                         name + ": known single-game state restored after interaction checks");
+                    var denied = new InvalidOperationException("Could not create capture folder: C:\\Synthetic\\Captures.", new Win32Exception(5));
+                    form.GetType().GetMethod("ShowError", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, new object[] { denied });
+                    Layout(form);
+                    Check(Find(form, "CaptureDetail").Text.Contains("C:\\Synthetic\\Captures"), name + ": error names the failed operation and folder");
+                    var copyError = (Button)Find(form, "CopyErrorDetails");
+                    Check(copyError.Visible && FullyInside(form, copyError), name + ": error-copy action remains reachable");
+                    string errorDetails = (string)form.GetType().GetField("lastErrorDetails", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                    Check(errorDetails.Contains("Windows error code: 5") && errorDetails.Contains("C:\\Synthetic\\Captures"),
+                        name + ": diagnostic details retain native error and operation context");
+                    Snapshot(form, name + "-permission-error");
                 }
             }
             catch (Exception ex) { failures.Add(name + ": " + ex); try { Snapshot(form, name + "-error"); } catch { } }

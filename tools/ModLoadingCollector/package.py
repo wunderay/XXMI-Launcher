@@ -35,7 +35,7 @@ def main():
     files["Source/Themes/Default/window-icon.ico"] = (repo / "Themes/Default/window-icon.ico").read_bytes()
     files["Source/LICENSE"] = files["LICENSE.txt"]
     files["BUILD-INFO.json"] = (json.dumps({
-        "application": "XXMI Capture", "version": "0.1.1-preview", "target": "Windows x64 / .NET Framework 4.8",
+        "application": "XXMI Capture", "version": "0.1.2-preview", "target": "Windows x64 / .NET Framework 4.8",
         "sourceRevision": args.source_revision, "buildSdkVersion": args.sdk_version,
         "qualification": "Cross-compiled in Linux; portable logic tested. See included README for Windows UI validation. Live WMI/module/PresentMon/game-screenshot qualification pending.",
         "executableSha256": hashlib.sha256(files["XXMI.Capture.exe"]).hexdigest(),

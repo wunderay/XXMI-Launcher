@@ -12,7 +12,7 @@ namespace XxmiCollector
 {
     internal static class NativeInventory
     {
-        public static void Collect(Process process, string destination, Action<string> failure)
+        public static void Collect(Process process, string destination, Action<string> failure, Func<bool> canReadProcess = null)
         { throw new InvalidOperationException("Windows probes must not be invoked by portable tests."); }
     }
 }
@@ -48,6 +48,31 @@ internal static class BackendTests
         Set(session, "manifest", new SessionManifest { StartedUtc = CaptureSession.Utc(session.StartedUtc) });
         Set(session, "stoppedUtc", DateTime.UtcNow);
         return session;
+    }
+
+    private static void PermissionAndLifetimeTests()
+    {
+        Check(CaptureSession.ClassifyLifetime(false, 0) == CaptureSession.ProcessLifetimeState.Unknown,
+            "Denied/failed lifetime query remains unknown, not exited.");
+        Check(CaptureSession.ClassifyLifetime(false, 123) == CaptureSession.ProcessLifetimeState.Unknown,
+            "Failed query cannot consume a stale exit timestamp.");
+        Check(CaptureSession.ClassifyLifetime(true, 0) == CaptureSession.ProcessLifetimeState.Running,
+            "Zero exit FILETIME confirms running independent of exit-code value.");
+        Check(CaptureSession.ClassifyLifetime(true, 123) == CaptureSession.ProcessLifetimeState.Exited,
+            "Nonzero exit FILETIME confirms actual exit, including exit code 259.");
+        var denied = new UnauthorizedAccessException("Access denied by folder policy");
+        string output = Path.Combine(root, "denied-output", "samples.csv");
+        try
+        {
+            CaptureSession.StartupFileOperation("Create capture file", output, () => { throw denied; });
+            Check(false, "Denied startup operation must fail.");
+        }
+        catch (IOException ex)
+        {
+            Check(ex.Message.Contains("Create capture file") && ex.Message.Contains(output) && ex.Message.Contains(denied.Message),
+                "Startup failure identifies precise stage, destination and original error.");
+            Check(ReferenceEquals(ex.InnerException, denied), "Startup failure preserves the original exception.");
+        }
     }
 
     private static void SnapshotTests()
@@ -146,6 +171,7 @@ internal static class BackendTests
     {
         root = args.Length > 0 ? Path.Combine(Path.GetFullPath(args[0]), "run-" + Guid.NewGuid().ToString("N")) : throw new ArgumentException("Pass a task-owned scratch directory.");
         Directory.CreateDirectory(root);
+        PermissionAndLifetimeTests();
         SnapshotTests();
         TraceTests();
         await LifecycleTests();

@@ -45,6 +45,22 @@ trust settings, elevate itself, download tools, or upload data. A process's GPU
 budget, GPU residency, active device flags, visual correctness and exact
 first-eligible/first-correct-frame latency remain unmeasured here.
 
+## Permission failures
+
+Capture uses a held limited-query process handle. Protected or elevated games
+can deny some measurements; those fields remain unavailable while other evidence
+continues. If even limited access is denied, process lifetime and telemetry remain
+unknown rather than falsely reporting an exit. Such a capture ends by its timer
+or **Finish & save**. Module snapshots are accepted only while the original
+process lifetime can be verified. No elevation or game security changes occur.
+
+The default save folder is `%LOCALAPPDATA%\XXMI Captures`, outside commonly
+protected Documents folders. **Open folder** reveals each capture. Optional
+settings still let you select a different folder. If a write fails, the error
+names its operation and path; choose a writable folder and retry. **Copy error
+details** copies the exception and native error code locally for troubleshooting.
+Review copied details before sharing, since they include local paths.
+
 ## Native phase capture
 
 Native timings require the diagnostic DLL implemented separately under
@@ -85,7 +101,7 @@ frame. Use paired runs and enough valid samples before interpreting p99.
 
 ## Local outputs and bounds
 
-Each run has a unique folder under `Documents\XXMI Captures` or your selected
+Each run has a unique folder under `%LOCALAPPDATA%\XXMI Captures` or your selected
 output folder. It contains `session.json`, `inventory.json`, `samples.csv`,
 `markers.csv`, `report.html`, `analysis.json`, copied native traces and selected
 evidence. PresentMon adds its CSV, metadata and bounded diagnostics. A sibling ZIP

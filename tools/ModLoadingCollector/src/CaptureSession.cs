@@ -90,7 +90,17 @@ namespace XxmiCollector
         private string status = "Starting";
         private long evidenceBytes;
         private int evidenceCount;
-        private IntPtr ioHandle;
+        // Never reopen by PID: this limited handle anchors all process telemetry.
+        private IntPtr processHandle;
+        private int processOpenError;
+        private bool processExited;
+        internal enum ProcessLifetimeState { Unknown, Running, Exited }
+        internal sealed class ProcessLifetime
+        {
+            public ProcessLifetimeState State;
+            public long Created, CpuTicks;
+            public string Problem;
+        }
         private bool stopping;
         private DateTime stoppedUtc;
 
@@ -139,42 +149,65 @@ namespace XxmiCollector
             if (supplied.DurationSeconds < 0 || supplied.DurationSeconds > 86400)
                 throw new ArgumentException("Duration must be between 0 (manual stop) and 86400 seconds.");
             options = supplied;
-            options.OutputRoot = Path.GetFullPath(supplied.OutputRoot);
-            if (!string.IsNullOrWhiteSpace(options.TraceDirectory)) options.TraceDirectory = Path.GetFullPath(options.TraceDirectory);
-            process = Process.GetProcessById(options.ProcessId);
-            if (process.HasExited) throw new InvalidOperationException("The selected process has exited.");
-            string processName = process.ProcessName;
-            Directory.CreateDirectory(options.OutputRoot);
+            StartupFileOperation("Resolve output folder", supplied.OutputRoot, () => options.OutputRoot = Path.GetFullPath(supplied.OutputRoot));
+            if (!string.IsNullOrWhiteSpace(options.TraceDirectory))
+                StartupFileOperation("Resolve trace folder", options.TraceDirectory, () => options.TraceDirectory = Path.GetFullPath(options.TraceDirectory));
+            processHandle = OpenProcess(0x1000, false, options.ProcessId); // PROCESS_QUERY_LIMITED_INFORMATION only
+            processOpenError = processHandle == IntPtr.Zero ? Marshal.GetLastWin32Error() : 0;
+            // ERROR_INVALID_PARAMETER identifies a PID that no longer exists. Access denied does not.
+            if (processHandle == IntPtr.Zero && processOpenError == 87)
+                throw new InvalidOperationException("The selected process no longer exists. Select the running game again.");
+            var initialLifetime = ReadLifetime();
+            if (initialLifetime.State == ProcessLifetimeState.Exited)
+                throw new InvalidOperationException("The selected process has exited. Select the running game again.");
+            string processName = "Unknown (PID " + options.ProcessId.ToString(CultureInfo.InvariantCulture) + ")";
+            if (initialLifetime.State == ProcessLifetimeState.Running)
+            {
+                // This object is used only for guarded, optional module inventory.
+                try { process = Process.GetProcessById(options.ProcessId); }
+                catch (ArgumentException) { }
+                catch (System.ComponentModel.Win32Exception) { }
+                var image = new StringBuilder(32768);
+                int length = image.Capacity;
+                if (QueryFullProcessImageName(processHandle, 0, image, ref length))
+                    processName = Path.GetFileNameWithoutExtension(image.ToString());
+            }
+            StartupFileOperation("Create output folder", options.OutputRoot, () => Directory.CreateDirectory(options.OutputRoot));
             DirectoryPath = Path.Combine(options.OutputRoot, "capture-" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + "-" + Guid.NewGuid().ToString("N").Substring(0, 8));
-            Directory.CreateDirectory(DirectoryPath);
+            StartupFileOperation("Create capture folder", DirectoryPath, () => Directory.CreateDirectory(DirectoryPath));
             StartedUtc = DateTime.UtcNow;
             clock.Start();
             manifest = new SessionManifest { ProcessId = options.ProcessId, ProcessName = processName,
                 StartedUtc = Utc(StartedUtc), Scenario = Limit(options.Scenario, 512), RunKind = Limit(options.RunKind, 128),
                 Notes = Limit(options.Notes, 16384), DurationSeconds = options.DurationSeconds, Status = "Starting" };
             manifest.NativeTracePattern = "mod-load-trace-" + options.ProcessId.ToString(CultureInfo.InvariantCulture) + "-*.csv";
-            try { manifest.ProcessStartedUtc = Utc(process.StartTime.ToUniversalTime()); }
-            catch (Exception ex) { Failure("Process start time: " + Describe(ex)); }
-            ioHandle = OpenProcess(0x0400, false, options.ProcessId);
-            if (ioHandle == IntPtr.Zero) ioHandle = OpenProcess(0x1000, false, options.ProcessId);
-            if (ioHandle == IntPtr.Zero) Failure("Process IO counters unavailable: Win32 " + Marshal.GetLastWin32Error());
+            if (initialLifetime.State == ProcessLifetimeState.Running)
+                manifest.ProcessStartedUtc = Utc(DateTime.FromFileTimeUtc(initialLifetime.Created));
+            else Failure("Process telemetry unavailable: " + initialLifetime.Problem + ". Hardware inventory and manual markers remain available; process exit cannot be detected.");
             CaptureTraceBaseline();
             samples = Writer("samples.csv");
-            samples.WriteLine("elapsed_ms,utc,cpu_percent,working_set_bytes,private_bytes,io_read_bytes,io_write_bytes,status");
+            StartupFileOperation("Write sample header", Path.Combine(DirectoryPath, "samples.csv"), () =>
+                samples.WriteLine("elapsed_ms,utc,cpu_percent,working_set_bytes,private_bytes,io_read_bytes,io_write_bytes,status"));
             markers = Writer("markers.csv");
-            markers.WriteLine("elapsed_ms,utc,label,note");
-            WriteManifest();
+            StartupFileOperation("Write marker header", Path.Combine(DirectoryPath, "markers.csv"), () => markers.WriteLine("elapsed_ms,utc,label,note"));
+            StartupFileOperation("Write initial manifest", Path.Combine(DirectoryPath, "session.json"), WriteManifest);
             // Inventory runs before sampling; its duration remains visible in elapsed times.
-            NativeInventory.Collect(process, Path.Combine(DirectoryPath, "inventory.json"), Failure);
+            StartupFileOperation("Write inventory", Path.Combine(DirectoryPath, "inventory.json"),
+                () => NativeInventory.Collect(process, Path.Combine(DirectoryPath, "inventory.json"), Failure,
+                    () => process != null && ReadLifetime().State == ProcessLifetimeState.Running));
             lock (sync) { status = "Recording"; manifest.Status = status; }
-            AddMarker("capture_started", "Process telemetry started. Manual markers are observer timestamps, not frame measurements.");
-            WriteManifest();
+            StartupFileOperation("Write capture-start marker", Path.Combine(DirectoryPath, "markers.csv"), () =>
+                AddMarker("capture_started", "Capture started. See sample status for process telemetry availability. Manual markers are observer timestamps, not frame measurements."));
+            StartupFileOperation("Write recording manifest", Path.Combine(DirectoryPath, "session.json"), WriteManifest);
             samplingTask = Task.Run(SampleLoopAsync);
         }
 
         private StreamWriter Writer(string relative)
         {
-            return new StreamWriter(new FileStream(Path.Combine(DirectoryPath, relative), FileMode.CreateNew, FileAccess.Write, FileShare.Read), new UTF8Encoding(false)) { AutoFlush = true };
+            StreamWriter writer = null;
+            StartupFileOperation("Create capture file", Path.Combine(DirectoryPath, relative), () =>
+                writer = new StreamWriter(new FileStream(Path.Combine(DirectoryPath, relative), FileMode.CreateNew, FileAccess.Write, FileShare.Read), new UTF8Encoding(false)) { AutoFlush = true });
+            return writer;
         }
 
         public void AddMarker(string label, string note = null)
@@ -197,29 +230,34 @@ namespace XxmiCollector
                     double now = clock.Elapsed.TotalMilliseconds;
                     string cpu = "", working = "", bytes = "", read = "", written = "";
                     var problems = new List<string>();
-                    bool exited = false;
-                    try { process.Refresh(); exited = process.HasExited; }
-                    catch (Exception ex) { problems.Add("process: " + Describe(ex)); exited = true; }
-                    if (exited)
+                    var lifetime = ReadLifetime();
+                    if (lifetime.State == ProcessLifetimeState.Exited)
                     {
-                        foreach (string problem in problems) Failure("Sample " + problem);
-                        AddMarker("process_exited", "Sampling stopped because the selected process exited or became unavailable.");
+                        AddMarker("process_exited", "Sampling stopped because the selected process exited (confirmed by its held handle).");
                         break;
                     }
-                    try
+                    if (lifetime.State == ProcessLifetimeState.Running)
                     {
-                        var total = process.TotalProcessorTime;
+                        var total = TimeSpan.FromTicks(lifetime.CpuTicks);
                         if (previousCpu.HasValue && now > previousElapsed)
                             cpu = Number(Math.Max(0, (total - previousCpu.Value).TotalMilliseconds / (now - previousElapsed) / Math.Max(1, Environment.ProcessorCount) * 100));
                         previousCpu = total; previousElapsed = now;
+                        MemoryCounters memory = new MemoryCounters();
+                        memory.Size = (uint)Marshal.SizeOf(typeof(MemoryCounters));
+                        if (GetProcessMemoryInfo(processHandle, ref memory, memory.Size))
+                        { working = memory.WorkingSetSize.ToUInt64().ToString(CultureInfo.InvariantCulture); bytes = memory.PrivateUsage.ToUInt64().ToString(CultureInfo.InvariantCulture); }
+                        else problems.Add("memory unavailable (Win32 " + Marshal.GetLastWin32Error() + ")");
+                        IoCounters io;
+                        if (GetProcessIoCounters(processHandle, out io))
+                        { read = io.ReadTransferCount.ToString(CultureInfo.InvariantCulture); written = io.WriteTransferCount.ToString(CultureInfo.InvariantCulture); }
+                        else problems.Add("io unavailable (Win32 " + Marshal.GetLastWin32Error() + ")");
                     }
-                    catch (Exception ex) { previousCpu = null; problems.Add("cpu: " + Describe(ex)); }
-                    try { working = process.WorkingSet64.ToString(CultureInfo.InvariantCulture); bytes = process.PrivateMemorySize64.ToString(CultureInfo.InvariantCulture); }
-                    catch (Exception ex) { problems.Add("memory: " + Describe(ex)); }
-                    IoCounters io;
-                    if (ioHandle != IntPtr.Zero && GetProcessIoCounters(ioHandle, out io))
-                    { read = io.ReadTransferCount.ToString(CultureInfo.InvariantCulture); written = io.WriteTransferCount.ToString(CultureInfo.InvariantCulture); }
-                    else problems.Add("io unavailable (Win32 " + Marshal.GetLastWin32Error() + ")");
+                    else
+                    {
+                        previousCpu = null;
+                        problems.Add("process lifetime unknown: " + lifetime.Problem);
+                        problems.Add("process metrics unavailable: identity/lifetime could not be verified");
+                    }
                     foreach (string problem in problems) Failure("Sample " + problem);
                     samples.WriteLine(Number(now) + "," + Utc(DateTime.UtcNow) + "," + cpu + "," + working + "," + bytes + "," + read + "," + written + "," + Csv(problems.Count == 0 ? "ok" : string.Join("; ", problems)));
                     if (options.DurationSeconds > 0 && clock.Elapsed.TotalSeconds >= options.DurationSeconds) break;
@@ -449,8 +487,32 @@ namespace XxmiCollector
         {
             if (samples != null) { try { samples.Dispose(); } catch (Exception ex) { Failure("Samples close: " + Describe(ex)); } samples = null; }
             if (markers != null) { try { markers.Dispose(); } catch (Exception ex) { Failure("Markers close: " + Describe(ex)); } markers = null; }
-            if (ioHandle != IntPtr.Zero) { CloseHandle(ioHandle); ioHandle = IntPtr.Zero; }
+            if (processHandle != IntPtr.Zero) { CloseHandle(processHandle); processHandle = IntPtr.Zero; }
             if (process != null) { process.Dispose(); process = null; }
+        }
+
+        // Exit time, rather than exit code, distinguishes a live process from an actual exit
+        // with code 259 (STILL_ACTIVE). Unknown permissions must never mean exited.
+        internal static ProcessLifetimeState ClassifyLifetime(bool querySucceeded, long exitTime)
+        { return !querySucceeded ? ProcessLifetimeState.Unknown : exitTime == 0 ? ProcessLifetimeState.Running : ProcessLifetimeState.Exited; }
+
+        private ProcessLifetime ReadLifetime()
+        {
+            if (processExited) return new ProcessLifetime { State = ProcessLifetimeState.Exited };
+            if (processHandle == IntPtr.Zero)
+                return new ProcessLifetime { State = ProcessLifetimeState.Unknown, Problem = "limited process query unavailable (Win32 " + processOpenError + ")" };
+            long created, exited, kernel, user;
+            bool success = GetProcessTimes(processHandle, out created, out exited, out kernel, out user);
+            var state = ClassifyLifetime(success, exited);
+            if (state == ProcessLifetimeState.Exited) processExited = true;
+            return new ProcessLifetime { State = state, Created = created, CpuTicks = success ? kernel + user : 0,
+                Problem = success ? null : "GetProcessTimes unavailable (Win32 " + Marshal.GetLastWin32Error() + ")" };
+        }
+
+        internal static void StartupFileOperation(string stage, string path, Action operation)
+        {
+            try { operation(); }
+            catch (Exception ex) { throw new IOException(stage + " failed at '" + path + "': " + Describe(ex), ex); }
         }
 
         internal static string Describe(Exception ex) { return ex.GetType().Name + ": " + ex.Message; }
@@ -472,6 +534,16 @@ namespace XxmiCollector
         {
             public ulong ReadOperationCount, WriteOperationCount, OtherOperationCount, ReadTransferCount, WriteTransferCount, OtherTransferCount;
         }
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MemoryCounters
+        {
+            public uint Size, PageFaultCount;
+            public UIntPtr PeakWorkingSetSize, WorkingSetSize, QuotaPeakPagedPoolUsage, QuotaPagedPoolUsage,
+                QuotaPeakNonPagedPoolUsage, QuotaNonPagedPoolUsage, PagefileUsage, PeakPagefileUsage, PrivateUsage;
+        }
+        [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetProcessTimes(IntPtr process, out long creation, out long exit, out long kernel, out long user);
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool QueryFullProcessImageName(IntPtr process, int flags, StringBuilder image, ref int length);
+        [DllImport("psapi.dll", SetLastError = true)] private static extern bool GetProcessMemoryInfo(IntPtr process, ref MemoryCounters counters, uint size);
         [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr OpenProcess(uint access, bool inherit, int processId);
         [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetProcessIoCounters(IntPtr process, out IoCounters counters);
         [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle);

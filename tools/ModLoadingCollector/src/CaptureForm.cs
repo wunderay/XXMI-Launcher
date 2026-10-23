@@ -42,6 +42,7 @@ namespace XxmiCollector
         private readonly Button evidence = ActionButton("Attach evidence", false);
         private readonly Button openReport = ActionButton("Open report", false);
         private readonly Button openZip = ActionButton("Open saved ZIP", false);
+        private readonly Button copyError = ActionButton("Copy error details", false);
         private readonly ToolTip tips = new ToolTip();
         private readonly Button openFolder = ActionButton("Open folder", false);
         private readonly Button refreshTraces = ActionButton("Refresh exported traces", false);
@@ -69,6 +70,7 @@ namespace XxmiCollector
         private int targetSeconds;
         private int markerCount;
         private string reportPath;
+        private string lastErrorDetails;
 
         public CaptureForm()
         {
@@ -82,7 +84,7 @@ namespace XxmiCollector
             AutoScaleMode = AutoScaleMode.Dpi;
             Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
             BuildLayout();
-            output.Text = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "XXMI Captures");
+            output.Text = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "XXMI Captures");
             scenario.Items.AddRange(new object[] { "First character appearance", "Character revisit", "Outfit / toggle", "LOD transition", "F10 unchanged refresh", "New or modified mod", "Custom scenario" });
             scenario.SelectedIndex = 0;
             runKind.Items.AddRange(new object[] { "Baseline", "Candidate", "Investigation" });
@@ -99,6 +101,11 @@ namespace XxmiCollector
             duration.ValueChanged += (s, e) => { start.Text = "Start " + duration.Value + "-second capture"; start.AccessibleName = start.Text; };
             openZip.Click += (s, e) => { if (session != null) OpenPath(session.DirectoryPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + ".zip"); };
             openReport.Click += (s, e) => OpenPath(reportPath);
+            copyError.Click += (s, e) => {
+                if (String.IsNullOrEmpty(lastErrorDetails)) return;
+                try { Clipboard.SetText(lastErrorDetails); copyError.Text = "Copied error details"; copyError.AccessibleName = copyError.Text; }
+                catch (ExternalException) { MessageBox.Show("The clipboard is busy. Try copying again.", "Copy error details", MessageBoxButtons.OK, MessageBoxIcon.Information); }
+            };
             openFolder.Click += (s, e) => { if (session != null) OpenPath(session.DirectoryPath); };
             refreshTraces.Click += async (s, e) => await RefreshTracesAsync();
             timer.Interval = 250;
@@ -152,7 +159,8 @@ namespace XxmiCollector
             // The footer remains reachable while optional sections scroll.
             var footer = new FlowLayoutPanel { Name = "CaptureActions", Dock = DockStyle.Bottom, AutoSize = true,
                 Padding = new Padding(20, 12, 20, 12), BackColor = Card, WrapContents = true };
-            footer.Controls.AddRange(new Control[] { start, stop, openReport, openZip, openFolder });
+            copyError.Name = "CopyErrorDetails"; copyError.Visible = false;
+            footer.Controls.AddRange(new Control[] { start, stop, openReport, openZip, openFolder, copyError });
             var scroll = new Panel { Name = "CaptureContent", Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(20) };
             var root = Stack("CaptureLayout"); root.Dock = DockStyle.Top;
             scroll.Controls.Add(root); Controls.Add(scroll); Controls.Add(footer);
@@ -357,7 +365,7 @@ namespace XxmiCollector
             try
             {
                 if (frameCapture != null) { frameCapture.Dispose(); frameCapture = null; }
-                reportPath = null; timeline.Items.Clear(); markerCount = 0; markerLabel.Text = "0 markers"; elapsedLabel.Text = "00:00";
+                session = null; reportPath = null; timeline.Items.Clear(); markerCount = 0; markerLabel.Text = "0 markers"; elapsedLabel.Text = "00:00";
                 selectedPid = process.Id; targetSeconds = (int)duration.Value;
                 session = await CaptureSession.StartAsync(new SessionOptions {
                     ProcessId = selectedPid, OutputRoot = output.Text, TraceDirectory = traces.Text,
@@ -508,8 +516,25 @@ namespace XxmiCollector
             progress.MarqueeAnimationSpeed = busy || running ? 30 : 0;
         }
 
-        private void SetStatus(string title, string message) { status.Text = title; detail.Text = message; }
-        private void ShowError(Exception ex) { SetStatus("Capture needs attention", ex.Message + (session == null ? "" : "  Partial evidence is retained in the capture folder.")); }
+        private void SetStatus(string title, string message)
+        {
+            status.Text = title; detail.Text = message;
+            lastErrorDetails = null; copyError.Visible = false;
+        }
+        private void ShowError(Exception ex)
+        {
+            SetStatus("Capture needs attention", ex.Message + (session == null ? "" : "  Partial evidence is retained in: " + session.DirectoryPath));
+            string codes = "";
+            for (Exception current = ex; current != null; current = current.InnerException)
+            {
+                var native = current as System.ComponentModel.Win32Exception;
+                if (native != null) codes += "Windows error code: " + native.NativeErrorCode + Environment.NewLine;
+            }
+            lastErrorDetails = "XXMI Capture " + typeof(CaptureForm).Assembly.GetName().Version + Environment.NewLine
+                + "Selected process ID: " + selectedPid + Environment.NewLine + "Save folder: " + output.Text + Environment.NewLine
+                + codes + ex;
+            copyError.Text = "Copy error details"; copyError.AccessibleName = copyError.Text; copyError.Visible = true;
+        }
         private static void OpenPath(string path)
         {
             if (String.IsNullOrEmpty(path)) return;

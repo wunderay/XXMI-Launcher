@@ -59,7 +59,7 @@ namespace XxmiCollector
     {
         private const int QueryTimeoutMilliseconds = 3000;
 
-        public static void Collect(Process process, string destination, Action<string> failure)
+        public static void Collect(Process process, string destination, Action<string> failure, Func<bool> canReadProcess = null)
         {
             var document = new InventoryDocument { CollectedUtc = CaptureSession.Utc(DateTime.UtcNow),
                 CollectorArchitecture = Environment.Is64BitProcess ? "x64" : "x86", LogicalProcessorCount = Environment.ProcessorCount };
@@ -68,12 +68,28 @@ namespace XxmiCollector
             document.Cpu.AddRange(Query("cpu", "Win32_Processor", new[] { "Name", "Manufacturer", "NumberOfCores", "NumberOfLogicalProcessors", "MaxClockSpeed" }));
             document.Gpu.AddRange(Query("gpu", "Win32_VideoController", new[] { "Name", "PNPDeviceID", "DriverVersion", "DriverDate", "VideoProcessor", "Status" }));
             document.Storage.AddRange(Query("disk", "Win32_DiskDrive", new[] { "Model", "InterfaceType", "MediaType", "Size", "Status" }));
-            CollectModules(process, document);
+            if (process != null && (canReadProcess == null || canReadProcess()))
+            {
+                CollectModules(process, document);
+                if (canReadProcess != null && !canReadProcess())
+                {
+                    document.Modules.Clear();
+                    UnavailableModules(document);
+                }
+            }
+            else UnavailableModules(document);
             foreach (var group in new[] { document.System, document.Cpu, document.Gpu, document.Storage })
                 foreach (var probe in group)
                     if (probe.Status != "ok") failure("Inventory " + probe.Kind + ": " + probe.Status + " " + probe.Reason);
             if (document.ModulesStatus != "ok") failure("Loaded-module inventory: " + document.ModulesStatus);
             JsonFile.Write(destination, document);
+        }
+
+        private static void UnavailableModules(InventoryDocument document)
+        {
+            document.ModulesStatus = "unavailable: selected process lifetime could not be verified; no module snapshot accepted";
+            foreach (string name in new[] { "d3d11.dll", "dxgi.dll" })
+                document.Modules.Add(new ModuleInventory { Name = name, Status = "unknown", Reason = document.ModulesStatus });
         }
 
         private static List<InventoryProbe> Query(string kind, string className, string[] properties)

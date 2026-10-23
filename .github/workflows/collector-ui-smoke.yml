@@ -1,4 +1,4 @@
-name: Collector Windows UI smoke
+name: Collector Windows checks
 
 on:
   push:
@@ -8,6 +8,7 @@ on:
       - 'tools/ModLoadingCollector/ModLoadingCollector.csproj'
       - 'tools/ModLoadingCollector/app.manifest'
       - 'tools/ModLoadingCollector/tests/windows-ui/**'
+      - 'tools/ModLoadingCollector/tests/windows-permissions/**'
       - 'Themes/Default/window-icon.ico'
       - '.github/workflows/collector-ui-smoke.yml'
   workflow_dispatch:
@@ -31,6 +32,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet build tools/ModLoadingCollector/tests/windows-ui/WindowsUiSmoke.csproj -c Release
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet build tools/ModLoadingCollector/tests/windows-permissions/WindowsPermissionsSmoke.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Assert restricted-process capture behavior
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force work/permissions-smoke | Out-Null
+          & tools/ModLoadingCollector/tests/windows-permissions/bin/Release/net48/WindowsPermissionsSmoke.exe work/permissions-smoke 2>&1 | Tee-Object work/permissions-smoke/console.log
+          exit $LASTEXITCODE
       - name: Render synthetic UI and assert layout
         shell: pwsh
         run: |
@@ -43,4 +52,11 @@ jobs:
         with:
           name: collector-windows-ui-smoke
           path: work/ui-smoke/
+          if-no-files-found: warn
+      - name: Upload synthetic permission-check evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: collector-windows-permission-smoke
+          path: work/permissions-smoke/
           if-no-files-found: warn

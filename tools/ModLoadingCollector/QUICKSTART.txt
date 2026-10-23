@@ -36,11 +36,19 @@ executable, the app records its version/hash and launches a timed capture
 for the selected PID. Permission/tool failures are recorded as unavailable.
 No admin elevation, tools download, automatic upload, or game injection occurs.
 
-Default output: Documents\XXMI Captures. Every session has its own folder.
+Default output: %LOCALAPPDATA%\XXMI Captures. Use Open folder to find it.
+Every session has its own folder; optional settings let you change its location.
 Reports distinguish measured values, missing data, and partial captures.
 Manual observations/screenshots do not prove an exact first-correct frame.
 Review screenshots and bundle contents before sharing them: metadata and
 attachments can contain local paths, account names, and configuration text.
+
+If Windows restricts game access, unavailable process/module measurements are
+marked explicitly while other evidence continues. A fully restricted process
+cannot be monitored for exit; use Finish & save or wait for the timer. If saving
+fails, the error names the operation and folder. Choose a writable save folder
+in optional settings. Copy error details copies the technical error locally;
+review its paths before sharing. No administrator launch is required by the app.
 
 Runtime: Windows 10/11 x64 with .NET Framework 4.8 (normally included).
 No Python or .NET SDK is needed to run the prebuilt app.
