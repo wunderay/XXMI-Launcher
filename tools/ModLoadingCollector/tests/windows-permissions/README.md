@@ -32,9 +32,11 @@ Assertions cover:
   data. Memory counters may succeed with limited query on modern Windows;
   unavailable counters must be empty with explicit memory diagnostics.
 - Capture retains the same original process handle across samples. The owned
-  original exits with code 259; its native exit FILETIME changes from zero to
+  original acknowledges a BOM-aware stdin command and calls native
+  `ExitProcess(259)`; its native exit FILETIME changes from zero to
   nonzero, and capture stops with a `process_exited` marker while another child
-  remains alive. The manifest still identifies the original PID.
+  remains alive. The test logs the actual native exit code, API result/error,
+  and received command. The manifest still identifies the original PID.
 - Denying both query rights leaves all metrics empty and lifetime explicitly
   unknown. Capture emits no false exit marker and stops by configured duration
   or explicit `StopAsync`, leaving the child alive.

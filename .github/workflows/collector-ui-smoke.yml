@@ -26,6 +26,7 @@ jobs:
         with:
           dotnet-version: '10.0.x'
       - name: Build collector and UI smoke harness
+        id: build
         shell: pwsh
         run: |
           dotnet build tools/ModLoadingCollector/ModLoadingCollector.csproj -c Release
@@ -41,6 +42,7 @@ jobs:
           & tools/ModLoadingCollector/tests/windows-permissions/bin/Release/net48/WindowsPermissionsSmoke.exe work/permissions-smoke 2>&1 | Tee-Object work/permissions-smoke/console.log
           exit $LASTEXITCODE
       - name: Render synthetic UI and assert layout
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force work/ui-smoke | Out-Null

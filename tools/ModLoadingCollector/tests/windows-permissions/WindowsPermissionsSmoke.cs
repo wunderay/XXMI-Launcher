@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Principal;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using XxmiCollector;
@@ -22,7 +23,19 @@ internal static class WindowsPermissionsSmoke
         if (args.Length == 1 && args[0] == "--child")
         {
             Console.WriteLine("ready");
-            return Console.ReadLine() == "exit259" ? 259 : 0;
+            // Framework's redirected StandardInput writer can emit an encoding
+            // preamble on a UTF-8 Windows console. Decode it as a preamble rather
+            // than letting it become part of the ASCII fixture command.
+            using (var input = new StreamReader(Console.OpenStandardInput(), new UTF8Encoding(false), true))
+            {
+                string command = input.ReadLine();
+                Console.WriteLine("received=" + (command ?? "<EOF>") + "; utf16=" +
+                    (command == null ? "" : string.Join(" ", command.Select(c => ((int)c).ToString("X4")))));
+                Console.Out.Flush();
+                if (command == "exit259") ExitProcess(259);
+                if (command == "exit") return 0;
+                return 73; // Unexpected input must never look like successful cleanup.
+            }
         }
         if (args.Length != 1) { Console.Error.WriteLine("Usage: WindowsPermissionsSmoke.exe <evidence-directory>"); return 2; }
         try
@@ -111,7 +124,12 @@ internal static class WindowsPermissionsSmoke
                 Require(GetProcessTimes(child.Handle, out afterCreation, out afterExit, out kernel, out user), "Cannot read retained original process after exit.");
                 Require(beforeCreation == afterCreation && afterExit != 0, "Retained original identity must have a nonzero exit FILETIME.");
                 uint code;
-                Require(GetExitCodeProcess(child.Handle, out code) && code == 259, "Synthetic child must actually exit with code 259 (STILL_ACTIVE ambiguity).");
+                bool readCode = GetExitCodeProcess(child.Handle, out code);
+                int codeError = readCode ? 0 : Marshal.GetLastWin32Error();
+                Console.WriteLine("Fixture child exit: GetExitCodeProcess=" + readCode + ", code=" + code + ", Win32=" + codeError + "; stdout=" + child.ExitResponse);
+                Require(readCode && code == 259, "Synthetic child must actually exit with code 259 (STILL_ACTIVE ambiguity); GetExitCodeProcess=" + readCode +
+                    ", actualCode=" + code + ", Win32=" + codeError + "; child stdout=" + child.ExitResponse);
+                Require(child.ExitResponse.Contains("received=exit259;"), "Child did not acknowledge the expected exit259 command: " + child.ExitResponse);
                 // Keep a different process alive while capture detects the original exit.
                 using (var successor = new OwnedChild(0))
                 {
@@ -251,6 +269,7 @@ internal static class WindowsPermissionsSmoke
     {
         private readonly Process child;
         public IntPtr Handle { get; private set; }
+        public string ExitResponse { get; private set; }
         public int Id { get { return child.Id; } }
         public bool IsAlive { get { return WaitForSingleObject(Handle, 0) == 0x102; } }
 
@@ -291,6 +310,9 @@ internal static class WindowsPermissionsSmoke
         {
             child.StandardInput.WriteLine("exit259"); child.StandardInput.Flush();
             Require(WaitForSingleObject(Handle, 5000) == 0, "Owned child did not exit within five seconds.");
+            var response = child.StandardOutput.ReadToEndAsync();
+            Require(response.Wait(2000), "Owned child stdout did not close after process exit.");
+            ExitResponse = response.Result.Trim();
         }
 
         public void Dispose()
@@ -324,6 +346,7 @@ internal static class WindowsPermissionsSmoke
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetExitCodeProcess(IntPtr handle, out uint code);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern int GetProcessId(IntPtr handle);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool TerminateProcess(IntPtr handle, uint code);
+    [DllImport("kernel32.dll")] private static extern void ExitProcess(uint code);
     [DllImport("kernel32.dll")] private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
     [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle);
 }

@@ -55,6 +55,8 @@ or **Finish & save**. Module snapshots are accepted only while the original
 process lifetime can be verified. No elevation or game security changes occur.
 
 The default save folder is `<XXMI-Launcher repo>\captures`, excluded from Git.
+The app also creates a local self-ignore file there if none exists, so captures
+stay ignored when the clone has not yet received the root ignore rule.
 Extract the portable app anywhere inside your local clone; it finds the repo by
 walking upward from the app directory, then from the working directory. If neither
 location is inside the repo, **Start capture** asks you to select the repo folder.

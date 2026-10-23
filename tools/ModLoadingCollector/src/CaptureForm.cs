@@ -369,6 +369,9 @@ namespace XxmiCollector
                 if (frameCapture != null) { frameCapture.Dispose(); frameCapture = null; }
                 session = null; reportPath = null; timeline.Items.Clear(); markerCount = 0; markerLabel.Text = "0 markers"; elapsedLabel.Text = "00:00";
                 selectedPid = process.Id; targetSeconds = (int)duration.Value;
+                try { RepositoryPaths.EnsureCaptureDirectoryIgnored(output.Text); }
+                catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+                { throw new IOException("Prepare repository capture folder failed at '" + output.Text + "': " + ex.Message, ex); }
                 session = await CaptureSession.StartAsync(new SessionOptions {
                     ProcessId = selectedPid, OutputRoot = output.Text, TraceDirectory = traces.Text,
                     Scenario = scenario.Text, RunKind = runKind.Text, Notes = notes.Text, DurationSeconds = 0
