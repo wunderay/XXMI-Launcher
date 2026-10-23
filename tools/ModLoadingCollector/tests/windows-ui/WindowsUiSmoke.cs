@@ -64,6 +64,10 @@ internal static class WindowsUiSmoke
                 var combo = (ComboBox)Find(form, "RunningGame");
                 ApplyChoices(form, app, new[] { "ZenlessZoneZero" }, new[] { 4242 });
                 form.Show(); Layout(form);
+                string captureFolder = Find(form, "OutputFolder").Text;
+                Check(!String.IsNullOrEmpty(captureFolder) && Path.GetFileName(captureFolder) == "captures"
+                    && File.Exists(Path.Combine(Path.GetDirectoryName(captureFolder), "src", "xxmi_launcher", "__init__.py")),
+                    name + ": default capture folder is inside the launcher repository");
                 Check(combo.SelectedItem != null && (int)combo.SelectedItem.GetType().GetProperty("Id").GetValue(combo.SelectedItem) == 4242,
                     name + ": one supported game automatically selected");
                 Check(Find(form, "GameDetectionStatus").Text.IndexOf("Detected", StringComparison.OrdinalIgnoreCase) >= 0,

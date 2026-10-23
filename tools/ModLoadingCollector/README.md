@@ -54,9 +54,12 @@ unknown rather than falsely reporting an exit. Such a capture ends by its timer
 or **Finish & save**. Module snapshots are accepted only while the original
 process lifetime can be verified. No elevation or game security changes occur.
 
-The default save folder is `%LOCALAPPDATA%\XXMI Captures`, outside commonly
-protected Documents folders. **Open folder** reveals each capture. Optional
-settings still let you select a different folder. If a write fails, the error
+The default save folder is `<XXMI-Launcher repo>\captures`, excluded from Git.
+Extract the portable app anywhere inside your local clone; it finds the repo by
+walking upward from the app directory, then from the working directory. If neither
+location is inside the repo, **Start capture** asks you to select the repo folder.
+It does not fall back to Documents or AppData. **Open folder** reveals each capture.
+Optional settings still let you select a different save folder. If a write fails, the error
 names its operation and path; choose a writable folder and retry. **Copy error
 details** copies the exception and native error code locally for troubleshooting.
 Review copied details before sharing, since they include local paths.
@@ -101,7 +104,7 @@ frame. Use paired runs and enough valid samples before interpreting p99.
 
 ## Local outputs and bounds
 
-Each run has a unique folder under `%LOCALAPPDATA%\XXMI Captures` or your selected
+Each run has a unique folder under `<XXMI-Launcher repo>\captures` or your selected
 output folder. It contains `session.json`, `inventory.json`, `samples.csv`,
 `markers.csv`, `report.html`, `analysis.json`, copied native traces and selected
 evidence. PresentMon adds its CSV, metadata and bounded diagnostics. A sibling ZIP

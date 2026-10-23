@@ -45,9 +45,17 @@ internal static class WindowsPermissionsSmoke
 
     private static async Task Run()
     {
-        await LimitedQueryExit();
-        await UnknownLifetime(false);
-        await UnknownLifetime(true);
+        // Framework ProcessManager initializes SeDebugPrivilege when available.
+        // Initialize it against ourselves before disabling the privilege, otherwise
+        // its later first use can bypass the disposable children's DACLs on CI.
+        using (var current = Process.GetCurrentProcess())
+            Require(current.ProcessName.Length > 0, "Cannot initialize Framework ProcessManager against the test process.");
+        using (var privilege = new DisabledDebugPrivilege())
+        {
+            await LimitedQueryExit();
+            await UnknownLifetime(false);
+            await UnknownLifetime(true);
+        }
     }
 
     private static async Task LimitedQueryExit()
@@ -197,6 +205,48 @@ internal static class WindowsPermissionsSmoke
         return (IntPtr)field.GetValue(session);
     }
 
+    private sealed class DisabledDebugPrivilege : IDisposable
+    {
+        private IntPtr token;
+        private TokenPrivileges previous;
+
+        public DisabledDebugPrivilege()
+        {
+            Require(OpenProcessToken(GetCurrentProcess(), 0x0028, out token), "Cannot open own process token: " + Marshal.GetLastWin32Error());
+            try
+            {
+                Luid debug;
+                Require(LookupPrivilegeValue(null, "SeDebugPrivilege", out debug), "Cannot resolve SeDebugPrivilege: " + Marshal.GetLastWin32Error());
+                var disabled = new TokenPrivileges { Count = 1, Luid = debug, Attributes = 0 };
+                uint returned;
+                Require(AdjustTokenPrivileges(token, false, ref disabled, (uint)Marshal.SizeOf(typeof(TokenPrivileges)), out previous, out returned),
+                    "Cannot disable own SeDebugPrivilege: " + Marshal.GetLastWin32Error());
+                int error = Marshal.GetLastWin32Error();
+                // Ordinary users may not possess this privilege at all. That is
+                // suitable for the fixture; the denied-access assertions still run.
+                Require(error == 0 || error == 1300, "Disabling own SeDebugPrivilege returned Win32 " + error);
+                Console.WriteLine("Fixture: own SeDebugPrivilege disabled (previous attributes=" + previous.Attributes + ", Win32=" + error + ").");
+            }
+            catch { CloseHandle(token); token = IntPtr.Zero; throw; }
+        }
+
+        public void Dispose()
+        {
+            if (token == IntPtr.Zero) return;
+            try
+            {
+                if (previous.Count != 0)
+                {
+                    TokenPrivileges ignored; uint returned;
+                    Require(AdjustTokenPrivileges(token, false, ref previous, (uint)Marshal.SizeOf(typeof(TokenPrivileges)), out ignored, out returned),
+                        "Cannot restore own SeDebugPrivilege: " + Marshal.GetLastWin32Error());
+                    Require(Marshal.GetLastWin32Error() == 0, "Restoring own SeDebugPrivilege was not fully assigned.");
+                }
+            }
+            finally { CloseHandle(token); token = IntPtr.Zero; }
+        }
+    }
+
     private sealed class OwnedChild : IDisposable
     {
         private readonly Process child;
@@ -263,6 +313,12 @@ internal static class WindowsPermissionsSmoke
     }
 
     [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+    [StructLayout(LayoutKind.Sequential)] private struct Luid { public uint Low; public int High; }
+    [StructLayout(LayoutKind.Sequential)] private struct TokenPrivileges { public uint Count; public Luid Luid; public uint Attributes; }
+    [DllImport("kernel32.dll")] private static extern IntPtr GetCurrentProcess();
+    [DllImport("advapi32.dll", SetLastError = true)] private static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool LookupPrivilegeValue(string system, string name, out Luid luid);
+    [DllImport("advapi32.dll", SetLastError = true)] private static extern bool AdjustTokenPrivileges(IntPtr token, bool disableAll, ref TokenPrivileges state, uint length, out TokenPrivileges previous, out uint returned);
     [DllImport("advapi32.dll", SetLastError = true)] private static extern bool SetKernelObjectSecurity(IntPtr handle, uint information, byte[] descriptor);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetProcessTimes(IntPtr handle, out long creation, out long exit, out long kernel, out long user);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetExitCodeProcess(IntPtr handle, out uint code);

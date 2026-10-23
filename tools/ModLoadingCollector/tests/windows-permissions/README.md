@@ -12,10 +12,17 @@ if ($LASTEXITCODE -ne 0) { throw "Windows permissions smoke failed" }
 
 The executable starts only copies of itself. It retains a cleanup handle before
 applying a process DACL using `SetKernelObjectSecurity`. Explicit deny ACEs for
-the current user reproduce access denied without elevation, privilege changes,
+the current user reproduce access denied without elevation,
 injection, or access to any actual game. DACLs disappear with those disposable
 children. Cleanup uses controlled stdin, bounded waits, and the retained handle
 as a termination fallback, including assertion failures.
+
+The fixture initializes .NET Framework's process manager against its own process,
+then temporarily disables `SeDebugPrivilege` in its own process token and restores
+the previous attributes on completion. Framework initialization can automatically
+enable that privilege on an elevated Windows CI runner, bypassing process DACLs.
+No system policy or other process token is changed. Ordinary users without that
+privilege run the same strict denied-access assertions.
 
 Assertions cover:
 

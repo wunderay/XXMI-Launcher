@@ -84,7 +84,9 @@ namespace XxmiCollector
             AutoScaleMode = AutoScaleMode.Dpi;
             Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
             BuildLayout();
-            output.Text = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "XXMI Captures");
+            output.Text = RepositoryPaths.FindCaptureDirectory(Application.StartupPath, Environment.CurrentDirectory) ?? "";
+            if (output.Text.Length == 0)
+                detail.Text = "Start capture will ask for your XXMI-Launcher repository. Captures will be saved in its captures folder.";
             scenario.Items.AddRange(new object[] { "First character appearance", "Character revisit", "Outfit / toggle", "LOD transition", "F10 unchanged refresh", "New or modified mod", "Custom scenario" });
             scenario.SelectedIndex = 0;
             runKind.Items.AddRange(new object[] { "Baseline", "Candidate", "Investigation" });
@@ -359,7 +361,7 @@ namespace XxmiCollector
             if (busy || running) return;
             var process = processes.SelectedItem as ProcessChoice;
             if (process == null) { SetStatus("Choose a running game", "Use Refresh after launching the game."); return; }
-            if (String.IsNullOrWhiteSpace(output.Text)) { SetStatus("Choose a save folder", "Each capture gets a separate local folder."); return; }
+            if (String.IsNullOrWhiteSpace(output.Text) && !ChooseRepositoryCaptureFolder()) return;
             manualChooserRequested = false; keepGameChooserOpen = false; UpdateGameDetectionDisplay();
             busy = true; UpdateControls(); SetStatus("Preparing capture…", "Collecting hardware and loaded-DLL details. The window remains available.");
             try
@@ -542,6 +544,21 @@ namespace XxmiCollector
             catch (Exception ex) { MessageBox.Show(ex.Message, "Open capture", MessageBoxButtons.OK, MessageBoxIcon.Error); }
         }
         private void ChooseFolder(TextBox target) { using (var dialog = new FolderBrowserDialog { SelectedPath = target.Text }) if (dialog.ShowDialog(this) == DialogResult.OK) target.Text = dialog.SelectedPath; }
+        private bool ChooseRepositoryCaptureFolder()
+        {
+            using (var dialog = new FolderBrowserDialog { Description = "Choose your XXMI-Launcher repository. Captures will be saved in its captures folder.", ShowNewFolderButton = false })
+            {
+                if (dialog.ShowDialog(this) != DialogResult.OK) return false;
+                string folder = RepositoryPaths.FindCaptureDirectory(dialog.SelectedPath);
+                if (folder == null)
+                {
+                    SetStatus("Choose the XXMI-Launcher repository", "Select your cloned XXMI-Launcher folder, or set a custom save folder in optional capture settings.");
+                    return false;
+                }
+                output.Text = folder;
+                return true;
+            }
+        }
         private void ChooseFile(TextBox target, string filter) { using (var dialog = new OpenFileDialog { Filter = filter }) if (dialog.ShowDialog(this) == DialogResult.OK) target.Text = dialog.FileName; }
         private static ComboBox Combo() { return new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill, BackColor = Card, ForeColor = Ink, FlatStyle = FlatStyle.Standard, Margin = new Padding(0, 4, 8, 4) }; }
         private static TextBox Input() { return new TextBox { Dock = DockStyle.Fill, BackColor = Card, ForeColor = Ink, BorderStyle = BorderStyle.FixedSingle, Margin = new Padding(0, 4, 8, 4), MaxLength = 16384 }; }
