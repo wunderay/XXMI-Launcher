@@ -151,12 +151,25 @@ cover parsing, percentiles, export completeness, stable snapshots, PID filtering
 stopping, attachments, archive bounds, owned child processes and automatic game
 detection (18 assertions).
 
-[Native Windows UI smoke checks passed](https://github.com/wunderay/XXMI-Launcher/actions/runs/39856694366)
-for the source at `93838a0d8631d10eb4d0f305e23d4dfba2d0a3b8`. The synthetic-only
-harness checks single/multiple/no-game selection, manual override, selection
-stability, contrast values, default/minimum layouts, and keyboard access to
-expanded fields. Font/geometry simulations at 125% and 150% passed; they do not
-establish actual monitor DPI behavior. See `tests/windows-ui/README.md`.
+[Windows permission, detection and UI checks passed](https://github.com/wunderay/XXMI-Launcher/actions/runs/39908112335)
+for the source at `163016064f56d1f2e1dd297a20a92f9b2c6c0435`. A real, owned
+synthetic process named `ZenlessZoneZero.exe` is enumerated, detected and captured
+through the production code while broad query permissions are denied. The old
+`Process.HasExited` failure is reproduced. Fully denied query access remains
+unknown and stops correctly by timer or user action; confirmed exit code 259
+stops the original capture. See `tests/windows-permissions/README.md`.
+
+The UI harness checks single/multiple/no-game selection, manual override,
+selection stability, default repository save location, error details, contrast,
+default/minimum layouts, and keyboard access to expanded fields. Font/geometry
+simulations at 125% and 150% passed; they do not establish actual monitor DPI
+behavior. See `tests/windows-ui/README.md`. Portable backend and repository-path
+checks passed 29 and 17 assertions respectively. Run the path project with a new
+scratch directory outside the checkout, for example:
+
+```sh
+dotnet run --project tools/ModLoadingCollector/tests/paths/PathTests.csproj -- ../work/collector-path-tests
+```
 
 Live game capture, WMI/module permissions, actual monitor DPI/high-contrast
 settings, screenshot behavior and real PresentMon capture remain local
