@@ -3,10 +3,14 @@ on:
   push:
     branches: [codex/prepared-mod-launcher]
     paths:
-      - 'tools/PreparedLoading/**'
+      - 'tools/PreparedLoading/native.patch'
+      - 'tools/PreparedLoading/native-candidate.json'
+      - 'tools/PreparedLoading/*.py'
+      - 'tools/PreparedLoading/*.ps1'
       - 'src/xxmi_launcher/core/prepared_loading.py'
       - 'src/xxmi_launcher/core/prepared_release.py'
       - 'src/xxmi_launcher/core/packages/migoto_package.py'
+      - 'src/xxmi_launcher/gui/windows/settings/frames/importer_settings_frame.py'
       - 'tests/test_prepared*.py'
       - '.github/workflows/prepared-loading-checks.yml'
   workflow_dispatch:
