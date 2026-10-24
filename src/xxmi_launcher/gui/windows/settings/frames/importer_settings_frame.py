@@ -18,7 +18,7 @@ from core.locale_manager import L, Locale
 
 from core.config.enums import InjectMode, InputDisableMode, LogLevel
 from core.packages.migoto_package import MigotoFork
-from core.prepared_loading import MODES, LIMITS, STATUS_FILE, PreparationCapability, validate_limit, read_preparation_status
+from core.prepared_loading import MODES, REFRESH_KEYS, LIMITS, STATUS_FILE, PreparationCapability, validate_limit, read_preparation_status
 
 from gui.windows.settings.settings_content_frame import SettingsContentFrame, SettingsSection, SettingsOption, OptionWidget, Condition
 
@@ -29,6 +29,8 @@ class ModelImporterSettingsFrame(SettingsContentFrame):
         self._preparation_status = self.get_preparation_status(self._preparation_capability)
         if Vars.Active.Migoto.preparation_mode.get() not in MODES:
             Vars.Active.Migoto.preparation_mode.set('off')
+        if Vars.Active.Migoto.preparation_refresh_key.get() not in REFRESH_KEYS:
+            Vars.Active.Migoto.preparation_refresh_key.set('')
         super().__init__(
             master,
             sections=(
@@ -158,12 +160,23 @@ class ModelImporterSettingsFrame(SettingsContentFrame):
                         ) for key, label in (
                             ('cpu_cache_mb', 'CPU cache limit (MiB)'),
                             ('gpu_cache_mb', 'GPU cache limit (MiB)'),
+                            ('disk_cache_mb', 'Derived disk cache limit (MiB; 0 disables)'),
                             ('max_asset_mb', 'Maximum asset size (MiB)'),
                             ('worker_threads', 'Preparation workers'),
                             ('max_pending_jobs', 'Maximum pending jobs'),
                             ('create_budget_ms', 'Creation budget (ms)'),
                             ('upload_budget_mb', 'Upload budget (MiB)'),
                         )),
+                        SettingsOption(
+                            label_text='Apply prepared filename refresh',
+                            widget=OptionWidget.DROPDOWN,
+                            value_variable='Vars.Active.Migoto.preparation_refresh_key',
+                            dropdown_values=REFRESH_KEYS,
+                            tooltip='Applies only a replacement already prepared when the shortcut is pressed. '
+                                'Supports verified static vertex/index buffer filename edits. Unsupported edits keep '
+                                'using F10. A pending preparation is not activated later by an earlier key press.',
+                            enabled_if=Condition(variables=('Vars.Active.Migoto.manage_xxmi_dll_config',), predicate=self.can_prepare),
+                        ),
                         SettingsOption(
                             label_text='Allow GPU creation during a loading window',
                             widget=OptionWidget.CHECKBOX,

@@ -55,6 +55,13 @@ Run-NativeTest -Name 'config' -Sources @(
     'DirectX11\ModLoading\IncrementalConfigCache.cpp',
     'DirectX11\ModLoading\GenerationManager.cpp'
 ) -Libraries @('ole32.lib', 'windowscodecs.lib')
+Run-NativeTest -Name 'refresh' -Sources @(
+    'tests\preparation_refresh\main.cpp',
+    'DirectX11\ModLoading\ResourceRefresh.cpp',
+    'DirectX11\ModLoading\ResourceRefreshClosure.cpp',
+    'DirectX11\ModLoading\SnapshotIO.cpp'
+) -Libraries @('ole32.lib', 'windowscodecs.lib') `
+  -PythonRunner 'tests\preparation_refresh\run_windows_fixture.py'
 Run-NativeTest -Name 'changes' -Sources @(
     'tests\preparation_changes\change_reconciler_test.cpp',
     'DirectX11\ModLoading\ChangeReconciler.cpp',
@@ -71,6 +78,13 @@ Run-NativeTest -Name 'gpu_policy' -Sources @(
     'DirectX11\ModLoading\MemoryBudgetController.cpp'
 ) -Libraries @('d3d11.lib', 'dxgi.lib')
 Run-NativeTest -Name 'runtime_policy' -Sources @('tests\preparation_runtime\main.cpp')
+Run-NativeTest -Name 'refresh_device' -Sources @(
+    'tests\preparation_refresh\test_refresh_device.cpp',
+    'DirectX11\ModLoading\ResourceRefresh.cpp',
+    'DirectX11\ModLoading\ResourceRefreshOverlay.cpp',
+    'DirectX11\ModLoading\ResourceRefreshClosure.cpp',
+    'DirectX11\ModLoading\SnapshotIO.cpp'
+) -Libraries @('d3d11.lib', 'dxgi.lib', 'ole32.lib', 'windowscodecs.lib')
 Run-NativeTest -Name 'status_serialization' -Sources @(
     'tests\preparation_status\status_serialization_test.cpp',
     'DirectX11\ModLoading\PreparationStatus.cpp',
@@ -124,6 +138,7 @@ $provenance = [ordered]@{
     patch_sha256 = (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'native.patch') -Algorithm SHA256).Hash.ToLowerInvariant()
     dll_sha256 = $digest
     launcher_source = (& git -C (Join-Path $PSScriptRoot '..\..') rev-parse HEAD)
+    workflow_run = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
     configuration = 'Zip Release|x64'
     compiler = $env:VCToolsVersion
     windows_sdk = $env:WindowsSDKVersion

@@ -32,3 +32,13 @@ Never run `CopyToGames.bat` as part of this workflow. To roll back a supported
 test installation, stop the game, select Off, and restore the previous signed
 package using the launcher's supported update/backup process. Derived status
 and preparation caches are expendable.
+
+To rebuild directly from the corresponding-source archive without Git history,
+extract it and use its bundled exact `version.generated.h` in a VS2022 x64 shell:
+
+```powershell
+msbuild native/StereovisionHacks.sln /m /t:Build '/p:Configuration=Zip Release' /p:Platform=x64 /p:SkipVersionHeaderGeneration=true /p:PostBuildEventUseInBuild=false /p:PreBuildEventUseInBuild=false
+```
+
+The source-only rebuild switch preserves the archived version header. Normal
+repository builds keep generating that header from their own Git identity.

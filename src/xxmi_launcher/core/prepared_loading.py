@@ -11,8 +11,12 @@ from typing import Callable
 CAPABILITY_FILE = 'PreparationCapabilities.json'
 STATUS_FILE = Path('.xxmi-preparation') / 'status.json'
 MODES = {'off': 'Off', 'adaptive': 'Adaptive', 'prepared_profile': 'Prepared profile'}
+REFRESH_KEYS = {'': 'Disabled', 'ctrl shift no_alt VK_F8': 'Ctrl+Shift+F8',
+                'ctrl shift no_alt VK_F9': 'Ctrl+Shift+F9',
+                'ctrl shift no_alt VK_F11': 'Ctrl+Shift+F11'}
 LIMITS = {
     'cpu_cache_mb': (0, 4096), 'gpu_cache_mb': (0, 4096),
+    'disk_cache_mb': (0, 4096),
     'max_asset_mb': (1, 1024), 'worker_threads': (1, 16),
     'max_pending_jobs': (1, 4096), 'create_budget_ms': (1, 50),
     'upload_budget_mb': (1, 1024),
@@ -24,6 +28,8 @@ class PreparedLoadingSettings:
     preparation_mode: str = 'off'
     preparation_cpu_cache_mb: int = 512
     preparation_gpu_cache_mb: int = 256
+    preparation_disk_cache_mb: int = 0
+    preparation_refresh_key: str = ''
     preparation_max_asset_mb: int = 64
     preparation_worker_threads: int = 2
     preparation_max_pending_jobs: int = 64
@@ -189,6 +195,8 @@ def apply_preparation_settings(ini, settings: PreparedLoadingSettings,
             ini.set_option('ModLoading', 'mode', 'off')
             ini.set_option('ModLoading', 'auto_activate', 0)
             ini.set_option('ModLoading', 'preparation_loading_window', 0)
+            ini.set_option('ModLoading', 'refresh_key', '')
+            ini.set_option('ModLoading', 'disk_cache_mb', 0)
         return
     mode = settings.preparation_mode
     if mode not in capability.modes:
@@ -197,6 +205,8 @@ def apply_preparation_settings(ini, settings: PreparedLoadingSettings,
         ini.set_option('ModLoading', 'mode', 'off')
         ini.set_option('ModLoading', 'auto_activate', 0)
         ini.set_option('ModLoading', 'preparation_loading_window', 0)
+        ini.set_option('ModLoading', 'refresh_key', '')
+        ini.set_option('ModLoading', 'disk_cache_mb', 0)
         return
     values = {}
     for key in LIMITS:
@@ -207,7 +217,10 @@ def apply_preparation_settings(ini, settings: PreparedLoadingSettings,
         values[key] = value
     if values['cpu_cache_mb'] and values['max_asset_mb'] > values['cpu_cache_mb']:
         raise ValueError('ModLoading max_asset_mb must not exceed the CPU cache limit.')
+    if settings.preparation_refresh_key not in REFRESH_KEYS:
+        raise ValueError('ModLoading refresh_key: choose a supported refresh shortcut.')
     values.update(mode=mode, auto_activate=0,
+                  refresh_key=settings.preparation_refresh_key,
                   preparation_loading_window=int(settings.preparation_loading_window is True))
     for key, value in values.items():
         ini.set_option('ModLoading', key, value)

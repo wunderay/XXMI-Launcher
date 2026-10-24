@@ -129,6 +129,29 @@ class PreparedLoadingTests(unittest.TestCase):
                                        preparation_gpu_cache_mb=-1), self.inspect())
         self.assertEqual(ini.to_string(), before)
 
+    def test_explicit_refresh_and_disk_cache_are_opt_in_and_roundtrip(self):
+        self.write_marker()
+        ini = self.ini()
+        settings = PreparedLoadingSettings(preparation_mode='adaptive', preparation_disk_cache_mb=128,
+                                           preparation_refresh_key='ctrl shift no_alt VK_F8')
+        apply_preparation_settings(ini, settings, self.inspect())
+        section = self.ini(ini.to_string()).get_section('ModLoading')
+        self.assertEqual(section.get_option('disk_cache_mb'), '128')
+        self.assertEqual(section.get_option('refresh_key'), 'ctrl shift no_alt VK_F8')
+        self.assertEqual(section.get_option('auto_activate'), '0')
+        apply_preparation_settings(ini, PreparedLoadingSettings(), self.inspect())
+        self.assertEqual(ini.get_section('ModLoading').get_option('disk_cache_mb'), '0')
+        self.assertEqual(ini.get_section('ModLoading').get_option('refresh_key'), '')
+
+    def test_invalid_refresh_shortcut_fails_before_ini_mutation(self):
+        self.write_marker()
+        ini = self.ini()
+        before = ini.to_string()
+        with self.assertRaisesRegex(ValueError, 'refresh_key'):
+            apply_preparation_settings(ini, PreparedLoadingSettings(preparation_mode='adaptive',
+                                       preparation_refresh_key='VK_F10\nmode = adaptive'), self.inspect())
+        self.assertEqual(ini.to_string(), before)
+
     def test_off_remains_available_with_invalid_limits(self):
         self.write_marker()
         ini = self.ini()

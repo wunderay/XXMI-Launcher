@@ -38,6 +38,9 @@ def main() -> None:
     ]).split(b'\0')
     source = build / 'corresponding-source.zip'
     source_count = 0
+    version_header = native / 'version.generated.h'
+    if not version_header.is_file():
+        raise RuntimeError('the exact generated version header is required for source-only rebuilds')
     with ZipFile(source, 'w', ZIP_DEFLATED, compresslevel=6) as archive:
         for name in sorted(set(filter(None, paths))):
             relative = Path(name.decode('utf-8'))
@@ -47,6 +50,8 @@ def main() -> None:
             path.resolve().relative_to(native)
             archive.write(path, 'native/' + relative.as_posix())
             source_count += 1
+        archive.write(version_header, 'native/version.generated.h')
+        source_count += 1
     info['corresponding_source_sha256'] = digest(source)
     info['corresponding_source_files'] = source_count
     (build / 'BUILD-INFO.json').write_text(json.dumps(info, indent=2) + '\n', encoding='utf-8')
@@ -59,6 +64,8 @@ def main() -> None:
         'corresponding-source.zip': source,
         'native.patch': tools / 'native.patch',
         'README.md': tools / 'README.md',
+        'build-native.ps1': tools / 'build-native.ps1',
+        'package-development.py': tools / 'package-development.py',
         'COPYING.txt': native / 'COPYING.txt',
         'LICENSE.GPL.txt': native / 'LICENSE.GPL.txt',
     }

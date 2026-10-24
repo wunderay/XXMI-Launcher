@@ -1,5 +1,5 @@
 diff --git a/DirectX11/CommandList.cpp b/DirectX11/CommandList.cpp
-index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..91473de84deb7bf00439e972b84430ea64681f88 100644
+index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..3807ce7a2d6d9259fdea1db54144ffb915fc4545 100644
 --- a/DirectX11/CommandList.cpp
 +++ b/DirectX11/CommandList.cpp
 @@ -14,6 +14,8 @@
@@ -20,7 +20,15 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..91473de84deb7bf00439e972b84430ea
  	CommandListState state;
  	state.mHackerDevice = mHackerDevice;
  	state.mHackerContext = mHackerContext;
-@@ -2570,9 +2574,13 @@ bool CustomShader::compile(char type, wchar_t *filename, const wstring *wname, c
+@@ -444,6 +448,7 @@ static void RunCommandListComplete(HackerDevice *mHackerDevice,
+ 	state.mOrigContext1 = mHackerContext->GetPassThroughOrigContext1();
+ 
+ 	state.call_info = call_info;
++	if (call_info) ModLoading::CapturePreparedRefreshDraw(*call_info);
+ 	state.resource = resource;
+ 	state.view = view;
+ 	state.post = post;
+@@ -2570,9 +2575,13 @@ bool CustomShader::compile(char type, wchar_t *filename, const wstring *wname, c
  	wcstombs(apath, wpath, MAX_PATH);
  	{
  		MigotoIncludeHandler include_handler(apath);
@@ -34,7 +42,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..91473de84deb7bf00439e972b84430ea
  	}
  
  	if (pErrorMsgs) {
-@@ -2607,6 +2615,7 @@ bool CustomShader::compile(char type, wchar_t *filename, const wstring *wname, c
+@@ -2607,6 +2616,7 @@ bool CustomShader::compile(char type, wchar_t *filename, const wstring *wname, c
  err_close:
  	CloseHandle(f);
  err:
@@ -42,7 +50,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..91473de84deb7bf00439e972b84430ea
  	return true;
  }
  
-@@ -2614,6 +2623,28 @@ void CustomShader::substantiate(ID3D11Device *mOrigDevice1)
+@@ -2614,6 +2624,28 @@ void CustomShader::substantiate(ID3D11Device *mOrigDevice1)
  {
  	if (substantiated)
  		return;
@@ -71,7 +79,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..91473de84deb7bf00439e972b84430ea
  	substantiated = true;
  
  	if (vs_bytecode) {
-@@ -2664,6 +2695,7 @@ void CustomShader::substantiate(ID3D11Device *mOrigDevice1)
+@@ -2664,6 +2696,7 @@ void CustomShader::substantiate(ID3D11Device *mOrigDevice1)
  
  	if (sampler_override == 1)
  		mOrigDevice1->CreateSamplerState(&sampler_desc, &sampler_state);
@@ -79,7 +87,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..91473de84deb7bf00439e972b84430ea
  }
  
  // Similar to memcpy, but also takes a mask. Any bits in the mask that are set
-@@ -6441,6 +6473,9 @@ void CustomResource::Substantiate(ID3D11Device *mOrigDevice1,
+@@ -6441,6 +6474,9 @@ void CustomResource::Substantiate(ID3D11Device *mOrigDevice1,
  	// parameters while probing the hardware before it settles on the one
  	// it will actually use.
  
@@ -89,7 +97,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..91473de84deb7bf00439e972b84430ea
  	LockResourceCreationMode();
  
  	if (!filename.empty()) {
-@@ -6471,9 +6506,26 @@ void CustomResource::Substantiate(ID3D11Device *mOrigDevice1,
+@@ -6471,9 +6507,26 @@ void CustomResource::Substantiate(ID3D11Device *mOrigDevice1,
  void CustomResource::LoadBufferFromFile(ID3D11Device *mOrigDevice1)
  {
  	DWORD size, read_size;
@@ -116,7 +124,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..91473de84deb7bf00439e972b84430ea
  	f = CreateFile(filename.c_str(), GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
  	if (f == INVALID_HANDLE_VALUE) {
  		LogOverlayW(LOG_WARNING, L"Failed to load custom buffer resource %ls: %d\n", filename.c_str(), GetLastError());
-@@ -6487,7 +6539,15 @@ void CustomResource::LoadBufferFromFile(ID3D11Device *mOrigDevice1)
+@@ -6487,7 +6540,15 @@ void CustomResource::LoadBufferFromFile(ID3D11Device *mOrigDevice1)
  		goto out_close;
  	}
  
@@ -133,7 +141,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..91473de84deb7bf00439e972b84430ea
  		LogOverlayW(LOG_WARNING, L"Error reading custom buffer from file %ls\n", filename.c_str());
  		goto out_delete;
  	}
-@@ -6588,8 +6648,25 @@ void CustomResource::LoadFromFile(ID3D11Device *mOrigDevice1)
+@@ -6588,8 +6649,25 @@ void CustomResource::LoadFromFile(ID3D11Device *mOrigDevice1)
  	// Needs to be called at some point before CreateXXXTextureFromFile:
  	EnsureCOM();
  
@@ -161,7 +169,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..91473de84deb7bf00439e972b84430ea
  		LogInfoW(L"Loading custom resource %s as DDS, bind_flags=0x%03x\n", filename.c_str(), bind_flags);
  		hr = DirectX::CreateDDSTextureFromFileEx(mOrigDevice1,
  				filename.c_str(), 0,
-@@ -6602,6 +6679,7 @@ void CustomResource::LoadFromFile(ID3D11Device *mOrigDevice1)
+@@ -6602,6 +6680,7 @@ void CustomResource::LoadFromFile(ID3D11Device *mOrigDevice1)
  				D3D11_USAGE_DEFAULT, bind_flags, 0, misc_flags,
  				GetWICFlags(filename), &resource, NULL);
  	}
@@ -169,7 +177,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..91473de84deb7bf00439e972b84430ea
  	if (SUCCEEDED(hr)) {
  		device = mOrigDevice1;
  		is_null = false;
-@@ -6664,7 +6742,13 @@ void CustomResource::SubstantiateBuffer(ID3D11Device *mOrigDevice1, void **buf,
+@@ -6664,7 +6743,13 @@ void CustomResource::SubstantiateBuffer(ID3D11Device *mOrigDevice1, void **buf,
  		pInitialData = &data;
  	}
  
@@ -184,7 +192,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..91473de84deb7bf00439e972b84430ea
  	if (SUCCEEDED(hr)) {
  		LogInfo("Substantiated custom %S [%S], bind_flags=0x%03x\n",
  				lookup_enum_name(CustomResourceTypeNames, override_type), name.c_str(), desc.BindFlags);
-@@ -6692,7 +6776,12 @@ void CustomResource::SubstantiateTexture1D(ID3D11Device *mOrigDevice1)
+@@ -6692,7 +6777,12 @@ void CustomResource::SubstantiateTexture1D(ID3D11Device *mOrigDevice1)
  	desc.MiscFlags = misc_flags;
  	OverrideTexDesc(&desc);
  
@@ -198,7 +206,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..91473de84deb7bf00439e972b84430ea
  	if (SUCCEEDED(hr)) {
  		LogInfo("Substantiated custom %S [%S], bind_flags=0x%03x\n",
  				lookup_enum_name(CustomResourceTypeNames, override_type), name.c_str(), desc.BindFlags);
-@@ -6719,7 +6808,12 @@ void CustomResource::SubstantiateTexture2D(ID3D11Device *mOrigDevice1)
+@@ -6719,7 +6809,12 @@ void CustomResource::SubstantiateTexture2D(ID3D11Device *mOrigDevice1)
  	desc.MiscFlags = misc_flags;
  	OverrideTexDesc(&desc);
  
@@ -212,7 +220,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..91473de84deb7bf00439e972b84430ea
  	if (SUCCEEDED(hr)) {
  		LogInfo("Substantiated custom %S [%S], bind_flags=0x%03x\n",
  				lookup_enum_name(CustomResourceTypeNames, override_type), name.c_str(), desc.BindFlags);
-@@ -6746,7 +6840,12 @@ void CustomResource::SubstantiateTexture3D(ID3D11Device *mOrigDevice1)
+@@ -6746,7 +6841,12 @@ void CustomResource::SubstantiateTexture3D(ID3D11Device *mOrigDevice1)
  	desc.MiscFlags = misc_flags;
  	OverrideTexDesc(&desc);
  
@@ -226,7 +234,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..91473de84deb7bf00439e972b84430ea
  	if (SUCCEEDED(hr)) {
  		LogInfo("Substantiated custom %S [%S], bind_flags=0x%03x\n",
  				lookup_enum_name(CustomResourceTypeNames, override_type), name.c_str(), desc.BindFlags);
-@@ -6871,6 +6970,7 @@ void CustomResource::OverrideOutOfBandInfo(DXGI_FORMAT *format, UINT *stride)
+@@ -6871,6 +6971,7 @@ void CustomResource::OverrideOutOfBandInfo(DXGI_FORMAT *format, UINT *stride)
  
  void CustomResource::ResetRuntimeState()
  {
@@ -234,7 +242,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..91473de84deb7bf00439e972b84430ea
  	if (resource) {
  		resource->Release();
  		resource = nullptr;
-@@ -6895,6 +6995,10 @@ void CustomResource::CopyMetadataFrom(const CustomResource& src)
+@@ -6895,6 +6996,10 @@ void CustomResource::CopyMetadataFrom(const CustomResource& src)
  	max_copies_per_frame = src.max_copies_per_frame;
  
  	filename = src.filename;
@@ -245,7 +253,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..91473de84deb7bf00439e972b84430ea
  
  	override_type = src.override_type;
  	override_format = src.override_format;
-@@ -8629,8 +8733,15 @@ bool ResourceCopyTarget::ParseTarget(const wchar_t *target, bool is_source, cons
+@@ -8629,8 +8734,15 @@ bool ResourceCopyTarget::ParseTarget(const wchar_t *target, bool is_source, cons
  		// Parse the remainder as a custom resource (e.g. `ResourceFoo`).
  		ret = ParseTargetCustomResource(target, length, ini_namespace, scope);
  		//LogInfo("ParseTarget: %d at ParseTargetCustomResource\n", ret);
@@ -262,7 +270,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..91473de84deb7bf00439e972b84430ea
  
  		// Parse the remainder as a resource pool (e.g. `PoolFoo`).
  		ret = ParseTargetPool(target, length, ini_namespace, scope, is_source);
-@@ -8859,6 +8970,30 @@ static CommandListCommand* parse_resource_copy_operation(
+@@ -8859,6 +8971,30 @@ static CommandListCommand* parse_resource_copy_operation(
  			options |= ResourceCopyOptions::COPY;
  	}
  
@@ -293,7 +301,30 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..91473de84deb7bf00439e972b84430ea
  	// FIXME: If custom resources are copied to other custom resources by
  	// reference that are in turn bound to the pipeline we may not
  	// propagate all the bind flags correctly depending on the order
-@@ -10178,6 +10313,7 @@ void ResourceCopyTarget::SetResource(
+@@ -9556,15 +9692,19 @@ StaticT* ResourceCopyTarget::GetPoolObject(StaticT* static_object, CommandListSt
+ 
+ CustomResource* ResourceCopyTarget::GetCustomResource(CommandListState* state, bool is_assignment)
+ {
+-	return GetPoolObject(
++	CustomResource* original = GetPoolObject(
+ 		static_custom_resource,
+ 		state,
+ 		is_assignment,
+ 		[this](float id, bool template_lookup, bool assign)
+-		{ 
+-			return custom_resource_pool->GetResource(id, template_lookup, false, assign); 
++		{
++			return custom_resource_pool->GetResource(id, template_lookup, false, assign);
+ 		}
+ 	);
++	if (!state || is_assignment || !state->call_info || !original)
++		return original;
++	return ModLoading::ResolvePreparedRefreshResource(original, state->call_info,
++		state->mOrigDevice1, state->mHackerDevice->GetPreparationEpoch());
+ }
+ 
+ CommandListVariable* ResourceCopyTarget::GetPoolVariable(CommandListState* state, bool is_assignment)
+@@ -10178,6 +10318,7 @@ void ResourceCopyTarget::SetResource(
  		if (custom_resource->resource != res) {
  			if (custom_resource->resource)
  				custom_resource->resource->Release();
@@ -301,7 +332,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..91473de84deb7bf00439e972b84430ea
  			custom_resource->resource = res;
  			custom_resource->device = state->mOrigDevice1;
  			if (custom_resource->resource)
-@@ -11892,6 +12028,17 @@ static D3D11_UNORDERED_ACCESS_VIEW_DESC* FillOutTex3DDesc(
+@@ -11892,6 +12033,17 @@ static D3D11_UNORDERED_ACCESS_VIEW_DESC* FillOutTex3DDesc(
  #pragma endregion FillOutDesc
  
  
@@ -319,7 +350,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..91473de84deb7bf00439e972b84430ea
  template <typename ViewType,
  	 typename DescType,
  	 HRESULT (__stdcall ID3D11Device::*CreateView)(THIS_
-@@ -11966,7 +12113,19 @@ static ID3D11View* _CreateCompatibleView(
+@@ -11966,7 +12118,19 @@ static ID3D11View* _CreateCompatibleView(
  			break;
  	}
  
@@ -393,7 +424,7 @@ index d893ac4db9feec6625fb2dfd652f9eacf02eee61..0f5ab9f3429df0c6ce2172560cbb57e2
  	// from scratch:
  	CustomResourceType override_type;
 diff --git a/DirectX11/DirectX11.vcxproj b/DirectX11/DirectX11.vcxproj
-index 4c0ba1f6c35b27895a6fc5f50d1a53abe84acfa7..e3aff75190ab35df173e1af49885e438b18d0863 100644
+index 4c0ba1f6c35b27895a6fc5f50d1a53abe84acfa7..90a88f7e01e8abef31588ba0beebf34f0e102497 100644
 --- a/DirectX11/DirectX11.vcxproj
 +++ b/DirectX11/DirectX11.vcxproj
 @@ -1,4 +1,4 @@
@@ -472,6 +503,17 @@ index 4c0ba1f6c35b27895a6fc5f50d1a53abe84acfa7..e3aff75190ab35df173e1af49885e438
        <ForceSymbolReferences>CreateDXGIFactory</ForceSymbolReferences>
      </Link>
      <PostBuildEvent>
+@@ -404,7 +406,7 @@ xcopy "$(SolutionDir)Dependencies\*.*" "$(TargetDir)"  /E /Y /s
+   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+   <ImportGroup Label="ExtensionTargets">
+   </ImportGroup>
+-  <Target Name="GenerateVersionHeader" BeforeTargets="PrepareForBuild">
++  <Target Name="GenerateVersionHeader" BeforeTargets="PrepareForBuild" Condition="'$(SkipVersionHeaderGeneration)' != 'true'">
+     <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(SolutionDir)tools\generate-version.ps1&quot; -VersionFile &quot;$(SolutionDir)version.h&quot; -OutputFile &quot;$(SolutionDir)version.generated.h&quot;" />
+   </Target>
+-</Project>
+\ No newline at end of file
++</Project>
 diff --git a/DirectX11/DirectX11.vcxproj.filters b/DirectX11/DirectX11.vcxproj.filters
 index efb38dd02fe71b57d8ad549f274aceb3e8bb620f..88ef8be0301f5311cee96d03a9e608be388e2f83 100644
 --- a/DirectX11/DirectX11.vcxproj.filters
@@ -498,6 +540,63 @@ index efb38dd02fe71b57d8ad549f274aceb3e8bb620f..88ef8be0301f5311cee96d03a9e608be
      <ClInclude Include="ResourceHash.h" />
      <ClInclude Include="HookedContext.h" />
      <ClInclude Include="HookedDevice.h" />
+diff --git a/DirectX11/DrawCallInfo.h b/DirectX11/DrawCallInfo.h
+index fff4922991e2141defa130eb0f1bd83742ab0d55..b83ba7c4e4b249fd864da8c5eafe4a1e824c3232 100644
+--- a/DirectX11/DrawCallInfo.h
++++ b/DirectX11/DrawCallInfo.h
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include <d3d11_1.h>
++#include "ModLoading/ResourceRefreshOverlay.h"
+ 
+ // These values can now be exposed through draw_type and their values should
+ // not be changed. Any additions should be added to the end of the list.
+@@ -29,6 +30,7 @@ struct DrawCallInfo
+ 	UINT args_offset;
+ 
+ 	bool skip, hunting_skip;
++	ModLoading::ResourceRefreshDrawPin prepared_refresh;
+ 
+ 	DrawCallInfo() :
+ 		type(DrawCall::Invalid),
+diff --git a/DirectX11/FrameAnalysis.h b/DirectX11/FrameAnalysis.h
+index 9fde55e52b3b9c5b6bfae884348cd2e08c00656f..2a21a551325afb29f3f023a055967abc10d68ca4 100644
+--- a/DirectX11/FrameAnalysis.h
++++ b/DirectX11/FrameAnalysis.h
+@@ -47,7 +47,11 @@ struct FrameAnalysisDeferredDumpBufferArgs {
+ 		layout(layout), topology(topology),
+ 		call_info(call_info ? *call_info : DrawCallInfo()),
+ 		staged_ib_for_vb(staged_ib_for_vb), ib_off_for_vb(ib_off_for_vb)
+-	{}
++	{
++		// Deferred dump resources own their COM lifetimes separately; this
++		// copy retains draw numbers only, not a live configuration generation.
++		this->call_info.prepared_refresh = {};
++	}
+ };
+ struct FrameAnalysisDeferredDumpTex2DArgs {
+ 	FrameAnalysisOptions analyse_options;
+diff --git a/DirectX11/HackerContext.cpp b/DirectX11/HackerContext.cpp
+index 4ea47c87db3a0e17d301d753f7bbec4b79e71b3f..9c763ca98763d832fe8a19abf5b15030d3745b39 100644
+--- a/DirectX11/HackerContext.cpp
++++ b/DirectX11/HackerContext.cpp
+@@ -937,6 +937,7 @@ void HackerContext::BeforeDraw(DrawContext &data)
+ 						G->gVisitedVertexBufferSlotIds.insert(i);
+ 						if (G->gSelectedVertexBufferSlotId == -1 || i == G->gSelectedVertexBufferSlotId) {
+ 							G->gSelectedVertexBufferDrawInfo = data.call_info;
++							G->gSelectedVertexBufferDrawInfo.prepared_refresh = {}; // Diagnostic metadata does not own draw generations.
+ 							selectedVertexBufferPos = i;
+ 						}
+ 					}
+@@ -982,6 +983,7 @@ void HackerContext::BeforeDraw(DrawContext &data)
+ 				if (G->mSelectedIndexBuffer != 0 && G->mSelectedIndexBuffer != UINT32_MAX) {
+ 					if (mCurrentIndexBuffer == G->mSelectedIndexBuffer) {
+ 						G->gSelectedIndexBufferDrawInfo = data.call_info;
++						G->gSelectedIndexBufferDrawInfo.prepared_refresh = {}; // Diagnostic metadata does not own draw generations.
+ 						G->mSelectedIndexBuffer_VertexShader.insert(mCurrentVertexShader);
+ 						G->mSelectedIndexBuffer_PixelShader.insert(mCurrentPixelShader);
+ 					}
 diff --git a/DirectX11/HackerDXGI.cpp b/DirectX11/HackerDXGI.cpp
 index 37fc24fae6e4335b7ce17d189aa3bc75e755e5bd..39431902e9dc7e026de8fc75d6d88e24bc06f0c2 100644
 --- a/DirectX11/HackerDXGI.cpp
@@ -612,7 +711,7 @@ index fdd2296d422408816f9ff68a69a174af5ff8647e..dbc87e4b345818faddbe8ae28395b1d0
  	ID3D11Texture1D *mIniTexture;
  	ID3D11ShaderResourceView *mIniResourceView;
 diff --git a/DirectX11/IniHandler.cpp b/DirectX11/IniHandler.cpp
-index a69e79dade0b489a7aa3ed670ce624f39ed39c3c..3938742f7433a56e2eea8a230039ce83dc08a73a 100644
+index a69e79dade0b489a7aa3ed670ce624f39ed39c3c..a3ceb646c8508307de6f3f89dd0e0e1d3d2d953e 100644
 --- a/DirectX11/IniHandler.cpp
 +++ b/DirectX11/IniHandler.cpp
 @@ -1,4 +1,8 @@
@@ -633,12 +732,23 @@ index a69e79dade0b489a7aa3ed670ce624f39ed39c3c..3938742f7433a56e2eea8a230039ce83
  #include <pcre2.h>
  #include <codecvt>
  
-@@ -219,6 +225,17 @@ typedef std::map<wstring, IniSection, WStringInsensitiveLess> IniSections;
+@@ -203,6 +209,7 @@ typedef std::unordered_set<wstring, WStringInsensitiveHash, WStringInsensitiveEq
+ struct IniSection {
+ 	IniSectionMap kv_map;
+ 	IniSectionVector kv_vec;
++	bool refresh_ambiguous = false;
+ 
+ 	// Stores the ini namespace/path that this section came from. ini_path
+ 	// is only set if a shader overrides it's namespace so we can still
+@@ -219,6 +226,37 @@ typedef std::map<wstring, IniSection, WStringInsensitiveLess> IniSections;
  IniSections ini_sections;
  std::unordered_set<wstring> recursive_includes;
  
 +static std::mutex loaded_config_sources_mutex;
 +static ModLoading::ConfigSourceManifest loaded_config_sources;
++static std::vector<ModLoading::ResourceFilenameBinding> loaded_resource_filename_bindings;
++static ModLoading::ResourceRefreshClosure loaded_resource_refresh_closure;
++static size_t loaded_resource_refresh_entries = 0;
 +static size_t loaded_config_source_bytes = 0;
 +static bool capture_config_sources = false;
 +
@@ -648,10 +758,105 @@ index a69e79dade0b489a7aa3ed670ce624f39ed39c3c..3938742f7433a56e2eea8a230039ce83
 +	return loaded_config_sources;
 +}
 +
++std::vector<ModLoading::ResourceFilenameBinding> CaptureLoadedResourceFilenameBindings()
++{
++	std::lock_guard<std::mutex> lock(loaded_config_sources_mutex);
++	return loaded_resource_filename_bindings;
++}
++
++ModLoading::ResourceRefreshClosure CaptureLoadedResourceRefreshClosure()
++{
++	std::lock_guard<std::mutex> lock(loaded_config_sources_mutex);
++	auto closure = loaded_resource_refresh_closure;
++	if (!loaded_config_sources.verified) {
++		closure.verified = false;
++		closure.reason = "Legacy configuration sources were not completely captured";
++	}
++	return closure;
++}
++
  // Returns an iterator to the first element in a set that does not begin with
  // prefix in a case insensitive way. Combined with set::lower_bound, this can
  // be used to iterate over all elements in the sections set that begin with a
-@@ -658,6 +675,57 @@ static void ParseIniExcerpt(const wchar_t *excerpt)
+@@ -420,6 +458,7 @@ static void ParseIniSectionLine(wstring *wline, wstring *section,
+ 	std::pair<IniSections::iterator, bool> result = ini_sections.emplace(*section, IniSection{});
+ 
+ 	if (!result.second && !allow_duplicate_sections) {
++		result.first->second.refresh_ambiguous = true;
+ 		IniWarningW(L"Duplicate section found\n - [%ls]\n", section->c_str());
+ 		section->clear();
+ 		return;
+@@ -494,6 +533,11 @@ static bool ParseIniPreamble(wstring *wline, wstring *ini_namespace)
+ 			val = wline->substr(first);
+ 
+ 		if (!_wcsicmp(key.c_str(), L"condition")) {
++			{
++				std::lock_guard<std::mutex> lock(loaded_config_sources_mutex);
++				loaded_resource_refresh_closure.verified = false;
++				loaded_resource_refresh_closure.reason = "Conditional include preambles require legacy reload";
++			}
+ 			return check_include_condition(&val, ini_namespace);
+ 		}
+ 
+@@ -510,7 +554,8 @@ static bool ParseIniPreamble(wstring *wline, wstring *ini_namespace)
+ 
+ static void ParseIniKeyValLine(wstring *wline, wstring *section,
+ 		int warn_duplicates, bool warn_lines_without_equals,
+-		IniSection *section_entry, const wstring *ini_namespace)
++		IniSection *section_entry, const wstring *ini_namespace,
++		size_t source_index, size_t source_line)
+ {
+ 	size_t first, last, delim;
+ 	wstring key, val;
+@@ -545,6 +590,8 @@ static void ParseIniKeyValLine(wstring *wline, wstring *section,
+ 			// match the behaviour of GetPrivateProfileString for
+ 			// duplicate keys within a single section:
+ 			inserted = section_entry->kv_map.emplace(key, val).second;
++			if (!inserted)
++				section_entry->refresh_ambiguous = true;
+ 
+ 			if ((warn_duplicates == 1) && !inserted && !whitelisted_duplicate_key(section->c_str(), key.c_str())) {
+ 				IniWarningW(L"Duplicate key found: %ls\n - [%ls] @ [%ls]\n", key.c_str(), section->c_str(), ini_namespace->c_str());
+@@ -562,9 +609,12 @@ static void ParseIniKeyValLine(wstring *wline, wstring *section,
+ 	}
+ 
+ 	section_entry->kv_vec.emplace_back(key, val, *wline, *ini_namespace);
++	section_entry->kv_vec.back().source_index = source_index;
++	section_entry->kv_vec.back().source_line = source_line;
+ }
+ 
+-static void ParseIniStream(wistream *stream, const wstring *_ini_namespace)
++static void ParseIniStream(wistream *stream, const wstring *_ini_namespace,
++		size_t source_index = static_cast<size_t>(-1))
+ {
+ 	string aline;
+ 	wstring wline, section, ini_path;
+@@ -578,6 +628,7 @@ static void ParseIniStream(wistream *stream, const wstring *_ini_namespace)
+ 	bool warn_lines_without_equals = true;
+ 	wstring ini_namespace;
+ 	bool preamble = true;
++	size_t source_line = 0;
+ 
+ 	// Simplify code further on by translating NULL to "" here:
+ 	if (_ini_namespace)
+@@ -587,6 +638,7 @@ static void ParseIniStream(wistream *stream, const wstring *_ini_namespace)
+ 	ini_path = ini_namespace;
+ 
+ 	while (std::getline(*stream, wline)) {
++		++source_line;
+ 		// Strip preceding and trailing whitespace:
+ 		first = wline.find_first_not_of(L" \t");
+ 		last = wline.find_last_not_of(L" \t");
+@@ -627,7 +679,7 @@ static void ParseIniStream(wistream *stream, const wstring *_ini_namespace)
+ 
+ 		ParseIniKeyValLine(&wline, &section, warn_duplicates,
+ 				   warn_lines_without_equals, section_entry,
+-				   &ini_namespace);
++				   &ini_namespace, source_index, source_line);
+ 	}
+ }
+ 
+@@ -658,6 +710,59 @@ static void ParseIniExcerpt(const wchar_t *excerpt)
  // it, make sure you delay calling it until after the log file has been opened!
  static void ParseNamespacedIniFile(const wchar_t *ini, const wstring *ini_namespace)
  {
@@ -689,16 +894,18 @@ index a69e79dade0b489a7aa3ed670ce624f39ed39c3c..3938742f7433a56e2eea8a230039ce83
 +		}
 +		if (decoded_ok) {
 +			std::wistringstream stream(decoded);
++			size_t source_index = static_cast<size_t>(-1);
 +			{
 +				std::lock_guard<std::mutex> lock(loaded_config_sources_mutex);
 +				if (snapshot.bytes->size() > size_t(64) * 1024 * 1024 - loaded_config_source_bytes)
 +					loaded_config_sources.verified = false;
 +				else {
 +					loaded_config_source_bytes += snapshot.bytes->size();
++					source_index = loaded_config_sources.sources.size();
 +					loaded_config_sources.sources.push_back({snapshot, ini_namespace ? *ini_namespace : L""});
 +				}
 +			}
-+			ParseIniStream(&stream, ini_namespace);
++			ParseIniStream(&stream, ini_namespace, source_index);
 +			return;
 +		}
 +	}
@@ -709,7 +916,121 @@ index a69e79dade0b489a7aa3ed670ce624f39ed39c3c..3938742f7433a56e2eea8a230039ce83
  	wifstream f(ini, ios::in, _SH_DENYNO);
  	if (!f) {
  		LogOverlay(LOG_WARNING, "  Error opening %S\n", ini);
-@@ -2178,6 +2246,8 @@ static CustomResourcePool* ParseResourcePoolSection(const wchar_t* section_name)
+@@ -787,6 +892,11 @@ static void ParseIniFilesRecursive(wchar_t *migoto_path, const wstring &rel_path
+ 	WIN32_FIND_DATA find_data;
+ 	HANDLE hFind;
+ 	wstring search_path, ini_path, ini_namespace;
++	ModLoading::ResourceRefreshDirectory refresh_directory;
++	refresh_directory.path = wstring(migoto_path) + rel_path;
++	bool refresh_inventory_valid = !capture_config_sources ||
++		ModLoading::IsResourceRefreshDirectoryWatchable(refresh_directory.path);
++	size_t refresh_observed = 0;
+ 
+ 	search_path = wstring(migoto_path) + rel_path + L"\\*";
+ 	LogInfo("    Searching \"%S\"\n", search_path.c_str());
+@@ -798,11 +908,31 @@ static void ParseIniFilesRecursive(wchar_t *migoto_path, const wstring &rel_path
+ 
+ 	hFind = FindFirstFile(search_path.c_str(), &find_data);
+ 	if (hFind == INVALID_HANDLE_VALUE) {
++		if (capture_config_sources) {
++			std::lock_guard<std::mutex> lock(loaded_config_sources_mutex);
++			loaded_resource_refresh_closure.verified = false;
++			loaded_resource_refresh_closure.reason = "Recursive include directory could not be enumerated";
++		}
+ 		LogInfo("    Recursive include path \"%S\" not found\n", search_path.c_str());
+ 		return;
+ 	}
+ 
+ 	do {
++		// Capture the enumeration actually consumed by the legacy walk, before
++		// exclusions. A post-parse rescan could legitimize a newly installed INI
++		// that was never parsed. Ignore asset names to allow A.buf -> new B.buf.
++		if (capture_config_sources && refresh_inventory_valid &&
++			wcscmp(find_data.cFileName, L".") && wcscmp(find_data.cFileName, L"..")) {
++			if (++refresh_observed > 65536 || (find_data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
++				refresh_inventory_valid = false;
++			} else if (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
++				refresh_directory.entries.push_back(L"D:" + wstring(find_data.cFileName));
++			} else {
++				const size_t length = wcslen(find_data.cFileName);
++				if (length >= 4 && !_wcsicmp(find_data.cFileName + length - 4, L".ini"))
++					refresh_directory.entries.push_back(L"F:" + wstring(find_data.cFileName));
++			}
++		}
+ 		if (matches_globbing_vector(find_data.cFileName, exclude)) {
+ 			LogInfo("    Excluding \"%S\"\n", find_data.cFileName);
+ 			continue;
+@@ -817,8 +947,22 @@ static void ParseIniFilesRecursive(wchar_t *migoto_path, const wstring &rel_path
+ 			LogDebug("    Not a directory or ini file: \"%S\"\n", find_data.cFileName);
+ 		}
+ 	} while (FindNextFile(hFind, &find_data));
++	const DWORD refresh_enumeration_error = GetLastError();
+ 
+ 	FindClose(hFind);
++	if (capture_config_sources) {
++		std::sort(refresh_directory.entries.begin(), refresh_directory.entries.end());
++		std::lock_guard<std::mutex> lock(loaded_config_sources_mutex);
++		// Bound traversal work as well as retained inventory (including assets).
++		loaded_resource_refresh_entries += refresh_observed;
++		if (!refresh_inventory_valid || refresh_enumeration_error != ERROR_NO_MORE_FILES ||
++			loaded_resource_refresh_entries > 65536 || loaded_resource_refresh_closure.directories.size() >= 4096) {
++			loaded_resource_refresh_closure.verified = false;
++			loaded_resource_refresh_closure.reason = "Recursive include closure is aliased, incomplete, or exceeds refresh bounds";
++		} else if (loaded_resource_refresh_closure.verified) {
++			loaded_resource_refresh_closure.directories.push_back(std::move(refresh_directory));
++		}
++	}
+ 
+ 	for (wstring i: ini_files) {
+ 		ini_namespace = rel_path + wstring(L"\\") + i;
+@@ -2118,6 +2262,46 @@ static CustomResource* ParseResourceSection(const wchar_t* section_name, const w
+ 
+ 	ParseResourceInitialData(custom_resource, section_name);
+ 
++	// Record the actual filename selected by this parser, including the physical
++	// source location. Duplicate sections/keys and fallback resolution are not
++	// eligible for detached filename refresh.
++	if (!resource_id_suffix && !custom_resource->filename.empty()) {
++		auto section = ini_sections.find(section_name);
++		if (section != ini_sections.end() && !section->second.refresh_ambiguous) {
++			const IniLine* filename_line = nullptr;
++			size_t filename_count = 0;
++			for (const auto& line : section->second.kv_vec) {
++				if (!_wcsicmp(line.first.c_str(), L"filename")) {
++					filename_line = &line;
++					++filename_count;
++				}
++			}
++			if (filename_count == 1 && filename_line && filename_line->source_line) {
++				wchar_t module_path[MAX_PATH] = {};
++				if (GetModuleFileName(migoto_handle, module_path, MAX_PATH)) {
++					wchar_t* slash = wcsrchr(module_path, L'\\');
++					if (slash) {
++						slash[1] = 0;
++						wstring namespace_path;
++						get_namespaced_section_path(section_name, &namespace_path);
++						ModLoading::ResourceFilenameBinding binding;
++						binding.sourceIndex = filename_line->source_index;
++						binding.line = filename_line->source_line;
++						binding.resourceId = resource_id;
++						binding.originalValue = filename_line->second;
++						binding.resolvedFilename = custom_resource->filename;
++						binding.preferredDirectory = wstring(module_path) + namespace_path;
++						std::lock_guard<std::mutex> lock(loaded_config_sources_mutex);
++						if (loaded_config_sources.verified && binding.sourceIndex < loaded_config_sources.sources.size()) {
++							binding.sourcePath = loaded_config_sources.sources[binding.sourceIndex].snapshot.path;
++							loaded_resource_filename_bindings.push_back(std::move(binding));
++						}
++					}
++				}
++			}
++		}
++	}
++
+ 	return custom_resource;
+ }
+ 
+@@ -2178,6 +2362,8 @@ static CustomResourcePool* ParseResourcePoolSection(const wchar_t* section_name)
  
  static void ParseResourceSections()
  {
@@ -718,20 +1039,35 @@ index a69e79dade0b489a7aa3ed670ce624f39ed39c3c..3938742f7433a56e2eea8a230039ce83
  	// Edges point at entries of the maps cleared below:
  	ClearDeferredBindFlags();
  	customResourcePools.clear();
-@@ -4452,6 +4522,12 @@ void LoadConfigFile()
+@@ -4369,6 +4555,11 @@ void FlagConfigReload(HackerDevice *device, void *private_data)
+ 	G->gWipeUserConfig = !!private_data;
+ }
+ 
++static void RequestResourceFilenameRefresh(HackerDevice*, void*)
++{
++	ModLoading::RequestPreparedRefresh();
++}
++
+ void ToggleInput(HackerDevice *device, void *private_data)
+ {
+ 	G->disable_input = !G->disable_input;
+@@ -4452,6 +4643,15 @@ void LoadConfigFile()
  {
  	wchar_t iniFile[MAX_PATH], logFilename[MAX_PATH];
  	wchar_t setting[MAX_PATH];
 +	{
 +		std::lock_guard<std::mutex> lock(loaded_config_sources_mutex);
 +		loaded_config_sources = ModLoading::ConfigSourceManifest{};
++		loaded_resource_filename_bindings.clear();
++		loaded_resource_refresh_closure = ModLoading::ResourceRefreshClosure{};
++		loaded_resource_refresh_entries = 0;
 +		capture_config_sources = false;
 +		loaded_config_source_bytes = 0;
 +	}
  
  	setlocale(LC_CTYPE, "en_US.UTF-8");
  
-@@ -4462,6 +4538,17 @@ void LoadConfigFile()
+@@ -4462,6 +4662,18 @@ void LoadConfigFile()
  	wcscat(iniFile, INI_FILENAME);
  	wcscat(logFilename, L"d3d11_log.txt");
  	warn_of_conflicting_d3dx(iniFile);
@@ -745,11 +1081,12 @@ index a69e79dade0b489a7aa3ed670ce624f39ed39c3c..3938742f7433a56e2eea8a230039ce83
 +		capture_config_sources = !_wcsicmp(preparation_mode, L"adaptive") ||
 +			!_wcsicmp(preparation_mode, L"prepared_profile");
 +		loaded_config_sources.verified = capture_config_sources;
++		loaded_resource_refresh_closure.verified = capture_config_sources;
 +	}
  
  	// Log all settings that are _enabled_, in order, 
  	// so that there is no question what settings we are using.
-@@ -4537,6 +4624,10 @@ void LoadConfigFile()
+@@ -4537,6 +4749,10 @@ void LoadConfigFile()
  
  	ParseIniFile(iniFile);
  	InsertBuiltInIniSections();
@@ -760,15 +1097,17 @@ index a69e79dade0b489a7aa3ed670ce624f39ed39c3c..3938742f7433a56e2eea8a230039ce83
  
  	// Unbuffered logging to remove need for fflush calls, and r/w access to make it easy
  	// to open active files.
-@@ -4933,6 +5024,7 @@ void LoadConfigFile()
+@@ -4933,6 +5149,9 @@ void LoadConfigFile()
  	setlocale(LC_CTYPE, G->gDefaultLocale.c_str());
  
  	emit_ini_warning_tone();
 +	ModLoading::ConfigureRuntime();
++	// No default key; this action is distinct from legacy reload/reset semantics.
++	RegisterIniKeyBinding(L"ModLoading", L"refresh_key", RequestResourceFilenameRefresh, NULL, 0, NULL);
  }
  
  static void ResetUnknownSettingsCache()
-@@ -5158,6 +5250,7 @@ static void MarkAllShadersDeferredUnprocessed()
+@@ -5158,6 +5377,7 @@ static void MarkAllShadersDeferredUnprocessed()
  
  void ReloadConfig(HackerDevice *device)
  {
@@ -777,12 +1116,13 @@ index a69e79dade0b489a7aa3ed670ce624f39ed39c3c..3938742f7433a56e2eea8a230039ce83
  
  	HackerContext *mHackerContext = device->GetHackerContext();
 diff --git a/DirectX11/IniHandler.h b/DirectX11/IniHandler.h
-index 6e75eeb2fcc0ee41244e88ad3ef42fa017be5453..2f01b043a6e56ecc57a666ff0ba5cb92389475ce 100644
+index 6e75eeb2fcc0ee41244e88ad3ef42fa017be5453..55fab9963274cdf58ec4393a639893e4e45bdb2a 100644
 --- a/DirectX11/IniHandler.h
 +++ b/DirectX11/IniHandler.h
-@@ -1,8 +1,12 @@
+@@ -1,8 +1,15 @@
  #include "HackerDevice.h"
 +#include "ModLoading/ConfigCompiler.h"
++#include "ModLoading/ResourceRefresh.h"
  
  void FlagConfigReload(HackerDevice *device, void *private_data);
  void ToggleInput(HackerDevice *device, void *private_data);
@@ -790,9 +1130,21 @@ index 6e75eeb2fcc0ee41244e88ad3ef42fa017be5453..2f01b043a6e56ecc57a666ff0ba5cb92
 +// Exact, ordered source bytes consumed by the last legacy parse. A false
 +// verified flag disables detached refresh; the legacy parser remains available.
 +ModLoading::ConfigSourceManifest CaptureLoadedConfigSources();
++std::vector<ModLoading::ResourceFilenameBinding> CaptureLoadedResourceFilenameBindings();
++ModLoading::ResourceRefreshClosure CaptureLoadedResourceRefreshClosure();
  void ReloadConfig(HackerDevice *device);
  void RegisterUnknownSetting(const wchar_t* name, float value);
  bool SavePersistentSettings(bool force = false);
+@@ -23,6 +30,9 @@ struct IniLine {
+ 	// different namespaces, so each line stores the namespace it came from
+ 	// to resolve references within the namespace:
+ 	wstring ini_namespace;
++	// Exact physical input location, available only for retained verified input.
++	size_t source_index = static_cast<size_t>(-1);
++	size_t source_line = 0;
+ 
+ 	IniLine(wstring &key, wstring &val, wstring &line, const wstring &ini_namespace) :
+ 		first(key),
 diff --git a/DirectX11/ModLoading/AssetCatalog.cpp b/DirectX11/ModLoading/AssetCatalog.cpp
 new file mode 100644
 index 0000000000000000000000000000000000000000..bc7a82c3ac24be19c5042d381538d118bbf1a940
@@ -838,10 +1190,10 @@ index 0000000000000000000000000000000000000000..ebd1abe6bc3a4a179c7df0b8394fd651
 +}
 diff --git a/DirectX11/ModLoading/ChangeMonitor.cpp b/DirectX11/ModLoading/ChangeMonitor.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..1e8e3944be09f98e3280e7caf88fe1ff9490a2eb
+index 0000000000000000000000000000000000000000..4862166407d89ea84818c34816007e9462691482
 --- /dev/null
 +++ b/DirectX11/ModLoading/ChangeMonitor.cpp
-@@ -0,0 +1,194 @@
+@@ -0,0 +1,195 @@
 +#include "ChangeMonitor.h"
 +#include <atomic>
 +#include <chrono>
@@ -1033,15 +1385,16 @@ index 0000000000000000000000000000000000000000..1e8e3944be09f98e3280e7caf88fe1ff
 +    impl_->callback = Callback();
 +}
 +bool ChangeMonitor::IsCurrent(uint64_t token) const { return impl_->state.IsCurrent(token); }
++bool ChangeMonitor::TrackDependencyFile(const std::wstring& path) { return impl_->state.TrackDependencyFile(path); }
 +void ChangeMonitor::RequestFullReconcile() { impl_->state.RequestFullReconcile(Now()); }
 +void ChangeMonitor::Inject(ChangeKind kind, const std::wstring& path) { impl_->state.Notify(kind, path, Now()); }
 +}
 diff --git a/DirectX11/ModLoading/ChangeMonitor.h b/DirectX11/ModLoading/ChangeMonitor.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..88d63c6cd50e39162a15899ab7d49bc24f21e6a9
+index 0000000000000000000000000000000000000000..4841321e77faf5bd7b9100e5735fe4f4de7e8268
 --- /dev/null
 +++ b/DirectX11/ModLoading/ChangeMonitor.h
-@@ -0,0 +1,28 @@
+@@ -0,0 +1,29 @@
 +#pragma once
 +#include "ChangeReconciler.h"
 +#include <functional>
@@ -1063,6 +1416,7 @@ index 0000000000000000000000000000000000000000..88d63c6cd50e39162a15899ab7d49bc2
 +    void Stop();
 +    bool IsCurrent(uint64_t token) const;
 +    void RequestFullReconcile();
++    bool TrackDependencyFile(const std::wstring& resolvedCanonicalFile);
 +    // Portable injection supports deterministic state tests; production uses OS events.
 +    void Inject(ChangeKind kind, const std::wstring& path);
 +private:
@@ -1072,10 +1426,10 @@ index 0000000000000000000000000000000000000000..88d63c6cd50e39162a15899ab7d49bc2
 +}
 diff --git a/DirectX11/ModLoading/ChangeReconciler.cpp b/DirectX11/ModLoading/ChangeReconciler.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..2b1014d303cddb61aa19fffad48d5661e0b767a1
+index 0000000000000000000000000000000000000000..6f474949c305aac6b4cda909b38e9006bb2d032d
 --- /dev/null
 +++ b/DirectX11/ModLoading/ChangeReconciler.cpp
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,133 @@
 +#include "ChangeReconciler.h"
 +#include <algorithm>
 +#include <cwctype>
@@ -1094,6 +1448,7 @@ index 0000000000000000000000000000000000000000..2b1014d303cddb61aa19fffad48d5661
 +}
 +}
 +ChangeReconciler::ChangeReconciler(ChangeOptions options) : options_(options) {
++    options_.maxDependencyFiles = std::min(size_t(65536), std::max(size_t(1), options_.maxDependencyFiles));
 +    options_.maxRoots = std::max(size_t(1), options_.maxRoots);
 +    options_.maxQueuedEvents = std::max(size_t(1), options_.maxQueuedEvents);
 +    for (auto& path : options_.dependencyFiles) path = Normal(path);
@@ -1149,6 +1504,42 @@ index 0000000000000000000000000000000000000000..2b1014d303cddb61aa19fffad48d5661
 +    if (force) ini_ = true;
 +    Dirty(now, force);
 +}
++bool ChangeReconciler::TrackDependencyFile(const std::wstring& path) {
++    // Caller must already resolve the source path; reject noncanonical traversal
++    // lexically so an apparent in-root prefix cannot bypass watch coverage.
++    if (path.empty() || path.size() > 32767 || path.back() == L'/' || path.back() == L'\\') return false;
++    try {
++        const auto normal = Normal(path);
++        const bool absolute = (normal.size() >= 3 && normal[1] == L':' && normal[2] == L'\\') ||
++            (normal.size() > 2 && normal[0] == L'\\' && normal[1] == L'\\');
++        if (!absolute || normal.back() == L'\\' || normal.find(L'\0') != std::wstring::npos) return false;
++        // Plain Windows file paths only: no alternate streams, device namespace,
++        // duplicate separators, or trailing-dot/space aliases to different names.
++        const size_t body = normal[1] == L':' ? 2 : 0;
++        if (normal.find(L':', body) != std::wstring::npos || normal.find_first_of(L"*?<>\"|") != std::wstring::npos) return false;
++        size_t start = 0;
++        while (start < normal.size()) {
++            const auto end = normal.find(L'\\', start);
++            const auto part = normal.substr(start, end == std::wstring::npos ? normal.size() - start : end - start);
++            if (part == L"." || part == L".." || (!part.empty() && (part.back() == L'.' || part.back() == L' '))) return false;
++            if (part.empty() && start > 1) return false;
++            if (end == std::wstring::npos) break;
++            start = end + 1;
++        }
++        std::lock_guard<std::mutex> lock(mutex_);
++        if (cancelled_) return false;
++        bool watched = false;
++        for (const auto& root : roots_) if (Within(normal, root) && normal != root) watched = true;
++        if (!watched) return false;
++        for (const auto& root : excluded_) if (Within(normal, root)) return false;
++        if (std::binary_search(options_.excludedSourceFiles.begin(), options_.excludedSourceFiles.end(), normal)) return false;
++        auto position = std::lower_bound(options_.dependencyFiles.begin(), options_.dependencyFiles.end(), normal);
++        if (position != options_.dependencyFiles.end() && *position == normal) return true;
++        if (options_.dependencyFiles.size() >= options_.maxDependencyFiles) return false;
++        options_.dependencyFiles.insert(position, normal);
++        return true;
++    } catch (...) { return false; }
++}
 +void ChangeReconciler::RequestFullReconcile(uint64_t now) { Notify(ChangeKind::Overflow, L"", now); }
 +bool ChangeReconciler::TakeReady(uint64_t now, ReconcileRequest& request) {
 +    std::lock_guard<std::mutex> lock(mutex_);
@@ -1174,10 +1565,10 @@ index 0000000000000000000000000000000000000000..2b1014d303cddb61aa19fffad48d5661
 +}
 diff --git a/DirectX11/ModLoading/ChangeReconciler.h b/DirectX11/ModLoading/ChangeReconciler.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..cb802fd2db22fe70a5b41c5e3ab46a47e53dbd3a
+index 0000000000000000000000000000000000000000..e605eaa602ad8367308a7f535930e24fd2ad8b9c
 --- /dev/null
 +++ b/DirectX11/ModLoading/ChangeReconciler.h
-@@ -0,0 +1,53 @@
+@@ -0,0 +1,57 @@
 +#pragma once
 +#include <cstdint>
 +#include <mutex>
@@ -1189,6 +1580,7 @@ index 0000000000000000000000000000000000000000..cb802fd2db22fe70a5b41c5e3ab46a47
 +struct ChangeOptions {
 +    size_t maxRoots = 128;
 +    size_t maxQueuedEvents = 1024;
++    size_t maxDependencyFiles = 4096; // Dynamic tracking capacity, hard ceiling 65536.
 +    uint64_t debounceMs = 150;
 +    uint64_t maximumDelayMs = 1500;
 +    uint64_t periodicReconcileMs = 0; // Opt in only with a complete config-closure verifier.
@@ -1213,6 +1605,9 @@ index 0000000000000000000000000000000000000000..cb802fd2db22fe70a5b41c5e3ab46a47
 +                  const std::vector<std::wstring>& excludedRoots, uint64_t now);
 +    void Notify(ChangeKind kind, const std::wstring& path, uint64_t now);
 +    void RequestFullReconcile(uint64_t now);
++    // Worker-only learning of a verified INI dependency inside existing roots.
++    // No IO/restart/token change; false means candidate must fail closed.
++    bool TrackDependencyFile(const std::wstring& resolvedCanonicalFile);
 +    bool TakeReady(uint64_t now, ReconcileRequest& request);
 +    bool IsCurrent(uint64_t token) const;
 +    void Cancel();
@@ -3676,17 +4071,518 @@ index 0000000000000000000000000000000000000000..4173163e36ae639249ebb6399028ebce
 +    bool Valid() const { return maxAssetBytes && (!cpuBytes || maxAssetBytes <= cpuBytes) && workers >= 1 && workers <= 16 && maxQueued >= 1 && maxQueued <= 4096; }
 +};
 +}
+diff --git a/DirectX11/ModLoading/ResourceRefresh.cpp b/DirectX11/ModLoading/ResourceRefresh.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..b3618c8b2b87e945c44228a0a1e6d6ee7a9998a5
+--- /dev/null
++++ b/DirectX11/ModLoading/ResourceRefresh.cpp
+@@ -0,0 +1,202 @@
++#include "ResourceRefresh.h"
++#include "SnapshotIO.h"
++#include <algorithm>
++
++namespace ModLoading {
++namespace {
++bool ValidSnapshot(const SourceSnapshot& source) {
++    return source.watchable && source.bytes &&
++        HashBytes(source.bytes->data(), source.bytes->size()) == source.digest;
++}
++bool FilenameSpan(const std::vector<uint8_t>& bytes, size_t line, size_t& begin, size_t& end) {
++    if (!line) return false;
++    begin = 0;
++    for (size_t n = 1; n < line; ++n) {
++        while (begin < bytes.size() && bytes[begin] != '\n') ++begin;
++        if (begin == bytes.size()) return false;
++        ++begin;
++    }
++    end = begin;
++    while (end < bytes.size() && bytes[end] != '\n') ++end;
++    if (end > begin && bytes[end - 1] == '\r') --end;
++    size_t equal = begin;
++    while (equal < end && bytes[equal] != '=') ++equal;
++    if (equal == end) return false;
++    size_t keyBegin = begin, keyEnd = equal;
++    while (keyBegin < keyEnd && (bytes[keyBegin] == ' ' || bytes[keyBegin] == '\t')) ++keyBegin;
++    while (keyEnd > keyBegin && (bytes[keyEnd - 1] == ' ' || bytes[keyEnd - 1] == '\t')) --keyEnd;
++    const char key[] = "filename";
++    if (keyEnd - keyBegin != sizeof(key) - 1) return false;
++    for (size_t i = 0; i != sizeof(key) - 1; ++i) {
++        auto c = bytes[keyBegin + i];
++        if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
++        if (c != static_cast<uint8_t>(key[i])) return false;
++    }
++    begin = equal + 1;
++    while (begin < end && (bytes[begin] == ' ' || bytes[begin] == '\t')) ++begin;
++    while (end > begin && (bytes[end - 1] == ' ' || bytes[end - 1] == '\t')) --end;
++    return begin < end;
++}
++bool Basename(const std::vector<uint8_t>& bytes, size_t begin, size_t end, std::wstring& out) {
++    if (end - begin <= 4 || end - begin > 200) return false;
++    out.clear();
++    for (size_t i = begin; i < end; ++i) {
++        const auto c = bytes[i];
++        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
++            (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.')) return false;
++        out.push_back(c);
++    }
++    if (out.find(L"..") != std::wstring::npos || out.front() == L'.') return false;
++    auto extension = out.substr(out.size() - 4);
++    for (auto& c : extension) if (c >= L'A' && c <= L'Z') c += L'a' - L'A';
++    return extension == L".buf";
++}
++}
++ResourceFilenamePatch BuildResourceFilenamePatch(const ConfigSourceManifest& baseline,
++    const ConfigSourceManifest& candidate, const std::vector<ResourceFilenameBinding>& bindings,
++    BuildVersions versions, bool dependencyClosureVerified) {
++    ResourceFilenamePatch result;
++    result.versions = versions;
++    result.reason = "Filename refresh requires a verified unchanged source closure";
++    if (!baseline.verified || !candidate.verified || !dependencyClosureVerified ||
++        baseline.sources.empty() || baseline.sources.size() != candidate.sources.size()) return result;
++    size_t changed = candidate.sources.size();
++    for (size_t i = 0; i < baseline.sources.size(); ++i) {
++        const auto& a = baseline.sources[i];
++        const auto& b = candidate.sources[i];
++        if (a.snapshot.path != b.snapshot.path || a.iniNamespace != b.iniNamespace ||
++            !ValidSnapshot(a.snapshot) || !ValidSnapshot(b.snapshot)) return result;
++        if (*a.snapshot.bytes != *b.snapshot.bytes) {
++            if (changed != candidate.sources.size()) return result;
++            changed = i;
++        }
++    }
++    result.reason = "Only one authoritative existing Resource filename value may change";
++    if (changed == candidate.sources.size()) return result;
++    const auto& before = *baseline.sources[changed].snapshot.bytes;
++    const auto& after = *candidate.sources[changed].snapshot.bytes;
++    // Find the one changed physical line once. Scanning from byte zero for
++    // every resource binding would multiply INI size by resource count.
++    size_t difference = 0, changedLine = 1;
++    while (difference < before.size() && difference < after.size() && before[difference] == after[difference]) {
++        if (before[difference] == '\n') ++changedLine;
++        ++difference;
++    }
++    size_t oldBegin, oldEnd, newBegin, newEnd;
++    std::wstring oldValue, newValue;
++    if (!FilenameSpan(before, changedLine, oldBegin, oldEnd) ||
++        !FilenameSpan(after, changedLine, newBegin, newEnd) || oldBegin != newBegin ||
++        !Basename(before, oldBegin, oldEnd, oldValue) ||
++        !Basename(after, newBegin, newEnd, newValue) ||
++        !std::equal(before.begin(), before.begin() + oldBegin, after.begin()) ||
++        before.size() - oldEnd != after.size() - newEnd ||
++        !std::equal(before.begin() + oldEnd, before.end(), after.begin() + newEnd)) return result;
++    size_t matches = 0;
++    for (const auto& binding : bindings) {
++        if (binding.sourceIndex != changed || binding.line != changedLine || binding.resourceId.empty() ||
++            binding.sourcePath != baseline.sources[changed].snapshot.path ||
++            binding.preferredDirectory.empty() ||
++            (binding.preferredDirectory.back() != L'\\' && binding.preferredDirectory.back() != L'/')) continue;
++        // The parser must have used its preferred directory, never the fallback.
++        if (binding.resolvedFilename != binding.preferredDirectory + binding.originalValue) continue;
++        ++matches;
++        result.binding = binding;
++        result.replacementValue = newValue;
++        result.replacementPath = binding.preferredDirectory + result.replacementValue;
++    }
++    if (matches != 1) return result;
++    result.valid = true;
++    result.manifest = candidate;
++    result.reason = "Validated single static buffer filename delta; runtime dependency admission required";
++    return result;
++}
++ResourceFilenamePatch ReadResourceFilenamePatch(const ConfigSourceManifest& baseline,
++    const std::vector<ResourceFilenameBinding>& bindings, BuildVersions versions,
++    bool dependencyClosureVerified) {
++    ResourceFilenamePatch failure;
++    failure.versions = versions;
++    failure.reason = "Unable to capture a complete stable configuration source closure";
++    if (!baseline.verified || !dependencyClosureVerified || baseline.sources.empty() ||
++        baseline.sources.size() > 4096) return failure;
++    ConfigSourceManifest candidate;
++    candidate.verified = true;
++    size_t total = 0;
++    std::string error;
++    for (const auto& original : baseline.sources) {
++        ConfigSource source;
++        source.iniNamespace = original.iniNamespace;
++        if (!ReadVerifiedSnapshot(original.snapshot.path, size_t(16) * 1024 * 1024, source.snapshot, error))
++            return failure;
++        total += source.snapshot.bytes->size();
++        if (total > size_t(64) * 1024 * 1024) return failure;
++        candidate.sources.push_back(std::move(source));
++    }
++    auto patch = BuildResourceFilenamePatch(baseline, candidate, bindings, versions, true);
++    if (!patch.valid) return patch;
++    for (const auto& source : candidate.sources) {
++        SourceSnapshot checked;
++        if (!ReadVerifiedSnapshot(source.snapshot.path, size_t(16) * 1024 * 1024, checked, error) ||
++            !checked.watchable || checked.digest != source.snapshot.digest || *checked.bytes != *source.snapshot.bytes)
++            return failure;
++    }
++    return patch;
++}
++ResourceRefreshPin ResourceRefreshManager::Pin() const {
++    std::lock_guard<std::mutex> lock(mutex_);
++    return active_;
++}
++ResourceRefreshPublishResult ResourceRefreshManager::Publish(ResourceRefreshPin candidate,
++    BuildVersions current, uint64_t legacyConfigEpoch, bool dependenciesReady) {
++    std::lock_guard<std::mutex> lock(mutex_);
++    if (!candidate || !candidate->id || !candidate->payload ||
++        !candidate->manifest.verified || candidate->manifest.sources.empty())
++        return ResourceRefreshPublishResult::InvalidCandidate;
++    for (const auto& source : candidate->manifest.sources)
++        if (!source.snapshot.watchable || !source.snapshot.bytes)
++            return ResourceRefreshPublishResult::InvalidCandidate;
++    if (!(candidate->versions == current) || !legacyConfigEpoch ||
++        candidate->legacyConfigEpoch != legacyConfigEpoch ||
++        (active_ && candidate->id <= active_->id)) return ResourceRefreshPublishResult::Stale;
++    if (!dependenciesReady) return ResourceRefreshPublishResult::DependenciesPending;
++    if (active_ && retired_.size() >= maxRetired_) return ResourceRefreshPublishResult::RetirementPending;
++    if (active_) retired_.push_back(active_);
++    active_ = std::move(candidate);
++    return ResourceRefreshPublishResult::Activated;
++}
++void ResourceRefreshManager::Clear() {
++    ResourceRefreshPin active;
++    std::vector<ResourceRefreshPin> retired;
++    {
++        std::lock_guard<std::mutex> lock(mutex_);
++        active.swap(active_);
++        retired.swap(retired_);
++    }
++    // COM destruction can reenter runtime lifecycle callbacks.
++}
++size_t ResourceRefreshManager::Retire(const std::function<bool(uint64_t)>& gpuComplete) {
++    if (!gpuComplete) return 0;
++    std::vector<uint64_t> ids;
++    {
++        std::lock_guard<std::mutex> lock(mutex_);
++        for (const auto& pin : retired_) if (pin.use_count() == 1) ids.push_back(pin->id);
++    }
++    std::vector<ResourceRefreshPin> release;
++    size_t count = 0;
++    for (const auto id : ids) {
++        if (!gpuComplete(id)) continue;
++        std::lock_guard<std::mutex> lock(mutex_);
++        for (auto it = retired_.begin(); it != retired_.end(); ++it) {
++            if ((*it)->id == id && it->use_count() == 1) {
++                release.push_back(std::move(*it));
++                retired_.erase(it); ++count;
++                break;
++            }
++        }
++    }
++    return count;
++}
++size_t ResourceRefreshManager::RetiredCount() const {
++    std::lock_guard<std::mutex> lock(mutex_);
++    return retired_.size();
++}
++}
+diff --git a/DirectX11/ModLoading/ResourceRefresh.h b/DirectX11/ModLoading/ResourceRefresh.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..e548c3dd648840b2cd7c17f989c5c90e25309001
+--- /dev/null
++++ b/DirectX11/ModLoading/ResourceRefresh.h
+@@ -0,0 +1,78 @@
++#pragma once
++#include "ConfigCompiler.h"
++#include <functional>
++#include <mutex>
++
++namespace ModLoading {
++// Captured from the actual legacy parser, never inferred from directory scans.
++// The first release supports a simple ASCII .buf basename in the preferred
++// namespace directory; legacy fallback-path changes are deliberately excluded.
++struct ResourceFilenameBinding {
++    size_t sourceIndex = 0, line = 0;
++    std::wstring sourcePath, resourceId, originalValue, resolvedFilename, preferredDirectory;
++};
++struct ResourceFilenamePatch {
++    bool valid = false;
++    std::string reason;
++    ResourceFilenameBinding binding;
++    std::wstring replacementValue, replacementPath;
++    ConfigSourceManifest manifest;
++    BuildVersions versions;
++};
++struct ResourceRefreshDirectory {
++    std::wstring path;
++    // Exact legacy enumeration: D:name for child directories, F:name for INIs.
++    // Non-INI asset filenames are excluded so preparing a new .buf is possible.
++    std::vector<std::wstring> entries;
++};
++struct ResourceRefreshClosure {
++    bool verified = false;
++    std::string reason;
++    std::vector<ResourceRefreshDirectory> directories;
++};
++bool IsResourceRefreshDirectoryWatchable(const std::wstring& path);
++bool ReadResourceRefreshDirectory(const std::wstring& path,
++    std::vector<std::wstring>& entries, std::string& error, size_t* remainingEntries = nullptr);
++bool VerifyResourceRefreshClosure(const ResourceRefreshClosure& closure, std::string& error);
++ResourceFilenamePatch BuildResourceFilenamePatch(const ConfigSourceManifest& baseline,
++    const ConfigSourceManifest& candidate, const std::vector<ResourceFilenameBinding>& bindings,
++    BuildVersions versions, bool dependencyClosureVerified);
++// Worker-only I/O helper. Reads precisely the captured source list, validates
++// the delta, then rechecks every source. Caller separately proves directory
++// membership/closure and checks its change ticket before enqueue/publication.
++ResourceFilenamePatch ReadResourceFilenamePatch(const ConfigSourceManifest& baseline,
++    const std::vector<ResourceFilenameBinding>& bindings, BuildVersions versions,
++    bool dependencyClosureVerified);
++ResourceFilenamePatch ReadResourceFilenamePatch(const ConfigSourceManifest& baseline,
++    const std::vector<ResourceFilenameBinding>& bindings, BuildVersions versions,
++    const ResourceRefreshClosure& closure);
++
++struct ResourceRefreshGeneration {
++    uint64_t id = 0, legacyConfigEpoch = 0;
++    BuildVersions versions;
++    ConfigSourceManifest manifest;
++    // Runtime owns a complete immutable lookup table and prepared resource owners.
++    std::shared_ptr<const void> payload;
++};
++using ResourceRefreshPin = std::shared_ptr<const ResourceRefreshGeneration>;
++enum class ResourceRefreshPublishResult { Activated, InvalidCandidate, Stale,
++    DependenciesPending, RetirementPending };
++// Explicit user action is enforced by the caller. Failed validation, watcher
++// cancellation and failed preparation never clear the last-good active pin.
++class ResourceRefreshManager {
++public:
++    explicit ResourceRefreshManager(size_t maxRetired = 8) : maxRetired_(maxRetired) {}
++    ResourceRefreshPin Pin() const;
++    ResourceRefreshPublishResult Publish(ResourceRefreshPin candidate,
++        BuildVersions current, uint64_t legacyConfigEpoch, bool dependenciesReady);
++    // Reserved for explicit legacy reload/device lifecycle invalidation.
++    void Clear();
++    size_t Retire(const std::function<bool(uint64_t)>& gpuComplete);
++    size_t RetiredCount() const;
++private:
++    mutable std::mutex mutex_;
++    ResourceRefreshPin active_;
++    std::vector<ResourceRefreshPin> retired_;
++    size_t maxRetired_;
++};
++}
+diff --git a/DirectX11/ModLoading/ResourceRefreshClosure.cpp b/DirectX11/ModLoading/ResourceRefreshClosure.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..e25bd571248fd65a285ff45a2ee98a276653e292
+--- /dev/null
++++ b/DirectX11/ModLoading/ResourceRefreshClosure.cpp
+@@ -0,0 +1,136 @@
++#include "ResourceRefresh.h"
++#include <algorithm>
++#ifdef _WIN32
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#include <Windows.h>
++#else
++#include <sys/stat.h>
++#include <dirent.h>
++#include <cerrno>
++#include <codecvt>
++#include <locale>
++#endif
++
++namespace ModLoading {
++namespace {
++bool IniName(const std::wstring& name) {
++    if (name.size() < 4) return false;
++    auto extension = name.substr(name.size() - 4);
++    for (auto& c : extension) if (c >= L'A' && c <= L'Z') c += L'a' - L'A';
++    return extension == L".ini";
++}
++}
++bool IsResourceRefreshDirectoryWatchable(const std::wstring& path) {
++#ifdef _WIN32
++    std::vector<wchar_t> buffer(32768);
++    const DWORD count = GetFullPathNameW(path.c_str(), static_cast<DWORD>(buffer.size()), buffer.data(), nullptr);
++    if (!count || count >= buffer.size()) return false;
++    std::wstring full(buffer.data(), count);
++    while (full.size() > 3 && (full.back() == L'\\' || full.back() == L'/')) full.pop_back();
++    if (full.size() < 3 || full[1] != L':' || full.find(L':', 2) != std::wstring::npos) return false;
++    const DWORD longCount = GetLongPathNameW(full.c_str(), buffer.data(), static_cast<DWORD>(buffer.size()));
++    if (!longCount || longCount >= buffer.size() ||
++        CompareStringOrdinal(full.c_str(), static_cast<int>(full.size()), buffer.data(),
++            static_cast<int>(longCount), TRUE) != CSTR_EQUAL) return false;
++    for (size_t i = 3; i <= full.size(); ++i) {
++        if (i != full.size() && full[i] != L'\\' && full[i] != L'/') continue;
++        const DWORD attributes = GetFileAttributesW(full.substr(0, i).c_str());
++        if (attributes == INVALID_FILE_ATTRIBUTES || !(attributes & FILE_ATTRIBUTE_DIRECTORY) ||
++            (attributes & FILE_ATTRIBUTE_REPARSE_POINT)) return false;
++    }
++    return true;
++#else
++    try {
++        const auto full = std::wstring_convert<std::codecvt_utf8<wchar_t>>().to_bytes(path);
++        if (full.empty() || full[0] != '/') return false;
++        for (size_t i = 1; i <= full.size(); ++i) {
++            if (i != full.size() && full[i] != '/') continue;
++            struct stat info{};
++            if (lstat(full.substr(0, i).c_str(), &info) || !S_ISDIR(info.st_mode)) return false;
++        }
++        return true;
++    } catch (...) { return false; }
++#endif
++}
++bool ReadResourceRefreshDirectory(const std::wstring& path,
++    std::vector<std::wstring>& entries, std::string& error, size_t* remainingEntries) {
++    entries.clear();
++    error = "Recursive include directory is unavailable, aliased, or exceeds refresh bounds";
++    if (!IsResourceRefreshDirectoryWatchable(path)) return false;
++    bool valid = true;
++    size_t observed = 0;
++    size_t localRemaining = 65536;
++    if (!remainingEntries) remainingEntries = &localRemaining;
++#ifdef _WIN32
++    WIN32_FIND_DATAW data{};
++    const auto pattern = path + L"\\*";
++    HANDLE find = FindFirstFileW(pattern.c_str(), &data);
++    if (find == INVALID_HANDLE_VALUE) return false;
++    struct FindOwner { HANDLE handle; ~FindOwner() { FindClose(handle); } } owner{find};
++    do {
++        const std::wstring name(data.cFileName);
++        if (name == L"." || name == L"..") continue;
++        if (!*remainingEntries || ++observed > 65536 || (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) { valid = false; break; }
++        --*remainingEntries;
++        if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) entries.push_back(L"D:" + name);
++        else if (IniName(name)) entries.push_back(L"F:" + name);
++    } while (FindNextFileW(find, &data));
++    if (valid && GetLastError() != ERROR_NO_MORE_FILES) valid = false;
++#else
++    try {
++        std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
++        const auto encoded = converter.to_bytes(path);
++        DIR* directory = opendir(encoded.c_str());
++        if (!directory) return false;
++        std::unique_ptr<DIR, int(*)(DIR*)> owner(directory, closedir);
++        for (;;) {
++            errno = 0;
++            dirent* entry = readdir(directory);
++            if (!entry) { if (errno) valid = false; break; }
++            const std::string name(entry->d_name);
++            if (name == "." || name == "..") continue;
++            struct stat info{};
++            if (!*remainingEntries || ++observed > 65536 || lstat((encoded + "/" + name).c_str(), &info) || S_ISLNK(info.st_mode)) {
++                valid = false; break;
++            }
++            --*remainingEntries;
++            const auto wide = converter.from_bytes(name);
++            if (S_ISDIR(info.st_mode)) entries.push_back(L"D:" + wide);
++            else if (IniName(wide)) entries.push_back(L"F:" + wide);
++        }
++    } catch (...) { valid = false; }
++#endif
++    if (!valid || !IsResourceRefreshDirectoryWatchable(path)) { entries.clear(); return false; }
++    std::sort(entries.begin(), entries.end());
++    error.clear();
++    return true;
++}
++bool VerifyResourceRefreshClosure(const ResourceRefreshClosure& closure, std::string& error) {
++    error = closure.reason.empty() ? "Recursive include closure is unverified" : closure.reason;
++    if (!closure.verified || closure.directories.size() > 4096) return false;
++    size_t count = 0;
++    size_t remainingEntries = 65536;
++    for (const auto& directory : closure.directories) {
++        count += directory.entries.size();
++        if (count > 65536) { error = "Recursive include closure exceeds refresh bounds"; return false; }
++        std::vector<std::wstring> entries;
++        if (!ReadResourceRefreshDirectory(directory.path, entries, error, &remainingEntries)) return false;
++        if (entries != directory.entries) { error = "Recursive include directory membership changed; legacy reload required"; return false; }
++    }
++    error.clear();
++    return true;
++}
++ResourceFilenamePatch ReadResourceFilenamePatch(const ConfigSourceManifest& baseline,
++    const std::vector<ResourceFilenameBinding>& bindings, BuildVersions versions,
++    const ResourceRefreshClosure& closure) {
++    ResourceFilenamePatch failure;
++    failure.versions = versions;
++    if (!VerifyResourceRefreshClosure(closure, failure.reason)) return failure;
++    auto candidate = ReadResourceFilenamePatch(baseline, bindings, versions, true);
++    if (!candidate.valid) return candidate;
++    if (!VerifyResourceRefreshClosure(closure, failure.reason)) return failure;
++    return candidate;
++}
++}
+diff --git a/DirectX11/ModLoading/ResourceRefreshOverlay.cpp b/DirectX11/ModLoading/ResourceRefreshOverlay.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..711a575afd3d7793df46b3fa65ca9c806eb3cc1f
+--- /dev/null
++++ b/DirectX11/ModLoading/ResourceRefreshOverlay.cpp
+@@ -0,0 +1,21 @@
++#include "ResourceRefreshOverlay.h"
++namespace ModLoading {
++void CaptureResourceRefreshDrawPin(ResourceRefreshDrawPin& draw, ResourceRefreshPin generation) {
++    if (draw.captured) return;
++    draw.generation = std::move(generation);
++    draw.captured = true;
++}
++void* ResolveResourceRefreshOverlay(const ResourceRefreshDrawPin& draw, const void* original,
++    const void* deviceIdentity, DeviceEpoch deviceEpoch, uint64_t legacyConfigEpoch) noexcept {
++    auto* fallback = const_cast<void*>(original);
++    if (!draw.captured || !draw.generation || !draw.generation->payload || !deviceEpoch ||
++        draw.generation->legacyConfigEpoch != legacyConfigEpoch ||
++        draw.generation->versions.device != deviceEpoch) return fallback;
++    const auto overlay = std::static_pointer_cast<const ResourceRefreshOverlay>(draw.generation->payload);
++    if (overlay->deviceIdentity != deviceIdentity || overlay->deviceEpoch != deviceEpoch ||
++        overlay->legacyConfigEpoch != legacyConfigEpoch) return fallback;
++    const auto replacement = overlay->replacements.find(original);
++    return replacement == overlay->replacements.end() || !replacement->second ?
++        fallback : replacement->second.get();
++}
++}
+diff --git a/DirectX11/ModLoading/ResourceRefreshOverlay.h b/DirectX11/ModLoading/ResourceRefreshOverlay.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..ce6af9d3d3cd6ad5eec115a92b2a82fc3c400bd3
+--- /dev/null
++++ b/DirectX11/ModLoading/ResourceRefreshOverlay.h
+@@ -0,0 +1,33 @@
++#pragma once
++#include "ResourceRefresh.h"
++#include <map>
++#include <atomic>
++
++namespace ModLoading {
++// Complete immutable replacement owners. This payload belongs exclusively to
++// the Runtime's ResourceRefreshManager; arbitrary opaque manager payloads must
++// never be passed to this resolver.
++struct ResourceRefreshOverlay {
++    const void* deviceIdentity = nullptr;
++    DeviceEpoch deviceEpoch = 0;
++    uint64_t legacyConfigEpoch = 0;
++    std::map<const void*, std::shared_ptr<void>> replacements;
++};
++class ResourceRefreshActivationEdge {
++public:
++    void SetReady(uint64_t id) noexcept { ready_.store(id, std::memory_order_release); }
++    void Request() noexcept { requested_.store(ready_.load(std::memory_order_acquire), std::memory_order_release); }
++    uint64_t Consume() noexcept { return requested_.exchange(0, std::memory_order_acq_rel); }
++private:
++    std::atomic<uint64_t> ready_{0}, requested_{0};
++};
++struct ResourceRefreshDrawPin {
++    bool captured = false;
++    ResourceRefreshPin generation;
++};
++void CaptureResourceRefreshDrawPin(ResourceRefreshDrawPin& draw, ResourceRefreshPin generation);
++// No allocation, file I/O, hashing, or mutation. A captured null generation is
++// deliberately retained across every pre/post command and stage of the draw.
++void* ResolveResourceRefreshOverlay(const ResourceRefreshDrawPin& draw, const void* original,
++    const void* deviceIdentity, DeviceEpoch deviceEpoch, uint64_t legacyConfigEpoch) noexcept;
++}
 diff --git a/DirectX11/ModLoading/Runtime.cpp b/DirectX11/ModLoading/Runtime.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..1ca37cbc6b28e81a1fd6d48eacb3169a3b044f19
+index 0000000000000000000000000000000000000000..63707b4c1cc9c1b1abc5de098e12e096d36ecb6a
 --- /dev/null
 +++ b/DirectX11/ModLoading/Runtime.cpp
-@@ -0,0 +1,996 @@
+@@ -0,0 +1,1463 @@
 +// Resource creation mode uses global NVAPI state; keep every preparation call
 +// on the Present owner under the same lock as the compatibility resource path.
 +#include "../lock.h"
 +#include "Runtime.h"
 +#include "RuntimePolicy.h"
++#include "ResourceRefreshOverlay.h"
 +#include "../CommandList.h"
 +#include "../IniHandler.h"
 +#include "../globals.h"
@@ -3705,6 +4601,8 @@ index 0000000000000000000000000000000000000000..1ca37cbc6b28e81a1fd6d48eacb3169a
 +#include <map>
 +#include <mutex>
 +#include <set>
++#include <condition_variable>
++#include <thread>
 +
 +namespace ModLoading {
 +namespace {
@@ -3719,16 +4617,25 @@ index 0000000000000000000000000000000000000000..1ca37cbc6b28e81a1fd6d48eacb3169a
 +    DeviceResourceKey key;
 +    std::string reason;
 +};
++struct RefreshBuildResult;
 +struct RuntimeState {
 +    PreparationMode mode = PreparationMode::Off;
-+    std::atomic<bool> enabled{false};
++    std::atomic<bool> enabled{false}, failed{false};
 +    std::atomic<Generation> generation{0};
 +    PreparationLimits cpuLimits;
 +    GpuPumpLimits gpuLimits;
-+    uint64_t gpuBytes = 256 * MiB, shaderBytes = 0;
++    uint64_t gpuBytes = 256 * MiB, shaderBytes = 0, refreshBytes = 0, refreshGpuBytes = 0;
++    uint64_t legacyConfigEpoch = 0;
++    bool refreshEnabled = false;
++    std::vector<ResourceFilenameBinding> refreshBindings;
++    ResourceRefreshClosure refreshClosure;
++    std::mutex refreshMutex;
++    std::shared_ptr<RefreshBuildResult> refreshResult;
++    std::string refreshReason;
 +    uint64_t totalAssets = 0, baseCompatibility = 0;
 +    std::map<const void*, ProfileEntry> profile;
 +    bool loadingWindow = false;
++    bool resourceSharingProven = false;
 +    std::shared_ptr<PreparationScheduler> scheduler;
 +    std::unique_ptr<ChangeMonitor> monitor;
 +    std::vector<std::wstring> files;
@@ -3745,11 +4652,86 @@ index 0000000000000000000000000000000000000000..1ca37cbc6b28e81a1fd6d48eacb3169a
 +    GenerationManager generations;
 +    ~RuntimeState() { if (monitor) monitor->Stop(); }
 +};
++struct RefreshBuildTask {
++    std::weak_ptr<RuntimeState> state;
++    ConfigSourceManifest baseline;
++    std::vector<ResourceFilenameBinding> bindings;
++    ResourceRefreshClosure closure;
++    BuildVersions versions;
++    Generation schedulerGeneration = 0;
++    uint64_t id = 0, legacyConfigEpoch = 0;
++};
++struct RefreshBuildResult {
++    ResourceFilenamePatch patch;
++    Generation schedulerGeneration = 0;
++    uint64_t id = 0, legacyConfigEpoch = 0;
++};
++// One active task and one latest queued task, process-lifetime module pinned.
++// Tasks own immutable bytes/metadata only; they never dereference resource maps.
++class RefreshBuildWorker {
++public:
++    RefreshBuildWorker() : worker_([this] { Run(); }) {}
++    void Submit(std::shared_ptr<RefreshBuildTask> task) {
++        { std::lock_guard<std::mutex> lock(mutex_); pending_ = std::move(task); }
++        wake_.notify_one();
++    }
++private:
++    void Run() {
++        for (;;) {
++            std::shared_ptr<RefreshBuildTask> task;
++            { std::unique_lock<std::mutex> lock(mutex_);
++              wake_.wait(lock, [this] { return bool(pending_); }); task.swap(pending_); }
++            try {
++            auto state = task->state.lock();
++            if (!state || !state->enabled.load() || !state->monitor->IsCurrent(task->versions.source)) continue;
++            auto result = std::make_shared<RefreshBuildResult>();
++            result->id = task->id; result->legacyConfigEpoch = task->legacyConfigEpoch;
++            result->schedulerGeneration = task->schedulerGeneration;
++            try {
++                result->patch = ReadResourceFilenamePatch(task->baseline, task->bindings,
++                    task->versions, task->closure);
++                result->patch.versions = task->versions;
++                if (result->patch.valid && (!state->monitor->IsCurrent(task->versions.source) ||
++                    !state->monitor->TrackDependencyFile(result->patch.replacementPath))) {
++                    result->patch.valid = false; result->patch.reason = "replacement source watch could not be verified";
++                }
++                if (result->patch.valid)
++                    state->scheduler->Enqueue(result->patch.replacementPath, task->schedulerGeneration, 10);
++            } catch (...) { result->patch.valid = false; result->patch.reason = "bounded refresh preparation failed"; }
++            if (!state->enabled.load() || !state->monitor->IsCurrent(task->versions.source)) continue;
++            std::lock_guard<std::mutex> lock(state->refreshMutex);
++            state->refreshResult = std::move(result);
++            } catch (...) { /* Bounded admission failure leaves the active generation unchanged. */ }
++        }
++    }
++    std::mutex mutex_;
++    std::condition_variable wake_;
++    std::shared_ptr<RefreshBuildTask> pending_;
++    std::thread worker_;
++};
++struct PendingRefresh {
++    std::shared_ptr<RefreshBuildResult> build;
++    CustomResource* original = nullptr;
++    D3D11_BUFFER_DESC descriptor{};
++    std::shared_ptr<const PreparedAsset> source;
++    std::shared_ptr<PreparedGpuObject> gpu;
++    ResourceRefreshPin generation;
++    DeviceResourceKey key;
++    ID3D11Query* retirementQuery = nullptr;
++    ~PendingRefresh() { if (retirementQuery) retirementQuery->Release(); }
++};
 +// The DLL's process-lifetime services deliberately have no static destructors
 +// that join Windows workers while DllMain holds the loader lock.
 +struct RuntimeServices {
 +    std::shared_ptr<RuntimeState> state;
 +    std::atomic<Generation> nextGeneration{0};
++    std::atomic<uint64_t> legacyConfigEpoch{0};
++    ResourceRefreshManager refreshManager;
++    ResourceRefreshActivationEdge refreshActivation;
++    RefreshBuildWorker* refreshWorker = nullptr;
++    std::shared_ptr<PendingRefresh> pendingRefresh;
++    std::unique_ptr<PreparationPlanner> refreshPlanner;
++    std::map<uint64_t, std::shared_ptr<ID3D11Query>> refreshRetirement;
 +    std::shared_ptr<PreparationScheduler> scheduler;
 +    bool modulePinned = false;
 +    std::unique_ptr<PreparationPlanner> planner;
@@ -3787,6 +4769,7 @@ index 0000000000000000000000000000000000000000..1ca37cbc6b28e81a1fd6d48eacb3169a
 +            retiringDevice = true;
 +            service.activeResources.clear();
 +            service.profileGpuPins.clear();
++            service.refreshActivation.SetReady(0); service.pendingRefresh.reset(); service.refreshPlanner.reset();
 +            auto retired = std::move(service.planner);
 +            service.device = nullptr; service.epoch = 0; service.plannerGeneration = 0;
 +            retired.reset();
@@ -3815,6 +4798,16 @@ index 0000000000000000000000000000000000000000..1ca37cbc6b28e81a1fd6d48eacb3169a
 +std::wstring Parent(const std::wstring& path) {
 +    const auto slash = path.find_last_of(L"\\/");
 +    return slash == std::wstring::npos ? std::wstring() : path.substr(0, slash + 1);
++}
++std::wstring OwnOutputDirectory() {
++    static int moduleAnchor;
++    HMODULE module = nullptr;
++    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
++        reinterpret_cast<LPCWSTR>(&moduleAnchor), &module)) return {};
++    std::vector<wchar_t> path(32768);
++    const DWORD count = GetModuleFileNameW(module, path.data(), DWORD(path.size()));
++    if (!count || count >= path.size()) return {};
++    return Parent(std::wstring(path.data(), count)) + L".xxmi-preparation\\";
 +}
 +bool IsBuffer(const CustomResource& resource) {
 +    return resource.override_type == CustomResourceType::BUFFER ||
@@ -4055,6 +5048,261 @@ index 0000000000000000000000000000000000000000..1ca37cbc6b28e81a1fd6d48eacb3169a
 +    return true;
 +}
 +
++bool AdmitRefreshRecipe(const std::shared_ptr<RuntimeState>& state,
++    const ResourceFilenamePatch& patch, ID3D11Device* device, CustomResource*& original,
++    D3D11_BUFFER_DESC& descriptor) {
++    if (!state->resourceSharingProven) return false;
++    const auto found = customResources.find(patch.binding.resourceId);
++    if (found == customResources.end()) return false;
++    original = &found->second;
++    if (!original->PreparationReadOnly() || original->override_type != CustomResourceType::BUFFER ||
++        original->pool || original->initial_data || original->initial_data_size || original->offset ||
++        original->view || original->misc_flags || original->max_copies_per_frame ||
++        !original->substantiated || !original->resource || original->is_null || original->device != device ||
++        !original->buf_size || _wcsicmp(Canonical(patch.binding.resolvedFilename).c_str(), original->filename.c_str())) return false;
++    std::set<const CommandListCommand*> visited;
++    ResourceCopyOperation* use = nullptr;
++    CommandList* owner = nullptr;
++    for (auto* list : registered_command_lists) {
++        if (!list || list->runtime_populated) return false;
++        for (const auto& command : list->commands) {
++            if (!command || !visited.insert(command.get()).second) continue;
++            auto* operation = dynamic_cast<ResourceCopyOperation*>(command.get());
++            if (!operation || operation->src.type != ResourceCopyTargetType::CUSTOM_RESOURCE ||
++                operation->src.custom_resource_pool || operation->src.GetCustomResource(nullptr, true) != original) continue;
++            if (use) return false;
++            use = operation; owner = list;
++        }
++    }
++    if (!use || !owner || uint32_t(use->options) != uint32_t(ResourceCopyOptions::REFERENCE) ||
++        use->src.evaluation_mode != ResourceCopyTargetEvaluationMode::RESOURCE ||
++        use->dst.evaluation_mode != ResourceCopyTargetEvaluationMode::RESOURCE ||
++        use->dst.slot_expression || use->dst.range_start || use->dst.range_end ||
++        use->dst.custom_resource_pool || use->src.forbid_view_cache) return false;
++    bool drawEntrypoint = false;
++    for (auto& overrideEntry : G->mShaderOverrideMap)
++        if (owner == &overrideEntry.second.command_list) drawEntrypoint = true;
++    if (!drawEntrypoint) return false; // No init/Present/input/post/indirect call sites.
++    for (auto* list : registered_command_lists)
++        for (const auto& command : list->commands) {
++            if (auto* linked = dynamic_cast<RunLinkedCommandList*>(command.get()))
++                if (linked->link == owner) return false;
++            if (auto* explicitList = dynamic_cast<RunExplicitCommandList*>(command.get()))
++                if (explicitList->command_list_section &&
++                    (owner == &explicitList->command_list_section->command_list ||
++                     owner == &explicitList->command_list_section->post_command_list)) return false;
++        }
++    UINT bind = 0;
++    if (use->dst.type == ResourceCopyTargetType::VERTEX_BUFFER && original->stride) bind = D3D11_BIND_VERTEX_BUFFER;
++    if (use->dst.type == ResourceCopyTargetType::INDEX_BUFFER &&
++        (original->format == DXGI_FORMAT_R16_UINT || original->format == DXGI_FORMAT_R32_UINT)) bind = D3D11_BIND_INDEX_BUFFER;
++    if (!bind || original->bind_flags != bind ||
++        (original->override_bind_flags != CustomResourceBindFlags::INVALID && uint32_t(original->override_bind_flags) != bind)) return false;
++    D3D11_RESOURCE_DIMENSION dimension;
++    original->resource->GetType(&dimension);
++    if (dimension != D3D11_RESOURCE_DIMENSION_BUFFER) return false;
++    static_cast<ID3D11Buffer*>(original->resource)->GetDesc(&descriptor);
++    return descriptor.BindFlags == bind && descriptor.Usage == D3D11_USAGE_DEFAULT &&
++        !descriptor.CPUAccessFlags && !descriptor.MiscFlags && !descriptor.StructureByteStride;
++}
++void ScheduleRefreshBuild(const std::shared_ptr<RuntimeState>& state,
++    const ReconcileRequest& request, DeviceEpoch epoch) {
++    auto& service = Services();
++    service.refreshActivation.SetReady(0); service.pendingRefresh.reset(); service.refreshPlanner.reset();
++    if (!state->refreshEnabled) return;
++    if (request.fullReconcile || !state->refreshClosure.verified || !state->config ||
++        !state->config->manifest.verified || !state->resourceSharingProven || !service.refreshWorker) {
++        state->refreshReason = "filename refresh unsupported for this dependency closure; use F10"; return;
++    }
++    auto task = std::make_shared<RefreshBuildTask>();
++    task->state = state; task->id = ++service.nextGeneration;
++    task->legacyConfigEpoch = state->legacyConfigEpoch;
++    task->schedulerGeneration = state->generation;
++    task->versions = {request.token, epoch, state->legacyConfigEpoch};
++    const auto active = service.refreshManager.Pin();
++    task->baseline = active ? active->manifest : state->config->manifest;
++    uint64_t bytes = 0;
++    const auto ownOutput = OwnOutputDirectory();
++    for (const auto& source : task->baseline.sources) {
++        const auto sourcePath = Canonical(source.snapshot.path);
++        const bool ignoredOutput = !ownOutput.empty() && sourcePath.size() >= ownOutput.size() &&
++            !_wcsnicmp(sourcePath.c_str(), ownOutput.c_str(), ownOutput.size());
++        if (ignoredOutput || !source.snapshot.watchable || !source.snapshot.bytes ||
++            source.snapshot.bytes->size() > state->refreshBytes / 2 - bytes) {
++            state->refreshReason = "filename refresh manifest exceeds admission bounds or watch coverage; use F10"; return;
++        }
++        bytes += source.snapshot.bytes->size();
++    }
++    task->bindings = state->refreshBindings; task->closure = state->refreshClosure;
++    state->refreshReason = "filename refresh: preparing a verified immutable candidate";
++    service.refreshWorker->Submit(std::move(task));
++}
++void PollRefreshRetirement(ID3D11Device* device) {
++    auto& service = Services();
++    if (service.refreshRetirement.empty()) return;
++    ID3D11DeviceContext* context = nullptr; device->GetImmediateContext(&context);
++    if (!context) return;
++    std::vector<uint64_t> completeIds;
++    service.refreshManager.Retire([&](uint64_t id) {
++        const auto query = service.refreshRetirement.find(id); BOOL complete = FALSE;
++        const bool done = query != service.refreshRetirement.end() &&
++            context->GetData(query->second.get(), &complete, sizeof(complete), D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK && complete;
++        if (done) completeIds.push_back(id);
++        return done;
++    });
++    context->Release();
++    for (const auto id : completeIds) service.refreshRetirement.erase(id);
++}
++void PumpPreparedRefresh(const std::shared_ptr<RuntimeState>& state, ID3D11Device* device, DeviceEpoch epoch) {
++    auto& service = Services();
++    if (!state->refreshEnabled || !service.refreshWorker || !state->enabled.load()) return;
++    if (FAILED(device->GetDeviceRemovedReason())) {
++        service.refreshActivation.SetReady(0); service.pendingRefresh.reset(); service.refreshPlanner.reset();
++        state->refreshReason = "filename refresh unavailable after device removal; use F10";
++        service.refreshActivation.Consume(); return;
++    }
++    const auto activeDevice = service.refreshManager.Pin();
++    if (activeDevice && activeDevice->versions.device != epoch) {
++        service.refreshManager.Clear(); service.refreshRetirement.clear();
++        service.refreshActivation.SetReady(0); service.pendingRefresh.reset(); service.refreshPlanner.reset();
++    }
++    PollRefreshRetirement(device);
++    std::shared_ptr<RefreshBuildResult> result;
++    { std::lock_guard<std::mutex> lock(state->refreshMutex); result.swap(state->refreshResult); }
++    if (result) {
++        service.refreshActivation.SetReady(0); service.pendingRefresh.reset(); service.refreshPlanner.reset();
++        if (result->legacyConfigEpoch != service.legacyConfigEpoch.load() ||
++            result->patch.versions.device != epoch || !state->monitor->IsCurrent(result->patch.versions.source)) return;
++        CustomResource* original = nullptr; D3D11_BUFFER_DESC descriptor{};
++        if (!result->patch.valid || !AdmitRefreshRecipe(state, result->patch, device, original, descriptor)) {
++            state->refreshReason = "filename refresh rejected (only one uniquely used static VB/IB is supported); use F10"; return;
++        }
++        const auto active = service.refreshManager.Pin();
++        if (active) {
++            const auto payload = std::static_pointer_cast<const ResourceRefreshOverlay>(active->payload);
++            if (!payload || payload->replacements.size() != 1 || !payload->replacements.count(original)) {
++                state->refreshReason = "filename refresh can repeat only the same audited resource; use F10"; return;
++            }
++        }
++        service.pendingRefresh = std::make_shared<PendingRefresh>();
++        service.pendingRefresh->build = std::move(result); service.pendingRefresh->original = original;
++        service.pendingRefresh->descriptor = descriptor;
++    }
++    auto pending = service.pendingRefresh;
++    if (!pending) { service.refreshActivation.Consume(); return; }
++    auto& build = *pending->build;
++    if (build.legacyConfigEpoch != service.legacyConfigEpoch.load() || build.patch.versions.device != epoch ||
++        !state->monitor->IsCurrent(build.patch.versions.source)) {
++        service.refreshActivation.SetReady(0); service.pendingRefresh.reset(); service.refreshPlanner.reset();
++        state->refreshReason = "filename refresh source changed; last-good generation remains active";
++        service.refreshActivation.Consume(); return;
++    }
++    if (!pending->source) pending->source = state->scheduler->TryGet(build.patch.replacementPath, build.schedulerGeneration);
++    if (!pending->source) {
++        state->scheduler->Enqueue(build.patch.replacementPath, build.schedulerGeneration, 10);
++        const auto reason = state->scheduler->CompatibilityReason(build.patch.replacementPath, build.schedulerGeneration);
++        state->refreshReason = reason.empty() ? "filename refresh: awaiting verified bytes and memory admission" :
++            "filename refresh source is outside supported watch coverage; use F10";
++        service.refreshActivation.Consume(); return;
++    }
++    if (!pending->source->snapshot.watchable || !pending->source->snapshot.bytes ||
++        pending->source->snapshot.bytes->size() != pending->original->buf_size) {
++        state->refreshReason = "filename refresh requires the same source byte count and watchable input; use F10";
++        service.refreshActivation.SetReady(0); service.refreshActivation.Consume(); return;
++    }
++    if (!pending->generation) {
++        const uint64_t budget = state->refreshGpuBytes;
++        if (!budget || (device->GetCreationFlags() & D3D11_CREATE_DEVICE_SINGLETHREADED)) {
++            state->refreshReason = "filename refresh GPU preparation unsupported or disabled; use F10";
++            service.refreshActivation.Consume(); return;
++        }
++        if (!service.refreshPlanner) {
++            service.device = device; service.epoch = epoch; service.owner = std::this_thread::get_id();
++            service.refreshPlanner.reset(new PreparationPlanner(budget, 1, 0));
++            if (!service.refreshPlanner->BeginDevice(device, epoch)) return;
++        }
++        GpuPreparationRequest request;
++        request.snapshot = pending->source->snapshot; request.sourceOwner = pending->source;
++        request.buffer = pending->descriptor; request.dependencyReadOnly = true;
++        request.estimatedBytes = uint64_t(request.buffer.ByteWidth) * 2 + 128 * 1024;
++        request.pendingGenerationOverlap = uint64_t(request.buffer.ByteWidth) * 2;
++        request.creationOptions = {RuntimeFeatureVersion, 3};
++        const auto admitted = service.refreshPlanner->Enqueue(request, &pending->key);
++        if (admitted == GpuQueueResult::CompatibilityOnly) {
++            state->refreshReason = "filename refresh descriptor or GPU admission limit unsupported; use F10";
++            service.refreshActivation.Consume(); return;
++        }
++        if (state->loadingWindow) {
++            struct CreationGuard { CreationGuard() { LockResourceCreationMode(); } ~CreationGuard() { UnlockResourceCreationMode(); } } guard;
++            const auto pumped = service.refreshPlanner->Pump(true, state->gpuLimits);
++            if (pumped.deviceRemoved) { RetireRuntimeDevice(device); return; }
++        }
++        pending->gpu = service.refreshPlanner->TryAcquire(pending->key);
++        if (!pending->gpu || !pending->gpu->resource) {
++            state->refreshReason = "filename refresh: awaiting GPU memory admission and configured loading window";
++            service.refreshActivation.Consume(); return;
++        }
++        auto replacement = std::make_shared<CustomResource>();
++        replacement->CopyMetadataFrom(*pending->original);
++        replacement->name = pending->original->name; replacement->filename = build.patch.replacementPath;
++        replacement->format = pending->original->format; replacement->stride = pending->original->stride;
++        replacement->buf_size = pending->original->buf_size; replacement->source_stride = pending->original->source_stride;
++        replacement->resource = pending->gpu->resource; replacement->resource->AddRef();
++        replacement->device = device; replacement->is_null = false; replacement->substantiated = true;
++        replacement->preparation_pin = pending->gpu;
++        auto payload = std::make_shared<ResourceRefreshOverlay>();
++        payload->deviceIdentity = device; payload->deviceEpoch = epoch;
++        payload->legacyConfigEpoch = build.legacyConfigEpoch;
++        payload->replacements.emplace(pending->original, replacement);
++        auto generation = std::make_shared<ResourceRefreshGeneration>();
++        generation->id = build.id; generation->legacyConfigEpoch = build.legacyConfigEpoch;
++        generation->versions = build.patch.versions; generation->manifest = build.patch.manifest;
++        generation->payload = payload; pending->generation = generation;
++    }
++    const auto active = service.refreshManager.Pin();
++    if (active && !pending->retirementQuery) {
++        if (!state->loadingWindow) { service.refreshActivation.Consume(); return; }
++        D3D11_QUERY_DESC descriptor{D3D11_QUERY_EVENT, 0};
++        HRESULT queryResult;
++        { struct QueryCreationGuard { QueryCreationGuard() { LockResourceCreationMode(); } ~QueryCreationGuard() { UnlockResourceCreationMode(); } } guard;
++          queryResult = device->CreateQuery(&descriptor, &pending->retirementQuery); }
++        if (FAILED(queryResult)) {
++            state->refreshReason = "filename refresh retirement fence unavailable; use F10";
++            service.refreshActivation.Consume(); return;
++        }
++    }
++    if (!state->monitor->IsCurrent(build.patch.versions.source) ||
++        build.legacyConfigEpoch != service.legacyConfigEpoch.load() || FAILED(device->GetDeviceRemovedReason())) {
++        service.refreshActivation.SetReady(0); service.pendingRefresh.reset(); service.refreshPlanner.reset();
++        service.refreshActivation.Consume();
++        state->refreshReason = "filename refresh proof became stale; last-good generation remains active"; return;
++    }
++    service.refreshActivation.SetReady(build.id);
++    state->refreshReason = "filename refresh prepared; press the configured refresh shortcut to apply";
++    const uint64_t requested = service.refreshActivation.Consume();
++    if (requested && requested == build.id && state->monitor->IsCurrent(build.patch.versions.source)) {
++        const BuildVersions current{build.patch.versions.source, epoch, state->legacyConfigEpoch};
++        if (active && pending->retirementQuery) {
++            pending->retirementQuery->AddRef();
++            service.refreshRetirement[active->id] = std::shared_ptr<ID3D11Query>(pending->retirementQuery,
++                [](ID3D11Query* query) { query->Release(); });
++        }
++        const auto published = service.refreshManager.Publish(pending->generation, current,
++            service.legacyConfigEpoch.load(), true);
++        if (published == ResourceRefreshPublishResult::Activated) {
++            if (active && pending->retirementQuery) {
++                ID3D11DeviceContext* context = nullptr; device->GetImmediateContext(&context);
++                if (context) { context->End(pending->retirementQuery); context->Release(); }
++            }
++            service.refreshActivation.SetReady(0); service.pendingRefresh.reset(); service.refreshPlanner.reset();
++            state->refreshReason = "filename refresh applied; general configuration changes still use F10";
++        } else {
++            if (active) service.refreshRetirement.erase(active->id);
++            state->refreshReason = "filename refresh waiting for retirement or stale proof; press again when prepared";
++        }
++    }
++
++}
 +void PublishProgress(const std::shared_ptr<RuntimeState>& state, DeviceEpoch epoch,
 +    const char* forcedReason = nullptr) {
 +    PreparationStatus status;
@@ -4103,6 +5351,7 @@ index 0000000000000000000000000000000000000000..1ca37cbc6b28e81a1fd6d48eacb3169a
 +        status.state = PreparationStatusState::Preparing;
 +        status.reason = "waiting for verified sources, complete GPU objects, loading window, or available budget";
 +    }
++    if (!state->refreshReason.empty()) status.reason = state->refreshReason;
 +    UpdatePreparationStatus(status, statusTicket);
 +}
 +void ResetProfileEntry(ProfileEntry& entry, Generation generation, DeviceEpoch epoch) {
@@ -4145,7 +5394,22 @@ index 0000000000000000000000000000000000000000..1ca37cbc6b28e81a1fd6d48eacb3169a
 +    return HasPngSRGBChunk(bytes) ? DirectX::WIC_LOADER_FORCE_SRGB : DirectX::WIC_LOADER_DEFAULT;
 +}
 +
++void RequestPreparedRefresh() { Services().refreshActivation.Request(); }
++void CapturePreparedRefreshDraw(DrawCallInfo& draw) {
++    if (!draw.prepared_refresh.captured)
++        CaptureResourceRefreshDrawPin(draw.prepared_refresh, Services().refreshManager.Pin());
++}
++CustomResource* ResolvePreparedRefreshResource(CustomResource* original, DrawCallInfo* draw,
++    ID3D11Device* device, DeviceEpoch epoch) {
++    if (!draw) return original;
++    return static_cast<CustomResource*>(ResolveResourceRefreshOverlay(draw->prepared_refresh, original,
++        device, epoch, Services().legacyConfigEpoch.load()));
++}
 +void CancelRuntimeGeneration() {
++    auto& lifecycle = Services();
++    ++lifecycle.legacyConfigEpoch;
++    lifecycle.refreshActivation.SetReady(0);
++    lifecycle.refreshManager.Clear();
 +    auto state = Current();
 +    if (!state) return;
 +    state->enabled.store(false);
@@ -4157,6 +5421,7 @@ index 0000000000000000000000000000000000000000..1ca37cbc6b28e81a1fd6d48eacb3169a
 +    service.retirementRequested.store(true);
 +    std::unique_lock<std::recursive_mutex> lock(service.plannerMutex, std::try_to_lock);
 +    if (lock.owns_lock()) {
++        service.refreshRetirement.clear();
 +        if (service.device) RetireRuntimeDevice(service.device);
 +        else service.retirementRequested.store(false);
 +    }
@@ -4166,6 +5431,8 @@ index 0000000000000000000000000000000000000000..1ca37cbc6b28e81a1fd6d48eacb3169a
 +static void ConfigureRuntimeImpl() {
 +    auto state = std::make_shared<RuntimeState>();
 +    state->generation = ++Services().nextGeneration;
++    state->legacyConfigEpoch = Services().legacyConfigEpoch.load();
++    if (!state->legacyConfigEpoch) state->legacyConfigEpoch = ++Services().legacyConfigEpoch;
 +    wchar_t mode[64] = {};
 +    GetIniString(L"ModLoading", L"mode", L"off", mode, 64);
 +    if (!_wcsicmp(mode, L"adaptive")) state->mode = PreparationMode::Adaptive;
@@ -4175,8 +5442,12 @@ index 0000000000000000000000000000000000000000..1ca37cbc6b28e81a1fd6d48eacb3169a
 +    if (state->mode != PreparationMode::Off) {
 +        const int cpuMB = Setting(L"cpu_cache_mb",512,0,4096);
 +        state->cpuLimits.cpuBytes = size_t(cpuMB ? (std::max)(16, cpuMB) : 0) * MiB;
++        wchar_t refreshKey[256] = {};
++        GetIniString(L"ModLoading", L"refresh_key", L"", refreshKey, 256);
++        state->refreshEnabled = refreshKey[0] != 0;
 +        state->shaderBytes = (std::min)(uint64_t(state->cpuLimits.cpuBytes / 4), 64 * MiB);
-+        state->cpuLimits.cpuBytes -= size_t(state->shaderBytes);
++        state->refreshBytes = state->refreshEnabled ? (std::min)(uint64_t(state->cpuLimits.cpuBytes / 4), 16 * MiB) : 0;
++        state->cpuLimits.cpuBytes -= size_t(state->shaderBytes + state->refreshBytes);
 +        state->cpuLimits.maxAssetBytes = size_t(Setting(L"max_asset_mb",64,1,1024)) * size_t(MiB);
 +        if (state->cpuLimits.cpuBytes)
 +            state->cpuLimits.maxAssetBytes = (std::min)(state->cpuLimits.cpuBytes, state->cpuLimits.maxAssetBytes);
@@ -4184,6 +5455,8 @@ index 0000000000000000000000000000000000000000..1ca37cbc6b28e81a1fd6d48eacb3169a
 +        state->cpuLimits.maxQueued = Setting(L"max_pending_jobs",64,1,4096);
 +        const int gpuMB = Setting(L"gpu_cache_mb",256,0,4096);
 +        state->gpuBytes = uint64_t(gpuMB ? (std::max)(16, gpuMB) : 0) * MiB;
++        state->refreshGpuBytes = state->refreshEnabled ? (std::min)(state->gpuBytes / 4, 64 * MiB) : 0;
++        state->gpuBytes -= state->refreshGpuBytes;
 +        state->gpuLimits.bytes = uint64_t(Setting(L"upload_budget_mb",16,1,1024)) * MiB;
 +        state->gpuLimits.milliseconds = (std::max)(0.1f, (std::min)(50.0f,
 +            GetIniFloat(L"ModLoading", L"create_budget_ms", 2.0f, nullptr)));
@@ -4194,16 +5467,20 @@ index 0000000000000000000000000000000000000000..1ca37cbc6b28e81a1fd6d48eacb3169a
 +        InitializePreparationStatus(&statusModuleAnchor);
 +        state->totalAssets = customResources.size() + customShaders.size();
 +        const auto manifest = CaptureLoadedConfigSources();
++        state->refreshBindings = CaptureLoadedResourceFilenameBindings();
++        state->refreshClosure = CaptureLoadedResourceRefreshClosure();
 +        ConfigCompiler compiler(Services().configCache);
 +        auto previous = Current();
 +        state->config = compiler.Build(manifest, previous ? previous->config : nullptr,
 +            {state->generation.load(), 0, state->generation.load()}, false);
 +        std::set<std::wstring> files, roots;
++        const auto ownOutput = OwnOutputDirectory();
 +        const auto persistentOutput = Canonical(G->user_config);
 +        for (auto& entry : customResources) {
 +            if (!entry.second.filename.empty()) {
 +                auto canonical = Canonical(entry.second.filename);
-+                if (canonical.empty() || (!persistentOutput.empty() &&
++                if (canonical.empty() || (!ownOutput.empty() && canonical.size() >= ownOutput.size() &&
++                    !_wcsnicmp(canonical.c_str(), ownOutput.c_str(), ownOutput.size())) || (!persistentOutput.empty() &&
 +                    !_wcsicmp(canonical.c_str(), persistentOutput.c_str()))) continue;
 +                entry.second.filename = std::move(canonical);
 +                files.insert(entry.second.filename);
@@ -4233,13 +5510,39 @@ index 0000000000000000000000000000000000000000..1ca37cbc6b28e81a1fd6d48eacb3169a
 +            auto root = Parent(Canonical(source.snapshot.path));
 +            if (!root.empty()) roots.insert(root);
 +        }
++        if (state->refreshEnabled)
++            for (const auto& directory : state->refreshClosure.directories) {
++                auto root = Canonical(directory.path);
++                if (!root.empty()) roots.insert(root);
++            }
 +        state->baseCompatibility = state->totalAssets - state->profile.size();
++        // Readability of configuration bytes is separate from watch coverage.
++        // Aliased/ambiguous INI sources remain legacy-readable, but cannot prove
++        // whole-profile source currentness through lexical directory watches.
++        if (!manifest.verified || manifest.sources.empty()) { ++state->totalAssets; ++state->baseCompatibility; }
++        for (const auto& source : manifest.sources) {
++            const auto canonicalSource = Canonical(source.snapshot.path);
++            const bool ignoredOutput = !ownOutput.empty() && canonicalSource.size() >= ownOutput.size() &&
++                !_wcsnicmp(canonicalSource.c_str(), ownOutput.c_str(), ownOutput.size());
++            if (!source.snapshot.watchable || ignoredOutput) { ++state->totalAssets; ++state->baseCompatibility; }
++        }
 +        // A copied runtime/game resource, staging/readback command, dynamic
 +        // view, or unclassified command may create objects outside declarations.
 +        // Such a closure is an explicit compatibility entry, never whole-profile
 +        // Ready merely because its file-backed subset happens to be prepared.
-+        if (!KnownPreparationCommandClosure()) {
++        state->resourceSharingProven = KnownPreparationCommandClosure();
++        if (!state->resourceSharingProven) {
 +            ++state->totalAssets; ++state->baseCompatibility;
++            // A pipeline-to-custom alias can later be copied/cleared without
++            // mentioning the original file resource. Unknown command graphs
++            // therefore cannot prove resource immutability for GPU sharing.
++            for (auto* resource : state->resources) {
++                const auto tracked = state->profile.find(resource);
++                if (tracked != state->profile.end()) {
++                    tracked->second.staticCompatibility = true;
++                    tracked->second.compatibility = true;
++                }
++            }
 +        }
 +        state->files.assign(files.begin(), files.end());
 +        auto& service = Services();
@@ -4257,19 +5560,44 @@ index 0000000000000000000000000000000000000000..1ca37cbc6b28e81a1fd6d48eacb3169a
 +        state->scheduler = service.scheduler;
 +        if (state->scheduler && !state->scheduler->Reconfigure(state->cpuLimits, state->generation))
 +            state->scheduler.reset();
++        const auto outputDirectory = OwnOutputDirectory();
++        if (state->scheduler) {
++            const int diskMB = Setting(L"disk_cache_mb", 0, 0, 4096);
++            state->scheduler->ConfigureDiskCache(diskMB && !outputDirectory.empty() ?
++                outputDirectory + L"cache" : std::wstring(), size_t(diskMB) * size_t(MiB));
++        }
++        if (state->refreshEnabled && service.modulePinned && !service.refreshWorker)
++            service.refreshWorker = new RefreshBuildWorker();
 +        ChangeOptions monitorOptions;
 +        monitorOptions.periodicReconcileMs = 0;
 +        monitorOptions.filterDependencies = true;
 +        monitorOptions.dependencyFiles = state->files;
-+        if (!persistentOutput.empty())
++        if (!persistentOutput.empty() && !state->refreshEnabled)
 +            monitorOptions.excludedSourceFiles.push_back(persistentOutput);
 +        state->monitor.reset(new ChangeMonitor(monitorOptions));
 +        // The monitor member is stopped/joined by RuntimeState before its
 +        // other members are destroyed. The callback must never own RuntimeState:
 +        // a final shared_ptr release on this worker would join itself.
 +        RuntimeState* const owned = state.get();
-+        const bool monitoring = state->monitor->Start({roots.begin(), roots.end()}, {},
++        // Directory watches are recursive. Retain coverage of every captured
++        // inventory directory without allocating duplicate handles for children.
++        std::vector<std::wstring> resolvedRoots(roots.begin(), roots.end());
++        std::sort(resolvedRoots.begin(), resolvedRoots.end(),
++            [](const std::wstring& a, const std::wstring& b) { return a.size() < b.size(); });
++        std::vector<std::wstring> compactRoots;
++        for (const auto& root : resolvedRoots) {
++            bool covered = false;
++            for (const auto& parent : compactRoots)
++                if (root.size() >= parent.size() && !_wcsnicmp(root.c_str(), parent.c_str(), parent.size()) &&
++                    (root.size() == parent.size() || parent.back() == L'\\' || root[parent.size()] == L'\\')) {
++                    covered = true; break;
++                }
++            if (!covered) compactRoots.push_back(root);
++        }
++        const bool monitoring = state->monitor->Start(compactRoots,
++            outputDirectory.empty() ? std::vector<std::wstring>() : std::vector<std::wstring>{outputDirectory},
 +            [owned](const ReconcileRequest& request) {
++                if (owned->failed.load() || !owned->cpuLimits.cpuBytes) return;
 +                std::lock_guard<std::mutex> lock(owned->pendingMutex);
 +                owned->pending = request;
 +                owned->hasPending = true;
@@ -4320,8 +5648,20 @@ index 0000000000000000000000000000000000000000..1ca37cbc6b28e81a1fd6d48eacb3169a
 +    if (!configGuard.acquired || !state->enabled.load()) return;
 +    auto& service = Services();
 +    std::unique_lock<std::recursive_mutex> lock(service.plannerMutex, std::try_to_lock);
-+    if (!lock.owns_lock() || (service.planner && service.owner != std::this_thread::get_id())) return;
++    if (!lock.owns_lock()) return;
++    if (service.epoch == epoch && (service.planner || service.refreshPlanner || !service.refreshRetirement.empty()) &&
++        service.owner != std::this_thread::get_id()) {
++        InvalidatePreparationStatus();
++        PublishProgress(state, epoch, "render-owner thread changed; use F10 for compatible preparation"); return;
++    }
 +    RuntimeOwnerScope ownerScope(lock);
++    if (service.epoch && service.epoch != epoch) {
++        service.refreshActivation.SetReady(0); service.pendingRefresh.reset(); service.refreshPlanner.reset();
++        service.refreshManager.Clear(); service.refreshRetirement.clear();
++        service.profileGpuPins.clear(); service.activeResources.clear(); service.planner.reset();
++        service.plannerGeneration = 0;
++        service.device = device; service.epoch = epoch; service.owner = std::this_thread::get_id();
++    }
 +    ReconcileRequest request;
 +    bool changed = false;
 +    {
@@ -4336,6 +5676,10 @@ index 0000000000000000000000000000000000000000..1ca37cbc6b28e81a1fd6d48eacb3169a
 +        state->sourceToken.store(request.token);
 +        state->cursor = state->resourceCursor = state->shaderCursor = 0;
 +        state->generations.CancelPrepared();
++        for (auto& item : state->profile) { item.second.source.reset(); item.second.pinnedGpu.reset(); item.second.observedGpu.reset(); }
++        service.profileGpuPins.clear(); service.activeResources.clear(); service.planner.reset(); service.plannerGeneration = 0;
++        service.refreshActivation.SetReady(0); service.pendingRefresh.reset(); service.refreshPlanner.reset();
++        if (request.iniChanged) ScheduleRefreshBuild(state, request, epoch);
 +        // INI edits only invalidate preparation; never execute or auto-reload
 +        // changed commands. Existing live configuration stays on its old path.
 +        if (request.iniChanged) {
@@ -4343,6 +5687,7 @@ index 0000000000000000000000000000000000000000..1ca37cbc6b28e81a1fd6d48eacb3169a
 +            LogInfo("ModLoading: configuration/closure change requires explicit compatible reload\n");
 +        }
 +    }
++    PumpPreparedRefresh(state, device, epoch);
 +    if (!SourcesCurrent(state)) { PublishProgress(state, epoch); return; }
 +    if (FAILED(device->GetDeviceRemovedReason())) {
 +        PublishProgress(state, epoch, "rendering device was removed; compatibility reload/device recreation required");
@@ -4496,13 +5841,16 @@ index 0000000000000000000000000000000000000000..1ca37cbc6b28e81a1fd6d48eacb3169a
 +    // application device release. Keeping one aggregate retirement flag avoids
 +    // losing a concurrent current-device request behind a probe-device release.
 +    (void)device;
-+    if (!service.planner) { service.retirementRequested.store(false); return; }
++    if (!service.planner && !service.refreshPlanner && !service.pendingRefresh && service.profileGpuPins.empty()) {
++        service.retirementRequested.store(false); return;
++    }
 +    // Runtime never admits speculative resources for SINGLETHREADED devices.
 +    // For supported devices COM release is thread-safe, and this lock excludes
 +    // all render-owned preparation calls while draining the cache.
 +    retiringDevice = true;
 +    service.activeResources.clear();
 +    service.profileGpuPins.clear();
++    service.refreshActivation.SetReady(0); service.pendingRefresh.reset(); service.refreshPlanner.reset();
 +    auto retired = std::move(service.planner);
 +    service.device = nullptr; service.epoch = 0; service.plannerGeneration = 0;
 +    retired.reset();
@@ -4518,7 +5866,7 @@ index 0000000000000000000000000000000000000000..1ca37cbc6b28e81a1fd6d48eacb3169a
 +    std::unique_lock<std::recursive_mutex> lock(service.plannerMutex, std::try_to_lock);
 +    if (!lock.owns_lock() || service.owner != std::this_thread::get_id()) return false;
 +    RuntimeOwnerScope ownerScope(lock);
-+    if (!SourcesCurrent(state) || !service.planner || service.device != device ||
++    if (!SourcesCurrent(state) || !state->resourceSharingProven || !service.planner || service.device != device ||
 +        service.plannerGeneration != state->generation) return false;
 +    const auto tracked = state->profile.find(&target);
 +    ProfileEntry* progress = tracked != state->profile.end() ? &tracked->second : nullptr;
@@ -4668,8 +6016,22 @@ index 0000000000000000000000000000000000000000..1ca37cbc6b28e81a1fd6d48eacb3169a
 +void PumpRuntime(ID3D11Device* device, DeviceEpoch epoch) {
 +    try { PumpRuntimeImpl(device, epoch); }
 +    catch (...) {
-+        CancelRuntimeGeneration();
-+        LogInfo("ModLoading preparation failed; using compatible loading\n");
++        // Cache/candidate failures never revoke the last-good explicit overlay.
++        // Only the legacy reload/device lifecycle invalidates that generation.
++        if (auto state = Current()) {
++            state->failed.store(true); state->enabled.store(false);
++            if (state->scheduler) state->scheduler->CancelBefore(++Services().nextGeneration);
++        }
++        Services().refreshActivation.SetReady(0);
++        RetireRuntimeDevice(device);
++        InvalidatePreparationStatus();
++        PreparationStatus status;
++        const auto ticket = ReservePreparationStatusTicket();
++        if (auto state = Current()) { status.mode = state->mode; status.totalAssets = state->totalAssets; }
++        status.state = status.mode == PreparationMode::Off ? PreparationStatusState::Off : PreparationStatusState::Failed;
++        status.reason = "preparation failed; last-good resource refresh remains active; use F10";
++        UpdatePreparationStatus(status, ticket);
++        LogInfo("ModLoading preparation failed; retaining last-good refresh and compatible loading\n");
 +    }
 +}
 +bool TryUsePreparedResource(CustomResource& target, ID3D11Device* device) {
@@ -4680,10 +6042,10 @@ index 0000000000000000000000000000000000000000..1ca37cbc6b28e81a1fd6d48eacb3169a
 +}
 diff --git a/DirectX11/ModLoading/Runtime.h b/DirectX11/ModLoading/Runtime.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..96c47389732111f08af4960dacffefba6f466a33
+index 0000000000000000000000000000000000000000..72f41dee45285752d5f802f5a3ffebd788b2c478
 --- /dev/null
 +++ b/DirectX11/ModLoading/Runtime.h
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,39 @@
 +#pragma once
 +#include "PreparedTypes.h"
 +#include <vector>
@@ -4691,6 +6053,7 @@ index 0000000000000000000000000000000000000000..96c47389732111f08af4960dacffefba
 +struct ID3D11Device;
 +class CustomResource;
 +class CustomShader;
++struct DrawCallInfo;
 +struct ID3D11Resource;
 +struct ID3D11ShaderResourceView;
 +struct D3D11_SHADER_RESOURCE_VIEW_DESC;
@@ -4702,6 +6065,10 @@ index 0000000000000000000000000000000000000000..96c47389732111f08af4960dacffefba
 +constexpr unsigned RuntimeFeatureVersion = 1;
 +void ConfigureRuntime();
 +void CancelRuntimeGeneration();
++void RequestPreparedRefresh();
++void CapturePreparedRefreshDraw(DrawCallInfo& draw);
++CustomResource* ResolvePreparedRefreshResource(CustomResource* original, DrawCallInfo* draw,
++    ID3D11Device* realDevice, DeviceEpoch lifetimeEpoch);
 +// Call only on the real rendering device's Present owner, never DXGI_PRESENT_TEST.
 +void PumpRuntime(ID3D11Device* realDevice, DeviceEpoch lifetimeEpoch);
 +void RetireRuntimeDevice(ID3D11Device* realDevice);
@@ -5125,10 +6492,10 @@ index 0000000000000000000000000000000000000000..601e6941f5b1984921bc02caeb391503
 +**Exit gate remains blocked** until the Windows build and real game data above exist. This report provides audit leads and a repeatable collection procedure only; it contains no measured baseline, no verified artifact, and no gate verdict.
 diff --git a/docs/mod-loading/prepared-loading.md b/docs/mod-loading/prepared-loading.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..3bf3d90a4d3ddc40a9f71ccd0587d54e7d3943be
+index 0000000000000000000000000000000000000000..b49e89bab4646cf61d18ca263e9f8021780455e9
 --- /dev/null
 +++ b/docs/mod-loading/prepared-loading.md
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,126 @@
 +# Experimental prepared resource loading
 +
 +This branch implements an opt-in native preparation path on the pinned source
@@ -5167,6 +6534,7 @@ index 0000000000000000000000000000000000000000..3bf3d90a4d3ddc40a9f71ccd0587d54e
 +    mode = off
 +    cpu_cache_mb = 512
 +    gpu_cache_mb = 256
++    disk_cache_mb = 0
 +    max_asset_mb = 64
 +    worker_threads = 2
 +    max_pending_jobs = 64
@@ -5174,6 +6542,7 @@ index 0000000000000000000000000000000000000000..3bf3d90a4d3ddc40a9f71ccd0587d54e
 +    upload_budget_mb = 16
 +    preparation_loading_window = 0
 +    auto_activate = 0
++    refresh_key =
 +
 +Modes are off, adaptive and prepared_profile. Prepared profile conservatively
 +requires every declared resource/shader and an audited command closure to be
@@ -5201,24 +6570,39 @@ index 0000000000000000000000000000000000000000..3bf3d90a4d3ddc40a9f71ccd0587d54e
 +Unsupported or unproven resource dependencies, mutable outputs, aliases and
 +pools retain legacy behavior. Source-only image snapshots may still need decode;
 +oversized assets, unknown layouts and device creation failures remain misses.
++Sharing prepared GPU resources requires a supported static command closure.
++Unproven writable pipeline aliases keep private legacy GPU objects while still
++allowing immutable CPU-byte preparation.
 +Aliased files, reparse points, multiply linked files and unwatchable path forms
 +cannot enter readiness; lexical directory watches cannot prove them current.
-+Shader creation supports all six stages, but current Windows fixture coverage
-+is pixel shader plus an explicit null vertex stage and all four fixed-state
-+types. Other nonnull stages require additional qualification.
++Shader creation supports all six stages. Windows fixtures exercise all six
++nonnull stages, an explicit null vertex stage and all four fixed-state types.
++Creation coverage does not establish shader rendering correctness in a game.
 +
-+Current file-change preparation does not publish live resource replacements or
-+promote a complete prepared candidate across F10. F10 retains upstream parsing,
-+persistence, initialization and reset semantics.
++An optional `refresh_key` applies an already prepared, validated filename refresh
++at a render boundary. The initial supported edit changes exactly one existing,
++uniquely identified static vertex/index buffer's simple ASCII `.buf` filename.
++All remaining configuration bytes, source order, namespaces and recursive
++directory membership must remain unchanged. Runtime admits only a proven direct
++fixed-slot draw usage; pools, indirect access, writes and unknown commands use
++F10. A key press while preparation is incomplete never authorizes later activation.
++Readers pin the complete overlay across all pre/post and shader-stage lists;
++failure preserves the last successful overlay. F10 retains upstream parsing,
++persistence, initialization and reset semantics and clears the overlay explicitly.
 +
 +General Phase 5 detached semantic compilation and transactional activation remain
 +unfinished. IniHandler still has process-global registries and raw links between
 +commands, variables, pools, resources and overrides. Those readers must gain
 +generation ownership before live publication is safe. Phase 6 currently checks
 +lexical IR equivalence, not full semantic incremental rebuild equivalence.
-+CPU and shader caches are bounded in-memory caches. Persistent on-disk derived
-+cache reuse is not implemented. Shader compilation remains part of legacy
-+configuration parsing; it is not a detached semantic compiler.
++The optional `disk_cache_mb` limit enables a persistent decoded-pixel cache at
++`.xxmi-preparation/cache` beside the DLL. Zero disables it. Every hit still
++requires a fresh verified source SHA; version, bounds and checksum failures are
++misses. Workers restore pixels within existing CPU reservations, publish entries
++atomically, recover orphan temporary files and enforce disk quota/LRU limits.
++Original source bytes are untouched. This cache avoids repeat image decoding;
++it does not avoid source validation reads. Shader compilation remains part of
++legacy configuration parsing; it is not a detached semantic compiler.
 +
 +Periodic config-closure reconciliation is disabled until an exact closure
 +verifier is integrated. Real notifications, overflow recovery and explicit reload
@@ -6226,10 +7610,10 @@ index 0000000000000000000000000000000000000000..7c3b6c60d4c5a95b540adc63a2507d67
 +}
 diff --git a/tests/preparation_changes/change_reconciler_test.cpp b/tests/preparation_changes/change_reconciler_test.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..7cf86a57287f1e125e1d07ad45c7d35c3a74c977
+index 0000000000000000000000000000000000000000..9f41da0a46b541a330e7d9d1cb19ac727c8f8ca5
 --- /dev/null
 +++ b/tests/preparation_changes/change_reconciler_test.cpp
-@@ -0,0 +1,91 @@
+@@ -0,0 +1,126 @@
 +#include "ChangeReconciler.h"
 +#include "ChangeMonitor.h"
 +#include <cassert>
@@ -6314,6 +7698,41 @@ index 0000000000000000000000000000000000000000..7cf86a57287f1e125e1d07ad45c7d35c
 +    assert(filtered.SetRoots({L"C:/Mods"}, {}, 8)); assert(filtered.TakeReady(8, request));
 +    filtered.Notify(ChangeKind::RootReplaced, L"C:/Mods", 9);
 +    assert(filtered.TakeReady(9, request) && request.iniChanged && request.fullReconcile);
++    ChangeOptions dynamicOptions; dynamicOptions.filterDependencies = true;
++    dynamicOptions.debounceMs = 0; dynamicOptions.maxDependencyFiles = 2;
++    dynamicOptions.dependencyFiles = {L"C:/Mods/Assets/A.buf"};
++    dynamicOptions.excludedSourceFiles = {L"C:/Mods/own-output.buf"};
++    ChangeReconciler dynamic(dynamicOptions);
++    assert(dynamic.SetRoots({L"C:/Mods"}, {L"C:/Mods/cache"}, 0));
++    assert(dynamic.TakeReady(0, request)); const auto beforeTrack = request.token;
++    dynamic.Notify(ChangeKind::Modified, L"C:/Mods/Assets/B.buf", 1);
++    assert(dynamic.IsCurrent(beforeTrack) && !dynamic.TakeReady(1, request));
++    assert(!dynamic.TrackDependencyFile(L"C:/Mods/Assets/"));
++    assert(!dynamic.TrackDependencyFile(L"C:/Mods/Assets/B.buf:stream"));
++    assert(!dynamic.TrackDependencyFile(L"C:/Mods/Assets//B.buf"));
++    assert(!dynamic.TrackDependencyFile(L"C:/Mods/Assets/B.buf."));
++    assert(dynamic.TrackDependencyFile(L"C:/Mods/Assets/B.buf"));
++    assert(dynamic.IsCurrent(beforeTrack)); // Learning does not invalidate the candidate's source ticket.
++    assert(dynamic.TrackDependencyFile(L"c:/mods/assets/b.BUF")); // Deduplicated normalized identity.
++    assert(!dynamic.TrackDependencyFile(L"C:/Outside/B.buf"));
++    assert(!dynamic.TrackDependencyFile(L"C:/ModsOther/B.buf"));
++    assert(!dynamic.TrackDependencyFile(L"C:/Mods/cache/B.buf"));
++    assert(!dynamic.TrackDependencyFile(L"C:/Mods/own-output.buf"));
++    assert(!dynamic.TrackDependencyFile(L"C:/Mods/../Outside/B.buf"));
++    assert(!dynamic.TrackDependencyFile(L"Assets/B.buf"));
++    assert(!dynamic.TrackDependencyFile(L"C:/Mods/Assets/C.buf")); // Bounded capacity.
++    dynamic.Notify(ChangeKind::Modified, L"C:/Mods/Assets/B.buf", 2);
++    assert(!dynamic.IsCurrent(beforeTrack) && dynamic.TakeReady(2, request));
++    auto dynamicToken = request.token;
++    dynamic.Notify(ChangeKind::RenamedOld, L"C:/Mods/Assets/B.buf", 3);
++    assert(!dynamic.IsCurrent(dynamicToken) && dynamic.TakeReady(3, request));
++    dynamicToken = request.token;
++    dynamic.Notify(ChangeKind::Deleted, L"C:/Mods/Assets/B.buf", 4);
++    assert(!dynamic.IsCurrent(dynamicToken) && dynamic.TakeReady(4, request));
++    dynamicToken = request.token;
++    dynamic.Notify(ChangeKind::RenamedOld, L"C:/Mods/Assets", 5);
++    assert(!dynamic.IsCurrent(dynamicToken) && dynamic.TakeReady(5, request));
++    dynamic.Cancel(); assert(!dynamic.TrackDependencyFile(L"C:/Mods/Assets/B.buf"));
 +    ChangeMonitor monitor(options); std::atomic<unsigned> callbacks{0};
 +    assert(monitor.Start({L"C:/Mods"}, {}, [&](const ReconcileRequest&) { ++callbacks; }));
 +    std::this_thread::sleep_for(std::chrono::milliseconds(60));
@@ -6348,7 +7767,7 @@ index 0000000000000000000000000000000000000000..88f21c64ee9f8a66a9ec6cd4efa37875
 +print("preparation_changes: portable state and worker checks passed")
 diff --git a/tests/preparation_cpu/disk.cpp b/tests/preparation_cpu/disk.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..9e39378ec36e8592d06e67eaba90c61698cd09df
+index 0000000000000000000000000000000000000000..6108b1f992e05d6066925adccbcb09236a581500
 --- /dev/null
 +++ b/tests/preparation_cpu/disk.cpp
 @@ -0,0 +1,75 @@
@@ -6370,7 +7789,7 @@ index 0000000000000000000000000000000000000000..9e39378ec36e8592d06e67eaba90c616
 +#endif
 +using namespace ModLoading;
 +namespace {
-+std::string Name(const SourceDigest& digest){auto name=DiskAssetCache::EntryName(digest);return std::string(name.begin(),name.end());}
++std::string Name(const SourceDigest& digest){auto name=DiskAssetCache::EntryName(digest);std::string result;for(const auto c:name){assert(static_cast<uint32_t>(c)<=127);result.push_back(static_cast<char>(c));}return result;}
 +void WriteFileBytes(const std::string& path,const std::vector<uint8_t>& bytes){std::ofstream file(path,std::ios::binary|std::ios::trunc);file.write(reinterpret_cast<const char*>(bytes.data()),std::streamsize(bytes.size()));assert(file.good());}
 +std::vector<uint8_t> ReadFileBytes(const std::string& path){std::ifstream file(path,std::ios::binary);assert(file.good());return std::vector<uint8_t>((std::istreambuf_iterator<char>(file)),std::istreambuf_iterator<char>());}
 +void FixHeader(std::vector<uint8_t>& bytes){assert(bytes.size()>=144);auto checksum=HashBytes(bytes.data(),112);std::copy(checksum.begin(),checksum.end(),bytes.begin()+112);}
@@ -6780,7 +8199,7 @@ index 0000000000000000000000000000000000000000..b45911e21704f40247acaa919d98e683
 +"$build/test"
 diff --git a/tests/preparation_gpu/test_gpu_device.cpp b/tests/preparation_gpu/test_gpu_device.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..6abd426bf7688e813a6625a3323f3002bd5ecb3b
+index 0000000000000000000000000000000000000000..9fc43390de3cda847086da51e054dfa062bd40ef
 --- /dev/null
 +++ b/tests/preparation_gpu/test_gpu_device.cpp
 @@ -0,0 +1,309 @@
@@ -7013,9 +8432,9 @@ index 0000000000000000000000000000000000000000..6abd426bf7688e813a6625a3323f3002
 +    const char* stageProfiles[] = {"vs_5_0", "hs_5_0", "ds_5_0", "gs_5_0", "ps_5_0", "cs_5_0"};
 +    auto input = std::make_shared<ShaderBundleInput>();
 +    uint64_t bundleBytecodeBytes = 0;
-+    for (size_t stage = 0; stage < input->stages.size(); ++stage) {
-+        input->stages[stage] = CompileStage(stageSources[stage], stageProfiles[stage]);
-+        bundleBytecodeBytes += input->stages[stage].Size();
++    for (size_t shaderStageIndex = 0; shaderStageIndex < input->stages.size(); ++shaderStageIndex) {
++        input->stages[shaderStageIndex] = CompileStage(stageSources[shaderStageIndex], stageProfiles[shaderStageIndex]);
++        bundleBytecodeBytes += input->stages[shaderStageIndex].Size();
 +    }
 +    input->stageOverrideMask = 63;
 +    input->createBlendState = input->createDepthStencilState = input->createRasterizerState = input->createSamplerState = true;
@@ -7194,6 +8613,476 @@ index 0000000000000000000000000000000000000000..a0d56f208dcc6f6574ea4383fabab661
 +}
 +}
 +int main() { TestBudget(); TestLiveAllocationLedger(); TestOwnershipAndIdentity(); TestInactiveLRU(); std::cout << "gpu policy: 4 groups passed\n"; }
+diff --git a/tests/preparation_refresh/README.md b/tests/preparation_refresh/README.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..7b171cf486fd108ec3ed4137b7fdde6e88af361f
+--- /dev/null
++++ b/tests/preparation_refresh/README.md
+@@ -0,0 +1,30 @@
++# Bounded resource filename refresh
++
++Run `bash tests/preparation_refresh/run.sh` for the portable C++14 policy and
++ownership checks. The tests cover exact whole-manifest comparison, authoritative
++filename locations, unsupported edits, repeated/reverted filename changes,
++version/epoch rejection, failure preserving the last-good generation, bounded
++retirement, and a reader retaining its generation across publication.
++Recursive include checks compare the INI names and child directories actually
++enumerated by the legacy parser with bounded worker scans before and after the
++candidate read. Adding a `.buf` is permitted; adding/removing/renaming an INI or
++directory is rejected. Conditional include preambles and aliased paths remain
++on the compatibility path. Every captured directory must also be watched so a
++change after candidate preparation invalidates its publication ticket.
++
++The supported change is one existing static VB/IB resource's simple ASCII `.buf`
++filename value. All other configuration bytes, source order and namespaces must
++remain identical. Runtime admission additionally proves the existing command
++dependency and complete GPU readiness. Parser provenance is captured while
++loading the original configuration; the policy does not reconstruct namespaces
++or key precedence from its diagnostic lexical IR.
++
++`[ModLoading] refresh_key` is an optional, separately assigned action with no
++default binding. It requests publication of the complete candidate ready at the
++time of the action. An action while preparation is incomplete does not authorize
++a later automatic activation. F10 retains the legacy save/reset/initialization
++path. Failed or unsupported candidate edits preserve the last successful refresh.
++
++These portable checks do not prove Windows rendering, parser integration, WARP
++lifetime behavior, game compatibility, or frame-time performance. Full arbitrary
++configuration linking and migration remain outside this bounded feature.
+diff --git a/tests/preparation_refresh/main.cpp b/tests/preparation_refresh/main.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..67fe3919f81188d6c20688d89aaafd95837069e1
+--- /dev/null
++++ b/tests/preparation_refresh/main.cpp
+@@ -0,0 +1,172 @@
++#include "ResourceRefresh.h"
++#include "SnapshotIO.h"
++#include <cassert>
++#include <iostream>
++#include <thread>
++#include <atomic>
++#include <fstream>
++using namespace ModLoading;
++
++static ConfigSource Source(const std::string& text, const std::wstring& path = L"/mods/a.ini") {
++    ConfigSource source;
++    source.snapshot.path = path;
++    source.snapshot.bytes = std::make_shared<const std::vector<uint8_t>>(text.begin(), text.end());
++    source.snapshot.digest = HashBytes(source.snapshot.bytes->data(), source.snapshot.bytes->size());
++    source.iniNamespace = L"mods/a.ini";
++    return source;
++}
++static ConfigSourceManifest Manifest(const std::string& text) {
++    ConfigSourceManifest manifest;
++    manifest.verified = true;
++    manifest.sources = {Source(text), Source("[Constants]\nglobal persist $x = 1\n", L"/other.ini")};
++    return manifest;
++}
++static ResourceFilenameBinding Binding() {
++    ResourceFilenameBinding b;
++    b.sourceIndex = 0; b.line = 2; b.sourcePath = L"/mods/a.ini";
++    b.resourceId = L"resource\\mods\\vb"; b.originalValue = L"a.buf";
++    b.preferredDirectory = L"/mods/"; b.resolvedFilename = L"/mods/a.buf";
++    return b;
++}
++static ResourceRefreshPin MakeGeneration(uint64_t id, BuildVersions v, const ConfigSourceManifest& manifest) {
++    auto generation = std::make_shared<ResourceRefreshGeneration>();
++    generation->id = id; generation->versions = v; generation->legacyConfigEpoch = 7;
++    generation->manifest = manifest; generation->payload = std::make_shared<const int>(static_cast<int>(id));
++    return generation;
++}
++int main(int argc, char** argv) {
++    const auto base = Manifest("[ResourceVB]\nfilename = a.buf\nstride = 12\n");
++    const auto next = Manifest("[ResourceVB]\nfilename = longer.buf\nstride = 12\n");
++    const BuildVersions versions{1, 2, 3};
++    const std::vector<ResourceFilenameBinding> bindings{Binding()};
++    auto build = [&](const ConfigSourceManifest& candidate, bool closure = true) {
++        return BuildResourceFilenamePatch(base, candidate, bindings, versions, closure);
++    };
++    auto patch = build(next);
++    assert(patch.valid && patch.replacementPath == L"/mods/longer.buf");
++    assert(patch.versions == versions && patch.manifest.sources.size() == 2);
++    assert(!build(base).valid && !build(next, false).valid);
++    auto bad = next; bad.verified = false; assert(!build(bad).valid);
++    bad = next; bad.sources[0].snapshot.digest[0] ^= 1; assert(!build(bad).valid);
++    bad = next; bad.sources[0].snapshot.watchable = false; assert(!build(bad).valid);
++    auto aliasedBase = base; aliasedBase.sources[0].snapshot.watchable = false;
++    assert(!BuildResourceFilenamePatch(aliasedBase, next, bindings, versions, true).valid);
++    bad = next; bad.sources[0].iniNamespace = L"other"; assert(!build(bad).valid);
++    bad = next; bad.sources[0].snapshot.path = L"/moved.ini"; assert(!build(bad).valid);
++    bad = next; bad.sources.push_back(Source("[ResourceAdded]\n")); assert(!build(bad).valid);
++    bad = next; bad.sources[1] = Source("[Constants]\nglobal persist $x = 2\n", L"/other.ini");
++    assert(!build(bad).valid);
++    assert(!build(Manifest("[ResourceVB]\nfilename = b.buf\nstride = 24\n")).valid);
++    assert(!build(Manifest("[ResourceVB]\nfilename=b.buf\nstride = 12\n")).valid);
++    assert(!build(Manifest("[ResourceVB]\nfilename = b.buf\nstride = 12\n; new comment\n")).valid);
++    assert(!build(Manifest("[ResourceVB]\nfilename = ../b.buf\nstride = 12\n")).valid);
++    assert(!build(Manifest("[ResourceVB]\nfilename = image.dds\nstride = 12\n")).valid);
++    assert(!build(Manifest("[ResourceVB]\nfilename = b.buf; comment\nstride = 12\n")).valid);
++    assert(!build(Manifest("[ResourceVB]\nfilename = b\n.buf\nstride = 12\n")).valid);
++    auto duplicate = bindings; duplicate.push_back(Binding());
++    assert(!BuildResourceFilenamePatch(base, next, duplicate, versions, true).valid);
++    auto fallback = bindings; fallback[0].resolvedFilename = L"/root/a.buf";
++    assert(!BuildResourceFilenamePatch(base, next, fallback, versions, true).valid);
++    auto wrongLine = bindings; wrongLine[0].line = 3;
++    assert(!BuildResourceFilenamePatch(base, next, wrongLine, versions, true).valid);
++    const auto third = Manifest("[ResourceVB]\nfilename = c.buf\nstride = 12\n");
++    assert(BuildResourceFilenamePatch(next, third, bindings, versions, true).valid);
++    assert(BuildResourceFilenamePatch(third, base, bindings, versions, true).valid);
++    const auto crlf = Manifest("\xef\xbb\xbf[ResourceVB]\r\n\tFILENAME = a.buf \t\r\nstride = 12\r\n");
++    const auto crlfNext = Manifest("\xef\xbb\xbf[ResourceVB]\r\n\tFILENAME = B.BUF \t\r\nstride = 12\r\n");
++    assert(BuildResourceFilenamePatch(crlf, crlfNext, bindings, versions, true).valid);
++
++    ResourceRefreshManager manager(1);
++    using R = ResourceRefreshPublishResult;
++    assert(manager.Publish({}, versions, 7, true) == R::InvalidCandidate);
++    auto first = MakeGeneration(1, versions, base);
++    assert(manager.Publish(first, versions, 7, true) == R::Activated);
++    auto pin = manager.Pin();
++    auto second = MakeGeneration(2, versions, next);
++    assert(manager.Publish(second, versions, 7, false) == R::DependenciesPending);
++    assert(manager.Pin() == first);
++    assert(manager.Publish(second, BuildVersions{2,2,3}, 7, true) == R::Stale);
++    assert(manager.Publish(second, versions, 8, true) == R::Stale);
++    assert(manager.Publish(second, versions, 7, true) == R::Activated);
++    assert(*std::static_pointer_cast<const int>(pin->payload) == 1);
++    assert(*std::static_pointer_cast<const int>(manager.Pin()->payload) == 2);
++    assert(manager.Publish(MakeGeneration(3, versions, third), versions, 7, true) == R::RetirementPending);
++    assert(manager.Retire([](uint64_t) { return true; }) == 0);
++    first.reset(); pin.reset();
++    assert(manager.Retire([](uint64_t) { return false; }) == 0);
++    assert(manager.Retire([&](uint64_t id) { assert(manager.Pin()->id == 2); return id == 1; }) == 1);
++    assert(manager.Publish(second, versions, 7, true) == R::Stale);
++    // Reader owns one immutable complete payload while publication proceeds.
++    std::atomic<bool> captured{false}, published{false};
++    std::thread reader([&] {
++        const auto held = manager.Pin(); captured.store(true);
++        while (!published.load()) std::this_thread::yield();
++        assert(held->id == 2 && *std::static_pointer_cast<const int>(held->payload) == 2);
++    });
++    while (!captured.load()) std::this_thread::yield();
++    assert(manager.Publish(MakeGeneration(3, versions, third), versions, 7, true) == R::Activated);
++    published.store(true); reader.join();
++    auto finalPin = manager.Pin();
++    manager.Clear();
++    assert(!manager.Pin() && finalPin->id == 3);
++    bool destroyed = false;
++    auto reentrant = std::make_shared<ResourceRefreshGeneration>();
++    reentrant->id = 4; reentrant->legacyConfigEpoch = 7; reentrant->versions = versions;
++    reentrant->manifest = base;
++    reentrant->payload = std::shared_ptr<const void>(new int(4), [&](const void* p) {
++        assert(!manager.Pin()); destroyed = true; delete static_cast<const int*>(p);
++    });
++    assert(manager.Publish(reentrant, versions, 7, true) == R::Activated);
++    reentrant.reset(); manager.Clear(); assert(destroyed);
++    if (argc >= 2) {
++        const std::string path = std::string(argv[1]) + ".ini";
++        const std::string other = std::string(argv[1]) + "-other.ini";
++        auto captured = base;
++        captured.sources[0].snapshot.path.assign(path.begin(), path.end());
++        captured.sources[1].snapshot.path.assign(other.begin(), other.end());
++        auto diskBindings = bindings;
++        diskBindings[0].sourcePath = captured.sources[0].snapshot.path;
++        auto write = [](const std::string& p, const ConfigSource& source) {
++            std::ofstream file(p, std::ios::binary | std::ios::trunc);
++            file.write(reinterpret_cast<const char*>(source.snapshot.bytes->data()), source.snapshot.bytes->size());
++            assert(file.good());
++        };
++        write(path, next.sources[0]); write(other, base.sources[1]);
++        assert(ReadResourceFilenamePatch(captured, diskBindings, versions, true).valid);
++        assert(!ReadResourceFilenamePatch(captured, diskBindings, versions, false).valid);
++        write(other, Source("[Constants]\nglobal persist $x = 9\n"));
++        assert(!ReadResourceFilenamePatch(captured, diskBindings, versions, true).valid);
++        std::remove(path.c_str()); std::remove(other.c_str());
++        assert(!ReadResourceFilenamePatch(captured, diskBindings, versions, true).valid);
++    }
++    if (argc >= 3) {
++        const std::string directory(argv[2]);
++        const std::string kept = directory + "/kept.ini";
++        const std::string added = directory + "/new.ini";
++        const std::string asset = directory + "/new.buf";
++        std::remove(added.c_str()); std::remove(asset.c_str());
++        { std::ofstream file(kept); file << "[ResourceUnused]\n"; }
++        ResourceRefreshClosure closure;
++        closure.verified = true;
++        ResourceRefreshDirectory captured;
++        captured.path.assign(directory.begin(), directory.end());
++        std::string error;
++        assert(ReadResourceRefreshDirectory(captured.path, captured.entries, error));
++        assert(captured.entries == std::vector<std::wstring>({L"D:nested", L"F:kept.ini"}));
++        closure.directories.push_back(captured);
++        assert(VerifyResourceRefreshClosure(closure, error));
++        { std::ofstream file(asset); file << "candidate buffer"; }
++        assert(VerifyResourceRefreshClosure(closure, error));
++        { std::ofstream file(added); file << "[ResourceNew]\n"; }
++        assert(!VerifyResourceRefreshClosure(closure, error) && !error.empty());
++        std::remove(added.c_str());
++        assert(std::rename((directory + "/nested").c_str(), (directory + "/renamed").c_str()) == 0);
++        assert(!VerifyResourceRefreshClosure(closure, error));
++        assert(std::rename((directory + "/renamed").c_str(), (directory + "/nested").c_str()) == 0);
++        assert(VerifyResourceRefreshClosure(closure, error));
++        closure.verified = false; closure.reason = "Conditional include preambles require legacy reload";
++        assert(!VerifyResourceRefreshClosure(closure, error) && error == closure.reason);
++        std::remove(kept.c_str()); std::remove(asset.c_str());
++    }
++    std::cout << "Resource filename delta, last-good publication, stale tokens and reader ownership passed\n";
++}
+diff --git a/tests/preparation_refresh/run.sh b/tests/preparation_refresh/run.sh
+new file mode 100644
+index 0000000000000000000000000000000000000000..0f3d508ec4a781ad9bed7fdc641183e0f4c50de6
+--- /dev/null
++++ b/tests/preparation_refresh/run.sh
+@@ -0,0 +1,12 @@
++#!/usr/bin/env bash
++set -euo pipefail
++root="$(cd "$(dirname "$0")/../.." && pwd)"
++build="$root/work/preparation_refresh"
++mkdir -p "$build"
++mkdir -p "$build/closure-fixture/nested"
++c++ -std=c++14 -pthread -Wall -Wextra -Werror -I "$root/DirectX11/ModLoading" \
++ "$root/tests/preparation_refresh/main.cpp" \
++ "$root/DirectX11/ModLoading/ResourceRefresh.cpp" \
++ "$root/DirectX11/ModLoading/ResourceRefreshClosure.cpp" \
++ "$root/DirectX11/ModLoading/SnapshotIO.cpp" -o "$build/test"
++"$build/test" "$build/snapshot-fixture" "$build/closure-fixture"
+diff --git a/tests/preparation_refresh/run_windows_fixture.py b/tests/preparation_refresh/run_windows_fixture.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..c0e157c996f3435625423851f2f8a12c2399a6f5
+--- /dev/null
++++ b/tests/preparation_refresh/run_windows_fixture.py
+@@ -0,0 +1,13 @@
++"""Run refresh policy tests with owned paths for actual snapshot/inventory IO."""
++from pathlib import Path
++import subprocess
++import sys
++import tempfile
++
++executable = Path(sys.argv[1]).resolve()
++with tempfile.TemporaryDirectory(prefix='xxmi-refresh-fixture-') as temporary:
++    root = Path(temporary)
++    closure = root / 'closure'
++    (closure / 'nested').mkdir(parents=True)
++    subprocess.run([str(executable), str(root / 'snapshot'), str(closure)], check=True, timeout=35)
++print('preparation_refresh: actual config snapshots and recursive membership verified')
+diff --git a/tests/preparation_refresh/test_refresh_device.cpp b/tests/preparation_refresh/test_refresh_device.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..00ed30d5ab88c3f17b8282c2fd9c20a21dcfd388
+--- /dev/null
++++ b/tests/preparation_refresh/test_refresh_device.cpp
+@@ -0,0 +1,213 @@
++// Real WARP regression for the production refresh manager/overlay primitives.
++// This qualifies owner resolution, binding and COM lifetime, not the complete
++// legacy parser, Runtime integration, or a game's rendered output.
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#include "ResourceRefreshOverlay.h"
++#include "SnapshotIO.h"
++#include <d3d11.h>
++#include <wrl/client.h>
++#include <objbase.h>
++#include <array>
++#include <atomic>
++#include <cassert>
++#include <chrono>
++#include <cstring>
++#include <iostream>
++#include <thread>
++using namespace ModLoading;
++using Microsoft::WRL::ComPtr;
++namespace {
++using Words = std::array<uint32_t, 4>;
++struct Apartment {
++    Apartment() { assert(SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED))); }
++    ~Apartment() { CoUninitialize(); }
++};
++struct BufferOwner {
++    ComPtr<ID3D11Buffer> buffer;
++    Words words;
++};
++struct Lifetime { std::atomic<bool> destroyed{false}; };
++class LifetimeProbe final : public IUnknown {
++public:
++    explicit LifetimeProbe(std::shared_ptr<Lifetime> lifetime) : lifetime_(std::move(lifetime)) {}
++    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id, void** output) override {
++        if (!output) return E_POINTER;
++        *output = nullptr;
++        if (!IsEqualGUID(id, __uuidof(IUnknown))) return E_NOINTERFACE;
++        *output = static_cast<IUnknown*>(this); AddRef(); return S_OK;
++    }
++    ULONG STDMETHODCALLTYPE AddRef() override { return refs_.fetch_add(1) + 1; }
++    ULONG STDMETHODCALLTYPE Release() override {
++        const auto remaining = refs_.fetch_sub(1) - 1;
++        if (!remaining) delete this;
++        return remaining;
++    }
++private:
++    ~LifetimeProbe() { lifetime_->destroyed.store(true, std::memory_order_release); }
++    std::atomic<ULONG> refs_{1};
++    std::shared_ptr<Lifetime> lifetime_;
++};
++const GUID LifetimeGuid = {0x093c1346, 0xf988, 0x4f01, {0x9b, 0x41, 0x5b, 0xe4, 0xdb, 0xba, 0x4a, 0x28}};
++ComPtr<ID3D11Device> Device(ComPtr<ID3D11DeviceContext>& context) {
++    ComPtr<ID3D11Device> result;
++    const auto hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0,
++        nullptr, 0, D3D11_SDK_VERSION, result.GetAddressOf(), nullptr, context.GetAddressOf());
++    assert(SUCCEEDED(hr)); return result;
++}
++std::shared_ptr<BufferOwner> Buffer(ID3D11Device* device, const Words& words) {
++    auto result = std::make_shared<BufferOwner>(); result->words = words;
++    D3D11_BUFFER_DESC desc{}; desc.ByteWidth = sizeof(Words); desc.Usage = D3D11_USAGE_IMMUTABLE;
++    desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
++    D3D11_SUBRESOURCE_DATA data{}; data.pSysMem = words.data();
++    assert(SUCCEEDED(device->CreateBuffer(&desc, &data, result->buffer.GetAddressOf()))); return result;
++}
++ConfigSourceManifest Manifest(const char* text) {
++    ConfigSource source; source.snapshot.path = L"C:\\fixture\\mods\\mod.ini";
++    source.snapshot.bytes = std::make_shared<const std::vector<uint8_t>>(text, text + std::strlen(text));
++    source.snapshot.digest = HashBytes(source.snapshot.bytes->data(), source.snapshot.bytes->size());
++    source.snapshot.watchable = true; source.iniNamespace = L"mods/mod.ini";
++    ConfigSourceManifest result; result.verified = true; result.sources.push_back(std::move(source)); return result;
++}
++ResourceRefreshPin Generation(uint64_t id, BuildVersions versions, uint64_t configEpoch,
++    const void* device, const BufferOwner* original, std::shared_ptr<BufferOwner> replacement,
++    const ConfigSourceManifest& manifest) {
++    auto overlay = std::make_shared<ResourceRefreshOverlay>();
++    overlay->deviceIdentity = device; overlay->deviceEpoch = versions.device; overlay->legacyConfigEpoch = configEpoch;
++    overlay->replacements[original] = std::move(replacement);
++    auto generation = std::make_shared<ResourceRefreshGeneration>();
++    generation->id = id; generation->versions = versions; generation->legacyConfigEpoch = configEpoch;
++    generation->manifest = manifest; generation->payload = overlay; return generation;
++}
++BufferOwner* Resolve(const ResourceRefreshDrawPin& draw, const BufferOwner* original,
++    const void* device, DeviceEpoch epoch, uint64_t configEpoch) {
++    return static_cast<BufferOwner*>(ResolveResourceRefreshOverlay(draw, original, device, epoch, configEpoch));
++}
++void ReadBound(ID3D11Device* device, ID3D11DeviceContext* context, ID3D11Buffer* expectedBuffer, const Words& expected) {
++    ComPtr<ID3D11Buffer> bound; UINT stride = 0, offset = 0;
++    context->IAGetVertexBuffers(0, 1, bound.GetAddressOf(), &stride, &offset);
++    assert(bound.Get() == expectedBuffer && stride == sizeof(uint32_t) && offset == 0);
++    D3D11_BUFFER_DESC desc{}; desc.ByteWidth = sizeof(Words); desc.Usage = D3D11_USAGE_STAGING; desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
++    ComPtr<ID3D11Buffer> staging; assert(SUCCEEDED(device->CreateBuffer(&desc, nullptr, staging.GetAddressOf())));
++    context->CopyResource(staging.Get(), bound.Get());
++    D3D11_MAPPED_SUBRESOURCE mapped{};
++    assert(SUCCEEDED(context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped)));
++    assert(std::memcmp(mapped.pData, expected.data(), sizeof(Words)) == 0); context->Unmap(staging.Get(), 0);
++}
++void BindAndRead(ID3D11Device* device, ID3D11DeviceContext* context, BufferOwner* owner) {
++    assert(owner && owner->buffer);
++    auto* buffer = owner->buffer.Get(); const UINT stride = sizeof(uint32_t), offset = 0;
++    context->IASetVertexBuffers(0, 1, &buffer, &stride, &offset); ReadBound(device, context, buffer, owner->words);
++}
++void CompleteSubmittedWork(ID3D11Device* device, ID3D11DeviceContext* context) {
++    D3D11_QUERY_DESC desc{}; desc.Query = D3D11_QUERY_EVENT;
++    ComPtr<ID3D11Query> complete; assert(SUCCEEDED(device->CreateQuery(&desc, complete.GetAddressOf())));
++    context->End(complete.Get()); context->Flush();
++    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
++    BOOL done = FALSE; HRESULT hr = S_FALSE;
++    while ((hr = context->GetData(complete.Get(), &done, sizeof(done), 0)) == S_FALSE &&
++        std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
++    assert(hr == S_OK && done);
++}
++}
++int main() {
++    Apartment apartment;
++    ComPtr<ID3D11DeviceContext> context, otherContext;
++    auto device = Device(context); auto otherDevice = Device(otherContext);
++    const DeviceEpoch epoch = 42; const uint64_t configEpoch = 7;
++    const BuildVersions versionA{1, epoch, 1}, versionB{2, epoch, 1}, versionC{3, epoch, 1};
++    const Words bytesA{{1, 2, 3, 4}}, bytesB{{91, 92, 93, 94}};
++    auto ownerA = Buffer(device.Get(), bytesA), ownerB = Buffer(device.Get(), bytesB);
++    auto original = std::make_shared<BufferOwner>(); original->buffer = ownerA->buffer; original->words = bytesA;
++    const auto manifestA = Manifest("[ResourceVB]\nfilename = a.buf\nstride = 4\n");
++    const auto manifestB = Manifest("[ResourceVB]\nfilename = b.buf\nstride = 4\n");
++    ResourceRefreshManager manager(1); ResourceRefreshActivationEdge activation;
++    ResourceRefreshDrawPin capturedNull;
++    CaptureResourceRefreshDrawPin(capturedNull, manager.Pin()); assert(capturedNull.captured && !capturedNull.generation);
++    auto generationA = Generation(1, versionA, configEpoch, device.Get(), original.get(), ownerA, manifestA);
++    using Result = ResourceRefreshPublishResult;
++    assert(manager.Publish(generationA, versionA, configEpoch, true) == Result::Activated);
++    ResourceRefreshDrawPin oldDraw; CaptureResourceRefreshDrawPin(oldDraw, manager.Pin());
++    assert(Resolve(oldDraw, original.get(), device.Get(), epoch, configEpoch) == ownerA.get());
++    BindAndRead(device.Get(), context.Get(), Resolve(oldDraw, original.get(), device.Get(), epoch, configEpoch));
++    // Policy rejection and invalid manager publication preserve the active A.
++    ResourceFilenameBinding binding; binding.sourceIndex = 0; binding.line = 2;
++    binding.sourcePath = manifestA.sources[0].snapshot.path; binding.resourceId = L"resource\\mods\\vb";
++    binding.originalValue = L"a.buf"; binding.resolvedFilename = L"C:\\fixture\\mods\\a.buf";
++    binding.preferredDirectory = L"C:\\fixture\\mods\\";
++    assert(BuildResourceFilenamePatch(manifestA, manifestB, {binding}, versionB, true).valid);
++    const auto unsupported = Manifest("[ResourceVB]\nfilename = b.buf\nstride = 16\n");
++    assert(!BuildResourceFilenamePatch(manifestA, unsupported, {binding}, versionB, true).valid);
++    assert(manager.Pin() == generationA);
++    auto invalidManifest = manifestB; invalidManifest.verified = false;
++    assert(manager.Publish(Generation(2, versionB, configEpoch, device.Get(), original.get(), ownerB, invalidManifest),
++        versionB, configEpoch, true) == Result::InvalidCandidate && manager.Pin() == generationA);
++    // A real deferred command list records the old A binding before B publishes.
++    auto lifetime = std::make_shared<Lifetime>(); auto* probe = new LifetimeProbe(lifetime);
++    assert(SUCCEEDED(ownerA->buffer->SetPrivateDataInterface(LifetimeGuid, probe))); probe->Release();
++    ID3D11Buffer* recordedA = ownerA->buffer.Get();
++    ComPtr<ID3D11DeviceContext> deferred; assert(SUCCEEDED(device->CreateDeferredContext(0, deferred.GetAddressOf())));
++    const UINT stride = sizeof(uint32_t), offset = 0;
++    deferred->IASetVertexBuffers(0, 1, &recordedA, &stride, &offset);
++    D3D11_BUFFER_DESC deferredReadDesc{}; deferredReadDesc.ByteWidth = sizeof(Words);
++    deferredReadDesc.Usage = D3D11_USAGE_STAGING; deferredReadDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
++    ComPtr<ID3D11Buffer> deferredReadback;
++    assert(SUCCEEDED(device->CreateBuffer(&deferredReadDesc, nullptr, deferredReadback.GetAddressOf())));
++    // An actual recorded copy keeps A live even if the driver removes unused
++    // IA state changes from a command list that contains no draw.
++    deferred->CopyResource(deferredReadback.Get(), recordedA);
++    ComPtr<ID3D11CommandList> commands;
++    assert(SUCCEEDED(deferred->FinishCommandList(FALSE, commands.GetAddressOf()))); deferred.Reset();
++    auto generationB = Generation(2, versionB, configEpoch, device.Get(), original.get(), ownerB, manifestB);
++    activation.Request(); activation.SetReady(generationB->id);
++    assert(activation.Consume() == 0 && manager.Pin() == generationA); // no future ready edge may satisfy the earlier request
++    assert(manager.Publish(generationB, versionB, configEpoch, false) == Result::DependenciesPending && manager.Pin() == generationA);
++    assert(manager.Publish(generationB, versionC, configEpoch, true) == Result::Stale && manager.Pin() == generationA);
++    assert(manager.Publish(generationB, versionB, configEpoch + 1, true) == Result::Stale && manager.Pin() == generationA);
++    activation.Request(); assert(activation.Consume() == generationB->id);
++    assert(manager.Publish(generationB, versionB, configEpoch, true) == Result::Activated);
++    ResourceRefreshDrawPin newDraw; CaptureResourceRefreshDrawPin(newDraw, manager.Pin());
++    CaptureResourceRefreshDrawPin(oldDraw, manager.Pin()); CaptureResourceRefreshDrawPin(capturedNull, manager.Pin());
++    assert(oldDraw.generation->id == 1 && !capturedNull.generation);
++    assert(Resolve(oldDraw, original.get(), device.Get(), epoch, configEpoch) == ownerA.get());
++    assert(Resolve(capturedNull, original.get(), device.Get(), epoch, configEpoch) == original.get());
++    BindAndRead(device.Get(), context.Get(), Resolve(newDraw, original.get(), device.Get(), epoch, configEpoch));
++    assert(Resolve(newDraw, original.get(), device.Get(), epoch, configEpoch) == ownerB.get());
++    assert(Resolve(newDraw, original.get(), otherDevice.Get(), epoch, configEpoch) == original.get());
++    assert(Resolve(newDraw, original.get(), device.Get(), epoch + 1, configEpoch) == original.get());
++    assert(Resolve(newDraw, original.get(), device.Get(), epoch, configEpoch + 1) == original.get());
++    BufferOwner absent; assert(Resolve(newDraw, &absent, device.Get(), epoch, configEpoch) == &absent);
++    ResourceRefreshDrawPin uncaptured; assert(Resolve(uncaptured, original.get(), device.Get(), epoch, configEpoch) == original.get());
++    auto generationC = Generation(3, versionC, configEpoch, device.Get(), original.get(), ownerA, manifestA);
++    assert(manager.Publish(generationC, versionC, configEpoch, false) == Result::DependenciesPending && manager.Pin() == generationB);
++    assert(manager.Publish(generationC, versionC, configEpoch, true) == Result::RetirementPending && manager.Pin() == generationB);
++    generationC.reset();
++    activation.SetReady(0); activation.Request(); activation.SetReady(3);
++    assert(activation.Consume() == 0 && manager.Pin() == generationB);
++    activation.SetReady(2); activation.Request(); activation.SetReady(3);
++    assert(activation.Consume() == 2 && manager.Pin() == generationB);
++    generationA.reset();
++    assert(manager.Retire([](uint64_t) { return true; }) == 0); // the draw pin alone retains the old generation
++    CompleteSubmittedWork(device.Get(), context.Get());
++    std::weak_ptr<BufferOwner> oldOwner = ownerA;
++    ownerA.reset(); original->buffer.Reset(); generationA.reset(); oldDraw = {};
++    assert(manager.Retire([](uint64_t) { return false; }) == 0);
++    assert(manager.Retire([](uint64_t id) { return id == 1; }) == 1);
++    assert(oldOwner.expired() && !lifetime->destroyed.load(std::memory_order_acquire));
++    // All old overlay/resource owners are gone. The recorded command list
++    // alone still carries a valid A COM child and can copy its original bytes.
++    // ExecuteCommandList(FALSE) resets immediate state, so inspect the recorded
++    // readback destination rather than expecting its IA binding to survive.
++    context->ExecuteCommandList(commands.Get(), FALSE);
++    D3D11_MAPPED_SUBRESOURCE recorded{};
++    assert(SUCCEEDED(context->Map(deferredReadback.Get(), 0, D3D11_MAP_READ, 0, &recorded)));
++    assert(std::memcmp(recorded.pData, bytesA.data(), sizeof(Words)) == 0);
++    context->Unmap(deferredReadback.Get(), 0); deferredReadback.Reset();
++    commands.Reset(); context->ClearState(); context->Flush(); CompleteSubmittedWork(device.Get(), context.Get());
++    manager.Clear(); newDraw = {}; generationB.reset(); ownerB.reset(); original.reset();
++    otherContext->ClearState(); otherContext->Flush();
++    context.Reset(); otherContext.Reset(); device.Reset(); otherDevice.Reset();
++    assert(lifetime->destroyed.load(std::memory_order_acquire));
++    std::cout << "refresh device: WARP A/B binding/readback, rejected candidates, draw pins, epochs, activation edges, deferred lifetime passed\n";
++}
 diff --git a/tests/preparation_runtime/README.md b/tests/preparation_runtime/README.md
 new file mode 100644
 index 0000000000000000000000000000000000000000..135e361092d320be574b509d9f968a9539e2f02a
