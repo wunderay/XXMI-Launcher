@@ -13,12 +13,12 @@ $mod = Join-Path $native 'DirectX11\ModLoading'
 $script:TestFailures = @()
 
 function Run-NativeTest {
-    param([string]$Name, [string[]]$Sources, [string[]]$Libraries = @(), [string]$PythonRunner = '')
+    param([string]$Name, [string[]]$Sources, [string[]]$Libraries = @(), [string]$PythonRunner = '', [string]$Standard = 'c++14', [switch]$CompileOnly)
     $dir = Join-Path $tests $Name
     New-Item -ItemType Directory -Force $dir | Out-Null
     Push-Location $dir
     try {
-        $arguments = @('/nologo', '/std:c++14', '/MT', '/EHsc', '/W4', '/WX', '/UNDEBUG',
+        $arguments = @('/nologo', "/std:$Standard", '/MT', '/EHsc', '/W4', '/WX', '/UNDEBUG',
             '/D_CRT_SECURE_NO_WARNINGS', '/DUNICODE', '/D_UNICODE',
             '/DNOMINMAX', '/DWIN32_LEAN_AND_MEAN', "/I$mod",
             "/I$(Join-Path $native 'DirectXTK\Inc')")
@@ -27,6 +27,7 @@ function Run-NativeTest {
         if ($Libraries.Count) { $arguments += '/link'; $arguments += $Libraries }
         & cl @arguments 2>&1 | Tee-Object -FilePath build.log
         if ($LASTEXITCODE -ne 0) { throw "$Name compilation failed ($LASTEXITCODE)" }
+        if ($CompileOnly) { return }
         if ($PythonRunner) {
             & python (Join-Path $native $PythonRunner) (Join-Path $dir "$Name.exe") 2>&1 | Tee-Object -FilePath run.log
         } else {
@@ -79,6 +80,20 @@ Run-NativeTest -Name 'gpu_policy' -Sources @(
     'DirectX11\ModLoading\MemoryBudgetController.cpp'
 ) -Libraries @('d3d11.lib', 'dxgi.lib')
 Run-NativeTest -Name 'runtime_policy' -Sources @('tests\preparation_runtime\main.cpp')
+Run-NativeTest -Name 'ownership' -Sources @('tests\preparation_ownership\main.cpp') -Standard 'c++17'
+Run-NativeTest -Name 'working_set' -Sources @(
+    'tests\preparation_working_set\working_set_test.cpp',
+    'DirectX11\ModLoading\WorkingSetPolicy.cpp'
+)
+Run-NativeTest -Name 'standard_include_probe' -Sources @('tests\preparation_shader_cache\standard_probe.cpp') `
+    -Libraries @('d3dcompiler.lib') -PythonRunner 'tests\preparation_shader_cache\run_windows_fixture.py'
+Run-NativeTest -Name 'shader_identity' -Sources @(
+    'tests\preparation_shader_cache\windows.cpp',
+    'DirectX11\ModLoading\ShaderSourceCache.cpp',
+    'DirectX11\ModLoading\SnapshotIO.cpp',
+    'DirectX11\ModLoading\RefreshCpuBudget.cpp'
+) -Libraries @('d3dcompiler.lib', 'ole32.lib', 'windowscodecs.lib') `
+    -PythonRunner 'tests\preparation_shader_cache\run_windows_fixture.py'
 Run-NativeTest -Name 'refresh_device' -Sources @(
     'tests\preparation_refresh\test_refresh_device.cpp',
     'DirectX11\ModLoading\ResourceRefresh.cpp',
@@ -118,6 +133,30 @@ Run-NativeTest -Name 'gpu_device' -Sources @(
 ) -Libraries @($toolkit.FullName, 'd3d11.lib', 'dxgi.lib', 'd3dcompiler.lib',
     'windowscodecs.lib', 'ole32.lib')
 } else { $script:TestFailures += 'Built DirectXTK static library was not found.' }
+
+# The production DLL is built without test exports. A separate DLL from the
+# same source enables parser fixtures only inside an owned isolated process.
+if (Test-Path -LiteralPath (Join-Path $bin 'd3d11.dll')) {
+    $fixtureBin = Join-Path $out 'native-fixture\bin'
+    New-Item -ItemType Directory -Force $fixtureBin | Out-Null
+    Get-ChildItem -LiteralPath $bin -Filter '*.lib' | Copy-Item -Destination $fixtureBin
+    $fixtureArgs = @((Join-Path $native 'DirectX11\DirectX11.vcxproj'), '/m', '/t:Build',
+        '/p:Configuration=Zip Release', '/p:Platform=x64', "/p:SolutionDir=$native\",
+        "/p:OutDir=$fixtureBin\", '/p:BuildProjectReferences=false', '/p:ModLoadingTestHooks=true',
+        '/p:PostBuildEventUseInBuild=false', '/p:PreBuildEventUseInBuild=false', '/v:minimal')
+    & msbuild @fixtureArgs 2>&1 | Tee-Object -FilePath (Join-Path $out 'native-fixture-build.log')
+    if ($LASTEXITCODE -ne 0) {
+        $script:TestFailures += 'Native parser fixture DLL compilation failed.'
+    } else {
+        Run-NativeTest -Name 'native_config_host' -Sources @('tests\preparation_native_integration\host.cpp') -CompileOnly
+        $hostExe = Join-Path $tests 'native_config_host\native_config_host.exe'
+        if (Test-Path -LiteralPath $hostExe) {
+            & python (Join-Path $native 'tests\preparation_native_integration\run_windows_fixture.py') `
+                $hostExe (Join-Path $fixtureBin 'd3d11.dll') 2>&1 | Tee-Object -FilePath (Join-Path $out 'native-integration.log')
+            if ($LASTEXITCODE -ne 0) { $script:TestFailures += 'Production native parser fixture failed.' }
+        }
+    }
+}
 if ($script:TestFailures.Count) {
     $script:TestFailures | Set-Content -LiteralPath (Join-Path $out 'failures.txt')
     throw ($script:TestFailures -join '; ')
@@ -128,9 +167,13 @@ if (!(Test-Path -LiteralPath $dll -PathType Leaf)) { throw 'Expected d3d11.dll m
 $digest = (Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash.ToLowerInvariant()
 $capabilities = [ordered]@{
     schema_version = 1
-    mod_loading_version = 1
+    mod_loading_version = 2
     dll_sha256 = $digest
     modes = @('off', 'adaptive', 'prepared_profile')
+    features = @('cpu_cache_enabled', 'gpu_cache_enabled', 'adaptive_learning',
+        'transactional_activation', 'general_fast_refresh', 'full_rescan_key', 'profile_members', 'profile_name')
+    package_version = '0.2.0-development'
+    release_stage = 'development'
 }
 [IO.File]::WriteAllText((Join-Path $out 'PreparationCapabilities.json'),
     ($capabilities | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
