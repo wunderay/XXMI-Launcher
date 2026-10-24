@@ -27,6 +27,8 @@ git -C <clean-native-checkout> apply <path-to-native.patch>
 
 The clean native checkout must be at
 `a7847eae82aaac32175c9a7d199673d5c9323bcd` with its version tags fetched.
+Use `git -c core.autocrlf=false clone https://github.com/SpectrumQT/XXMI-Libs-Package.git`
+for that isolated checkout so patch application preserves exact source line endings.
 Python 3.8 or newer is required for packaging and the Windows status fixture.
 Never run `CopyToGames.bat` as part of this workflow. To roll back a supported
 test installation, stop the game, select Off, and restore the previous signed
