@@ -14,6 +14,7 @@ import core.config_manager as Config
 from core.locale_manager import L
 from core.package_manager import Package, PackageMetadata
 from core.config.enums import InputDisableMode, LogLevel
+from core.prepared_loading import PreparedLoadingSettings, PreparationCapability, inspect_capability, CAPABILITY_FILE
 
 from core.utils.dll_injector import DllInjector
 from core.utils.process_manager import LaunchContext
@@ -35,7 +36,7 @@ class MigotoIdentity:
 
 
 @dataclass
-class MigotoManagerConfig:
+class MigotoManagerConfig(PreparedLoadingSettings):
     manage_xxmi_dll_config: bool = True
     enforce_rendering: bool = True
     enable_hunting: bool = False
@@ -65,6 +66,18 @@ class MigotoPackage(Package):
         ))
 
         Events.Subscribe(Events.MigotoManager.OpenModsFolder, self.handle_open_mods_folder)
+
+    def preparation_capability(self) -> PreparationCapability:
+        # Refresh signatures so a package update cannot reuse cached metadata.
+        try:
+            self.load_manifest()
+            return inspect_capability(
+                Config.Active.Importer.importer_path / 'd3d11.dll',
+                self.package_path / CAPABILITY_FILE,
+                lambda path, data: self.security.verify(self.get_signature(path), data),
+            )
+        except Exception as error:
+            return PreparationCapability(False, f'Preparation unavailable: {error}')
 
     def identify_dll(self, dll_path: Path | None = None) -> MigotoIdentity | None:
         if dll_path is None:
