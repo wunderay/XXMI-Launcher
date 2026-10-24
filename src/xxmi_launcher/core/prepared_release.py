@@ -110,12 +110,14 @@ class _StagedFile:
                             ('RootDirectory', wintypes.HANDLE),
                             ('FileNameLength', wintypes.DWORD),
                             ('FileName', wintypes.WCHAR * 1)]
-            name = str(target.absolute()).encode('utf-16-le')
+            # Win32's DOS-path conversion requires a NUL-terminated wide
+            # string even though FileNameLength excludes that terminator.
+            name = (str(target.absolute()) + '\0').encode('utf-16-le')
             size = RenameInformation.FileName.offset + len(name)
             information = ctypes.create_string_buffer(max(size, ctypes.sizeof(RenameInformation)))
             header = RenameInformation.from_buffer(information)
             header.ReplaceIfExists = True
-            header.FileNameLength = len(name)
+            header.FileNameLength = len(name) - 2
             ctypes.memmove(ctypes.addressof(information) + RenameInformation.FileName.offset, name, len(name))
             handle = msvcrt.get_osfhandle(self.stream.fileno())
             if not _windows_kernel().SetFileInformationByHandle(handle, 3, information, size):

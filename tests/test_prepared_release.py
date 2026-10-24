@@ -370,6 +370,28 @@ class ProcessIdleTests(unittest.TestCase):
 
 @unittest.skipUnless(os.name == 'nt', 'requires actual Windows DPAPI and protected file handles')
 class WindowsLifecycleTests(unittest.TestCase):
+    def test_real_handle_rename_terminates_variable_length_unicode_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            importer = Path(directory) / 'rename-\u03bb-\U0001f539'
+            importer.mkdir()
+            for length in range(8):
+                with self.subTest(length=length):
+                    target = importer / ('target-' + 'x' * length + '-\u03bb-\U0001f539.json')
+                    target.write_bytes(b'prior fixture')
+                    payload = b'verified fixture ' + str(length).encode()
+                    staged = _StagedFile(importer, payload)
+                    source = staged.path
+                    try:
+                        staged.replace(target)
+                        self.assertFalse(source.exists())
+                        self.assertTrue(target.is_file())
+                        with self.assertRaises(PermissionError):
+                            target.write_bytes(b'unsigned overwrite')
+                    finally:
+                        staged.close()
+                    self.assertEqual(target.read_bytes(), payload)
+            self.assertFalse(list(importer.glob('.xxmi-*.tmp')))
+
     def test_real_dpapi_metadata_round_trip_and_tampering(self):
         import base64
         from core.prepared_release import _read_json, _write_json

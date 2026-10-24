@@ -37,7 +37,8 @@ function Run-NativeTest {
         if ($PythonRunner) {
             & python (Join-Path $native $PythonRunner) (Join-Path $dir "$Name.exe") 2>&1 | Tee-Object -FilePath run.log
         } else {
-            & (Join-Path $dir "$Name.exe") 2>&1 | Tee-Object -FilePath run.log
+            & python -c 'import subprocess, sys; subprocess.run([sys.argv[1]], check=True, timeout=120)' `
+                (Join-Path $dir "$Name.exe") 2>&1 | Tee-Object -FilePath run.log
         }
         if ($LASTEXITCODE -ne 0) { throw "$Name failed ($LASTEXITCODE)" }
     } catch {
@@ -111,7 +112,8 @@ Run-NativeTest -Name 'trace_host' -Sources @(
 $traceDll = Join-Path $tests 'trace_worker\trace_worker.dll'
 $traceHost = Join-Path $tests 'trace_host\trace_host.exe'
 if ((Test-Path -LiteralPath $traceDll) -and (Test-Path -LiteralPath $traceHost)) {
-    & $traceHost $traceDll 2>&1 | Tee-Object -FilePath (Join-Path $out 'trace-integration.log')
+    & python -c 'import subprocess, sys; subprocess.run(sys.argv[1:], check=True, timeout=30)' `
+        $traceHost $traceDll 2>&1 | Tee-Object -FilePath (Join-Path $out 'trace-integration.log')
     if ($LASTEXITCODE -ne 0) { $script:TestFailures += 'Native streaming trace DLL fixture failed.' }
 }
 Run-NativeTest -Name 'standard_include_probe' -Sources @('tests\preparation_shader_cache\standard_probe.cpp') `
@@ -142,6 +144,13 @@ Run-NativeTest -Name 'windows_status' -Sources @(
     'DirectX11\ModLoading\SnapshotIO.cpp'
 ) -Libraries @('ole32.lib', 'windowscodecs.lib', 'propsys.lib') `
   -PythonRunner 'tests\preparation_status\run_windows_fixture.py'
+
+# Once independent fixtures fail, preserve their logs before spending time on
+# both DLL builds. These failures must be resolved before package production.
+if ($script:TestFailures.Count) {
+    $script:TestFailures | Set-Content -LiteralPath (Join-Path $out 'failures.txt')
+    throw ($script:TestFailures -join '; ')
+}
 
 # Suppress deployment/copy events in every project configuration.
 $buildArguments = @((Join-Path $native 'StereovisionHacks.sln'), '/m', '/t:Build',

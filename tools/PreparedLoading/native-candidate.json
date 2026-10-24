@@ -1,7 +1,7 @@
 {
-  "purpose": "Reviewed source candidate; Windows fixtures and real-game release qualification remain required",
-  "native_parent": "361da74afee5e56027ad5202a773cb63ac918191",
-  "native_tree": "6003544d0a08d1679aad54292ded2b9d36bc6591",
+  "purpose": "Reviewed development candidate; Windows integration and real-game qualification required",
+  "native_parent": "7b220059619f6a7dd31da157b2bbec3af63736cc",
+  "native_tree": "379d8cdf661563f3278cca4710e084591d00dfda",
   "native_base": "a7847eae82aaac32175c9a7d199673d5c9323bcd",
-  "patch_sha256": "56fb1c38d680d6ff243ef9c37c4ef17661a1a6630fba25d980b885aa72855869"
+  "patch_sha256": "330900f9af93631ce2b0efe420116226a20a0017405270cd281ede5d8711fe05"
 }

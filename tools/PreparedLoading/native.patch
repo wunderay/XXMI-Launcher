@@ -12064,10 +12064,10 @@ index 0000000000000000000000000000000000000000..4cb127af8c62c3855dded4805a97ecc7
 +}
 diff --git a/DirectX11/ModLoading/Runtime.cpp b/DirectX11/ModLoading/Runtime.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..63b16b39c9865d2ceeac770ff61fff2a06d80b02
+index 0000000000000000000000000000000000000000..79ebc96fbeb8cd020bccd635a263292830b924e2
 --- /dev/null
 +++ b/DirectX11/ModLoading/Runtime.cpp
-@@ -0,0 +1,2125 @@
+@@ -0,0 +1,2134 @@
 +// Resource creation mode uses global NVAPI state; keep every preparation call
 +// on the Present owner under the same lock as the compatibility resource path.
 +#include "../lock.h"
@@ -14058,6 +14058,24 @@ index 0000000000000000000000000000000000000000..63b16b39c9865d2ceeac770ff61fff2a
 +		if (!write(L"d3dx.ini", initial) || !write(L"runtime-user.ini", "[Constants]\n$x = 7\n") ||
 +			!write(L"runtime-buffer.bin", "0123456789abcdef"))
 +			return __LINE__;
++		// Native WARP loading can call the proxy's D3D11Core exports and
++		// complete lazy legacy initialization. Finish that lifecycle before
++		// publishing the test baseline or installing its monitored runtime.
++		wchar_t system[MAX_PATH] = {};
++		if (!GetSystemDirectoryW(system, MAX_PATH))
++			return __LINE__;
++		const std::wstring dll = std::wstring(system) + L"\\d3d11.dll";
++		HMODULE module = LoadLibraryW(dll.c_str());
++		if (!module)
++			return __LINE__;
++		auto createDevice = reinterpret_cast<decltype(&D3D11CreateDevice)>(GetProcAddress(module, "D3D11CreateDevice"));
++		if (!createDevice)
++			return __LINE__;
++		ID3D11Device* rawDevice = nullptr; ID3D11DeviceContext* rawContext = nullptr;
++		if (FAILED(createDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0, nullptr, 0,
++			D3D11_SDK_VERSION, &rawDevice, nullptr, &rawContext))) return __LINE__;
++		std::shared_ptr<ID3D11Device> device(rawDevice, [](ID3D11Device* p) { p->Release(); });
++		std::shared_ptr<ID3D11DeviceContext> context(rawContext, [](ID3D11DeviceContext* p) { p->Release(); });
 +		auto& service = Services();
 +		service.generalCpuBudget->SetCapacity(256 * MiB);
 +		DetachedConfigServices compilerServices; compilerServices.cpuBudget = service.generalCpuBudget;
@@ -14124,28 +14142,19 @@ index 0000000000000000000000000000000000000000..63b16b39c9865d2ceeac770ff61fff2a
 +			}
 +			fflush(stderr);
 +		};
-+		wchar_t system[MAX_PATH] = {};
-+		if (!GetSystemDirectoryW(system, MAX_PATH))
-+			return __LINE__;
-+		const std::wstring dll = std::wstring(system) + L"\\d3d11.dll";
-+		HMODULE module = LoadLibraryW(dll.c_str());
-+		if (!module)
-+			return __LINE__;
-+		auto createDevice = reinterpret_cast<decltype(&D3D11CreateDevice)>(GetProcAddress(module, "D3D11CreateDevice"));
-+		if (!createDevice)
-+			return __LINE__;
-+		ID3D11Device* rawDevice = nullptr; ID3D11DeviceContext* rawContext = nullptr;
-+		if (FAILED(createDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0, nullptr, 0,
-+			D3D11_SDK_VERSION, &rawDevice, nullptr, &rawContext))) return __LINE__;
-+		std::shared_ptr<ID3D11Device> device(rawDevice, [](ID3D11Device* p) { p->Release(); });
-+		std::shared_ptr<ID3D11DeviceContext> context(rawContext, [](ID3D11DeviceContext* p) { p->Release(); });
 +		{ ConfigReadScope read; ConfigState().variables.at(L"$x").fval = 19; }
++		if (!state->enabled.load() || Current() != state) return __LINE__;
 +		if (!write(L"d3dx.ini", changed)) return __LINE__;
 +		RequestFullPreparationRescan();
++		if (!state->enabled.load() || Current() != state || PinConfiguration() != state->graph) return __LINE__;
 +		const ULONGLONG deadline = GetTickCount64() + 20000;
 +		bool activated = false;
 +		while (GetTickCount64() < deadline) {
 +			PumpRuntime(device.get(), 1, context.get());
++			if (!state->enabled.load() && PinConfiguration() == state->graph) {
++				diagnose("source change disabled active runtime");
++				return __LINE__;
++			}
 +			auto candidate = service.pendingGeneral;
 +			if (candidate && candidate->valid && candidate->readyAssets == candidate->assets.size() && candidate->iniPrepared && candidate->retirementSlot >= 0)
 +				service.refreshActivation.Request();
@@ -15855,10 +15864,10 @@ index 0000000000000000000000000000000000000000..4927143ae1c7086c3f792a3e13c9bc4f
 +}
 diff --git a/DirectX11/ModLoading/TraceControl.cpp b/DirectX11/ModLoading/TraceControl.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..b4f68dc3458c4ad0ac20a3150eb4b768f2861bd4
+index 0000000000000000000000000000000000000000..f81af8bccf392811e39ff383ad3d4e4bf27f96e8
 --- /dev/null
 +++ b/DirectX11/ModLoading/TraceControl.cpp
-@@ -0,0 +1,195 @@
+@@ -0,0 +1,194 @@
 +#include "TraceControl.h"
 +#include "LoadTrace.h"
 +
@@ -16006,7 +16015,6 @@ index 0000000000000000000000000000000000000000..b4f68dc3458c4ad0ac20a3150eb4b768
 +	if (!complete) OutputDebugStringW(L"XXMI mod-load trace capture incomplete; inspect capture loss counters.\n");
 +	exporting.store(false, std::memory_order_release);
 +	FreeLibraryAndExitThread(args.module, 0);
-+	return 0;
 +}
 +}
 +
@@ -21376,10 +21384,10 @@ index 0000000000000000000000000000000000000000..10c7883dbe5c743ffa7d568f4c4face3
 +int main(int argc,char** argv){assert(argc==2);std::string root=argv[1];assert(CreateDirectoryA((root+"/mod").c_str(),nullptr));assert(CreateDirectoryA((root+"/mod/sub").c_str(),nullptr));assert(CreateDirectoryA((root+"/cwd").c_str(),nullptr));assert(SetCurrentDirectoryA((root+"/cwd").c_str()));Put(root+"/mod/pick.hls","ROOT_MARKER\n");Put(root+"/mod/sub/pick.hls","PARENT_MARKER\n");Put(root+"/cwd/pick.hls","CWD_MARKER\n");std::string sourceName=root+"/mod/main.hls";Probe("top-local","#include \"pick.hls\"\n",sourceName);Probe("top-system","#include <pick.hls>\n",sourceName);Put(root+"/mod/sub/one.hls","#include \"pick.hls\"\n");Probe("nested-local","#include \"sub/one.hls\"\n",sourceName);Put(root+"/mod/sub/one.hls","#include <pick.hls>\n");Probe("nested-system","#include \"sub/one.hls\"\n",sourceName);assert(DeleteFileA((root+"/mod/pick.hls").c_str()));Put(root+"/mod/sub/one.hls","#include \"pick.hls\"\n");Probe("fallback-local","#include \"sub/one.hls\"\n",sourceName);Put(root+"/mod/sub/one.hls","#include <pick.hls>\n");Probe("fallback-system","#include \"sub/one.hls\"\n",sourceName);}
 diff --git a/tests/preparation_shader_cache/windows.cpp b/tests/preparation_shader_cache/windows.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..44e64b7695a3d14bafd51f86e5a687bbe7180f16
+index 0000000000000000000000000000000000000000..04f55b1c3a327add371b2fa86763678a39ded80f
 --- /dev/null
 +++ b/tests/preparation_shader_cache/windows.cpp
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,127 @@
 +#include "ShaderSourceCache.h"
 +#include "SnapshotIO.h"
 +#include <cassert>
@@ -21395,6 +21403,39 @@ index 0000000000000000000000000000000000000000..44e64b7695a3d14bafd51f86e5a687bb
 + HRESULT __stdcall Open(D3D_INCLUDE_TYPE kind,LPCSTR name,LPCVOID parent,LPCVOID* data,UINT* count) override {size_t n=0;const void* p=nullptr;if(!session.Open(kind==D3D_INCLUDE_SYSTEM,name,parent,p,n,error))return E_FAIL;*data=p;*count=UINT(n);return S_OK;}
 + HRESULT __stdcall Close(LPCVOID p) override{return session.Close(p)?S_OK:E_FAIL;}
 +};
++static void DescribeBytecode(const char* label, const std::vector<uint8_t>& bytes)
++{
++	const auto printDigest = [](const uint8_t* data, size_t size) {
++		const char* hex = "0123456789abcdef";
++		for (uint8_t value : HashBytes(data, size))
++			std::cerr << hex[value >> 4] << hex[value & 15];
++	};
++	std::cerr << label << " bytes=" << bytes.size() << " sha256=";
++	printDigest(bytes.data(), bytes.size());
++	std::cerr << '\n';
++	if (bytes.size() < 32 || std::memcmp(bytes.data(), "DXBC", 4))
++		return;
++	const auto word = [&](size_t offset) {
++		uint32_t value = 0;
++		std::memcpy(&value, bytes.data() + offset, sizeof(value));
++		return value;
++	};
++	const uint32_t count = word(28);
++	if (count > 64 || count > (bytes.size() - 32) / 4)
++		return;
++	for (uint32_t i = 0; i < count; ++i) {
++		const size_t offset = word(32 + size_t(i) * 4);
++		if (offset > bytes.size() - 8)
++			return;
++		const size_t size = word(offset + 4);
++		if (size > bytes.size() - offset - 8)
++			return;
++		std::cerr << "  " << std::string(reinterpret_cast<const char*>(bytes.data() + offset), 4)
++			<< " bytes=" << size << " sha256=";
++		printDigest(bytes.data() + offset + 8, size);
++		std::cerr << '\n';
++	}
++}
 +int wmain(int argc,wchar_t** argv){
 + assert(argc==2);std::wstring root=argv[1];assert(CreateDirectoryW((root+L"/mod").c_str(),nullptr));assert(CreateDirectoryW((root+L"/mod/sub").c_str(),nullptr));
 + Put(root+L"/mod/main.hls","#ifdef PIXEL_SHADER\n#include \"sub/one.hls\"\n#else\n#include \"inactive.hls\"\n#endif\nfloat4 main():SV_Target {return VALUE;}\n");Put(root+L"/mod/sub/one.hls","#include <two.hls>\n");Put(root+L"/mod/sub/two.hls","#define VALUE float4(1,0,0,1)\n");
@@ -21412,7 +21453,24 @@ index 0000000000000000000000000000000000000000..44e64b7695a3d14bafd51f86e5a687bb
 + assert(PrepareShader(request,budget,&cache,callbacks,changed,error));assert(!changed.cacheHit&&compileCalls==3&&changed.key!=first.key&&changed.bytecode!=first.bytecode);
 + request.flags=D3DCOMPILE_DEBUG|D3DCOMPILE_SKIP_OPTIMIZATION;assert(PrepareShader(request,budget,&cache,callbacks,flagged,error));assert(!flagged.cacheHit&&compileCalls==4&&flagged.key!=changed.key);
 + // Exercise the actual production adapter, including loaded compiler DLL hash.
-+ ShaderDiskCache production(root+L"/prod");PreparedShaderBytecode p1,p2;assert(PrepareD3DShader(request,budget,&production,p1,error));assert(PrepareD3DShader(request,budget,&production,p2,error));assert(!p1.cacheHit&&p2.cacheHit&&p1.key==p2.key&&p1.bytecode==p2.bytecode&&p1.bytecode==flagged.bytecode);
++ ShaderDiskCache production(root+L"/prod");PreparedShaderBytecode p1,p2;assert(PrepareD3DShader(request,budget,&production,p1,error));assert(PrepareD3DShader(request,budget,&production,p2,error));
++	std::cerr << "production adapter: firstHit=" << p1.cacheHit << " secondHit=" << p2.cacheHit
++		<< " sameKey=" << (p1.key == p2.key) << " sameCachedBytes=" << (p1.bytecode == p2.bytecode)
++		<< " sameDirectBytes=" << (p1.bytecode == flagged.bytecode) << std::endl;
++	if (p1.bytecode != flagged.bytecode) {
++		PreparedShaderBytecode repeatedDebug;
++		assert(PrepareShader(request, budget, nullptr, callbacks, repeatedDebug, error));
++		std::cerr << "direct DEBUG repeat: sameBytes=" << (flagged.bytecode == repeatedDebug.bytecode) << '\n';
++		DescribeBytecode("direct DEBUG", flagged.bytecode);
++		DescribeBytecode("production DEBUG", p1.bytecode);
++		DescribeBytecode("direct DEBUG repeat", repeatedDebug.bytecode);
++		std::cerr.flush();
++	}
++	assert(!p1.cacheHit);
++	assert(p2.cacheHit);
++	assert(p1.key == p2.key);
++	assert(p1.bytecode == p2.bytecode);
++	assert(p1.bytecode == flagged.bytecode);
 + // Qualify -1 against the actual SDK standard handler for both include kinds,
 + // nested parent paths, preferred-root resolution and captured-CWD fallback.
 + wchar_t previous[32768];assert(GetCurrentDirectoryW(32768,previous));assert(SetCurrentDirectoryW(root.c_str()));
