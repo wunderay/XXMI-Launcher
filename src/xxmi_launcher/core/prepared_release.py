@@ -11,6 +11,7 @@ import os
 import shutil
 import tempfile
 import zipfile
+import uuid
 from pathlib import Path
 
 from core.prepared_loading import CAPABILITY_FILE, inspect_capability
@@ -42,19 +43,158 @@ def _open_snapshot(data):
     return win32crypt.CryptUnprotectData(data, None, None, None, 0)[1]
 
 
+def _windows_kernel():
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                  ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    kernel.SetFileInformationByHandle.argtypes = (wintypes.HANDLE, ctypes.c_int,
+                                                 ctypes.c_void_p, wintypes.DWORD)
+    kernel.SetFileInformationByHandle.restype = wintypes.BOOL
+    kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel.CloseHandle.restype = wintypes.BOOL
+    return kernel
+
+
+class _StagedFile:
+    """Own the staged inode until commit, including recovery replacements.
+
+    On Windows the creation handle denies other writers and deletion. Rename
+    that same handle; closing it then renaming a path reopens a substitution
+    window even if a hash was checked immediately before the rename.
+    """
+    def __init__(self, directory, data):
+        _plain_path(directory)
+        self.path, self.stream = None, None
+        self.digest = _digest(data)
+        if os.name == 'nt':
+            import ctypes
+            import msvcrt
+            kernel = _windows_kernel()
+            path = directory / ('.xxmi-' + uuid.uuid4().hex + '.tmp')
+            # GENERIC_READ | GENERIC_WRITE | DELETE, FILE_SHARE_READ,
+            # CREATE_NEW, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT.
+            handle = kernel.CreateFileW(str(path), 0xc0010000, 1, None, 1, 0x200080, None)
+            if handle == ctypes.c_void_p(-1).value:
+                raise ctypes.WinError(ctypes.get_last_error())
+            self.path = path
+            try:
+                fd = msvcrt.open_osfhandle(handle, os.O_RDWR | os.O_BINARY)
+            except BaseException:
+                kernel.CloseHandle(handle)
+                path.unlink(missing_ok=True)
+                raise
+        else:
+            # Portable test support. The launcher and DPAPI lifecycle require
+            # Windows; only Windows supplies the protected handle contract.
+            fd, name = tempfile.mkstemp(prefix='.xxmi-', suffix='.tmp', dir=directory)
+            self.path = Path(name)
+        try:
+            self.stream = os.fdopen(fd, 'w+b')
+            self.stream.write(data)
+            self.stream.flush()
+            os.fsync(self.stream.fileno())
+        except BaseException:
+            self.close()
+            raise
+
+    def replace(self, target):
+        if os.name == 'nt':
+            import ctypes
+            import msvcrt
+            from ctypes import wintypes
+            class RenameInformation(ctypes.Structure):
+                _fields_ = [('ReplaceIfExists', wintypes.BOOL),
+                            ('RootDirectory', wintypes.HANDLE),
+                            ('FileNameLength', wintypes.DWORD),
+                            ('FileName', wintypes.WCHAR * 1)]
+            name = str(target.absolute()).encode('utf-16-le')
+            size = RenameInformation.FileName.offset + len(name)
+            information = ctypes.create_string_buffer(max(size, ctypes.sizeof(RenameInformation)))
+            header = RenameInformation.from_buffer(information)
+            header.ReplaceIfExists = True
+            header.FileNameLength = len(name)
+            ctypes.memmove(ctypes.addressof(information) + RenameInformation.FileName.offset, name, len(name))
+            handle = msvcrt.get_osfhandle(self.stream.fileno())
+            if not _windows_kernel().SetFileInformationByHandle(handle, 3, information, size):
+                raise ctypes.WinError(ctypes.get_last_error())
+        else:
+            # Catch test-fixture mutations without claiming this path provides
+            # the Windows handle guarantee.
+            if self.path.stat().st_ino != os.fstat(self.stream.fileno()).st_ino:
+                raise ValueError('Staged file identity changed')
+            self.stream.seek(0)
+            if _digest(self.stream.read()) != self.digest:
+                raise ValueError('Staged file contents changed')
+            os.replace(self.path, target)
+        self.path = None
+
+    def close(self, *, retain=False):
+        if self.stream is not None:
+            self.stream.close()
+            self.stream = None
+        if self.path is not None and not retain:
+            self.path.unlink(missing_ok=True)
+            self.path = None
+
+
 def _temporary(directory, data):
-    _plain_path(directory)
-    fd, name = tempfile.mkstemp(prefix='.xxmi-', suffix='.tmp', dir=directory)
-    path = Path(name)
+    return _StagedFile(directory, data)
+
+
+def _process_names():
+    """Toolhelp enumerates names without opening protected/elevated processes."""
+    import ctypes
+    from ctypes import wintypes
+    if os.name != 'nt':
+        raise OSError('Process snapshot requires Windows')
+    class ProcessEntry(ctypes.Structure):
+        _fields_ = [('dwSize', wintypes.DWORD), ('cntUsage', wintypes.DWORD),
+                    ('th32ProcessID', wintypes.DWORD), ('th32DefaultHeapID', ctypes.c_size_t),
+                    ('th32ModuleID', wintypes.DWORD), ('cntThreads', wintypes.DWORD),
+                    ('th32ParentProcessID', wintypes.DWORD), ('pcPriClassBase', wintypes.LONG),
+                    ('dwFlags', wintypes.DWORD), ('szExeFile', wintypes.WCHAR * 260)]
+    kernel = _windows_kernel()
+    kernel.CreateToolhelp32Snapshot.argtypes = (wintypes.DWORD, wintypes.DWORD)
+    kernel.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    for operation in (kernel.Process32FirstW, kernel.Process32NextW):
+        operation.argtypes = (wintypes.HANDLE, ctypes.POINTER(ProcessEntry))
+        operation.restype = wintypes.BOOL
+    snapshot = kernel.CreateToolhelp32Snapshot(2, 0)  # TH32CS_SNAPPROCESS
+    if snapshot == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
     try:
-        with os.fdopen(fd, 'wb') as stream:
-            stream.write(data)
-            stream.flush()
-            os.fsync(stream.fileno())
-        return path
-    except BaseException:
-        path.unlink(missing_ok=True)
-        raise
+        entry = ProcessEntry()
+        entry.dwSize = ctypes.sizeof(entry)
+        if not kernel.Process32FirstW(snapshot, ctypes.byref(entry)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        names = []
+        while True:
+            if not entry.szExeFile:
+                raise ValueError('Process snapshot contains an unknown executable name')
+            names.append(entry.szExeFile)
+            if not kernel.Process32NextW(snapshot, ctypes.byref(entry)):
+                error = ctypes.get_last_error()
+                if error != 18:  # ERROR_NO_MORE_FILES is the only successful end.
+                    raise ctypes.WinError(error)
+                return names
+    finally:
+        kernel.CloseHandle(snapshot)
+
+
+def assert_process_idle(names):
+    if not names or any(not name or Path(name).name != name for name in names):
+        raise ValueError('Cannot verify the game is stopped: no valid executable names.')
+    try:
+        processes = _process_names()
+        if not processes or any(not name for name in processes):
+            raise ValueError('Incomplete process snapshot')
+    except Exception as error:
+        raise ValueError('Cannot verify process identity; development library change refused.') from error
+    if {name.casefold() for name in names}.intersection(name.casefold() for name in processes):
+        raise ValueError('Stop the game before changing the selected XXMI libraries.')
 
 
 def _write_json(path, value):
@@ -63,9 +203,9 @@ def _write_json(path, value):
     sealed = _seal_snapshot(json.dumps(value).encode())
     temporary = _temporary(path.parent, json.dumps({'sealed': base64.b64encode(sealed).decode()}).encode())
     try:
-        os.replace(temporary, path)
+        temporary.replace(path)
     finally:
-        temporary.unlink(missing_ok=True)
+        temporary.close()
 
 
 def _read_json(path):
@@ -95,7 +235,7 @@ def _replace_set(importer, contents, assert_idle):
             _plain_path(target)
             recovery[name] = _temporary(importer, target.read_bytes()) if target.exists() else None
             prepared[name] = _temporary(importer, data) if data is not None else None
-        _write_json(journal, {'recovery': {name: str(path) if path else None for name, path in recovery.items()}})
+        _write_json(journal, {'recovery': {name: str(path.path) if path else None for name, path in recovery.items()}})
         assert_idle()
         try:
             for name, temporary in prepared.items():
@@ -104,8 +244,10 @@ def _replace_set(importer, contents, assert_idle):
                 if temporary is None:
                     target.unlink(missing_ok=True)
                 else:
-                    os.replace(temporary, target)
+                    temporary.replace(target)
                 changed.append(name)
+                if temporary is not None:
+                    temporary.close()
         except BaseException as original:
             failures = []
             for name in reversed(changed):
@@ -115,7 +257,8 @@ def _replace_set(importer, contents, assert_idle):
                     if recovery[name] is None:
                         target.unlink(missing_ok=True)
                     else:
-                        os.replace(recovery[name], target)
+                        recovery[name].replace(target)
+                        recovery[name].close()
                 except Exception as error:
                     failures.append((name, str(error)))
             if failures:
@@ -125,12 +268,12 @@ def _replace_set(importer, contents, assert_idle):
     finally:
         for path in prepared.values():
             if path is not None:
-                path.unlink(missing_ok=True)
+                path.close()
+        for path in recovery.values():
+            if path is not None:
+                path.close(retain=retain_recovery)
         if not retain_recovery:
             journal.unlink(missing_ok=True)
-            for path in recovery.values():
-                if path is not None:
-                    path.unlink(missing_ok=True)
 
 
 class DevelopmentRelease:
@@ -174,11 +317,17 @@ class DevelopmentRelease:
             with zipfile.ZipFile(io.BytesIO(data)) as package:
                 names = package.namelist()
                 allowed = {*LIBRARIES, CAPABILITY_FILE, 'Manifest.json'}
-                if len(names) != len(set(names)) or any(name not in allowed for name in names):
+                if len(names) != len(set(names)) or set(names) != allowed:
                     raise ValueError('Development archive must contain only managed package files')
                 if sum(item.file_size for item in package.infolist()) > 256 * 1024 * 1024:
                     raise ValueError('Development archive exceeds 256 MiB')
-                package.extractall(destination)
+                # Capture the members of the authenticated outer archive. A
+                # publisher signature on an individual DLL does not establish
+                # that it belongs to this archive/version.
+                payload = {name: package.read(name) for name in names}
+            hashes = {name: _digest(value) for name, value in payload.items()}
+            for name, value in payload.items():
+                (destination / name).write_bytes(value)
             capability = self.verify(destination, version=version, stage=stage)
             pinned = self.root / digest
             if pinned.exists():
@@ -186,7 +335,9 @@ class DevelopmentRelease:
                 self.verify(pinned, version=version, stage=stage)
             else:
                 shutil.copytree(destination, pinned)
-            hashes = {name: _digest((pinned / name).read_bytes()) for name in (*LIBRARIES, CAPABILITY_FILE, 'Manifest.json')}
+            if ({item.name for item in pinned.iterdir()} != set(payload) or
+                    any((pinned / name).read_bytes() != value for name, value in payload.items())):
+                raise ValueError('Pinned development package differs from authenticated archive')
             _write_json(self.selection_path, dict(archive_sha256=digest, version=version, stage=stage, hashes=hashes, importer=str(importer.resolve())))
         return capability
 
@@ -205,7 +356,8 @@ class DevelopmentRelease:
         path = self.root / digest
         self.verify(path, version=value['version'], stage=value['stage'])
         expected = {*LIBRARIES, CAPABILITY_FILE, 'Manifest.json'}
-        if set(value['hashes']) != expected or any(_digest((path / name).read_bytes()) != value['hashes'][name] for name in expected):
+        if (set(value['hashes']) != expected or {item.name for item in path.iterdir()} != expected or
+                any(_digest((path / name).read_bytes()) != value['hashes'][name] for name in expected)):
             raise ValueError('Pinned development package changed')
         return path
 

@@ -1,11 +1,13 @@
 import hashlib
 import json
+import os
+import sys
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
 
-from core.prepared_release import DevelopmentRelease, LIBRARIES
+from core.prepared_release import DevelopmentRelease, LIBRARIES, _StagedFile, assert_process_idle
 from core.prepared_loading import CAPABILITY_FILE
 from core.utils.security import Security
 
@@ -86,6 +88,44 @@ class DevelopmentReleaseTests(unittest.TestCase):
             self.release.select(archive, signature, version='2.0-test', importer=self.importer)
         self.assertFalse(self.release.selected)
 
+    def test_existing_pin_cannot_mix_individually_signed_files_from_another_archive(self):
+        archive, signature = self.archive()
+        pinned = self.release.root / hashlib.sha256(archive.read_bytes()).hexdigest()
+        pinned.mkdir(parents=True)
+        with zipfile.ZipFile(archive) as package:
+            package.extractall(pinned)
+        alternate = b'another publisher-signed compiler fixture'
+        (pinned / 'd3dcompiler_47.dll').write_bytes(alternate)
+        manifest = json.loads((pinned / 'Manifest.json').read_bytes())
+        manifest['signatures']['d3dcompiler_47.dll'] = self.security.sign(alternate)
+        (pinned / 'Manifest.json').write_text(json.dumps(manifest))
+        # Every member passes individual publisher authentication, but this
+        # compiler/manifest pair is absent from the selected signed archive.
+        self.release.verify(pinned, version='2.0-test', stage='development')
+        with self.assertRaisesRegex(ValueError, 'differs from authenticated archive'):
+            self.release.select(archive, signature, version='2.0-test', importer=self.importer)
+        self.assertFalse(self.release.selected)
+        self.assertEqual((self.importer / 'd3d11.dll').read_bytes(), self.old_dll)
+
+    def test_existing_pin_rejects_extra_files_and_selection_seals_archive_member_hashes(self):
+        archive, signature = self.archive()
+        pinned = self.release.root / hashlib.sha256(archive.read_bytes()).hexdigest()
+        pinned.mkdir(parents=True)
+        with zipfile.ZipFile(archive) as package:
+            package.extractall(pinned)
+            expected = {name: hashlib.sha256(package.read(name)).hexdigest() for name in package.namelist()}
+        extra = pinned / 'unexpected.dll'
+        extra.write_bytes(b'extra fixture')
+        with self.assertRaisesRegex(ValueError, 'differs from authenticated archive'):
+            self.release.select(archive, signature, version='2.0-test', importer=self.importer)
+        self.assertFalse(self.release.selected)
+        extra.unlink()
+        self.release.select(archive, signature, version='2.0-test', importer=self.importer)
+        self.assertEqual(self.release.selection()['hashes'], expected)
+        extra.write_bytes(b'extra fixture after selection')
+        with self.assertRaisesRegex(ValueError, 'Pinned development package changed'):
+            self.release.resolve(self.importer)
+
     def test_publisher_signed_archive_cannot_smuggle_mods_or_paths(self):
         archive, _ = self.archive()
         with zipfile.ZipFile(archive, 'a') as package:
@@ -147,10 +187,9 @@ class DevelopmentReleaseTests(unittest.TestCase):
             value.__dict__.update(values)
             return value
         config = module('core.config_manager', Active=types.SimpleNamespace(
-            Importer=types.SimpleNamespace(importer_path=self.importer, deployed_migoto_signatures={}),
+            Importer=types.SimpleNamespace(importer_path=self.importer, deployed_migoto_signatures={},
+                process_exe_names=['fixture-game.exe', 'fixture-game-alias.exe'], game_exe_names=['fixture-game.exe']),
             Migoto=PreparedLoadingSettings()))
-        process = MagicMock()
-        process.return_value.is_running.return_value = False
         stubs = {
             'core.error_manager': module('core.error_manager'),
             'core.path_manager': module('core.path_manager'),
@@ -162,13 +201,14 @@ class DevelopmentReleaseTests(unittest.TestCase):
             'core.config.enums': module('core.config.enums',
                 InputDisableMode=types.SimpleNamespace(MODS=0), LogLevel=types.SimpleNamespace(DISABLED=0)),
             'core.utils.dll_injector': module('core.utils.dll_injector', DllInjector=MagicMock()),
-            'core.utils.process_manager': module('core.utils.process_manager', LaunchContext=object, ProcessManager=process),
+            'core.utils.process_manager': module('core.utils.process_manager', LaunchContext=object),
         }
         name = '_migoto_lifecycle_fixture'
         source = Path(__file__).parents[1] / 'src/xxmi_launcher/core/packages/migoto_package.py'
         spec = importlib.util.spec_from_file_location(name, source)
         loaded = importlib.util.module_from_spec(spec)
-        with patch.dict(sys.modules, {**stubs, name: loaded}):
+        with patch.dict(sys.modules, {**stubs, name: loaded}), \
+                patch('core.prepared_release._process_names', return_value=['unrelated.exe']) as processes:
             spec.loader.exec_module(loaded)
             package = loaded.MigotoPackage()
             package.package_path.mkdir(parents=True)
@@ -192,16 +232,21 @@ class DevelopmentReleaseTests(unittest.TestCase):
             nvapi = self.importer / 'nvapi64.dll'
             nvapi.write_bytes(b'prior nvapi retained')
             package.validate_deployed_files = MagicMock()
-            package.run_pre_launch(object())
+            context = types.SimpleNamespace(process_name='fixture-game.exe')
+            package.run_pre_launch(context)
             self.assertEqual((self.importer / 'd3d11.dll').read_bytes(), b'new signed fixture d3d11.dll')
             self.assertEqual(nvapi.read_bytes(), b'prior nvapi retained')
             package.validate_deployed_files.assert_called_once()
-            process.return_value.is_running.return_value = True
+            processes.return_value = ['fixture-game.exe']
             with self.assertRaisesRegex(ValueError, 'Stop the game'):
-                package.rollback_development_package(object())
+                package.rollback_development_package(context)
             self.assertTrue(package.development_release.selected)
-            process.return_value.is_running.return_value = False
-            package.rollback_development_package(object())
+            processes.return_value = ['fixture-game-alias.exe']
+            with self.assertRaisesRegex(ValueError, 'Stop the game'):
+                package.rollback_development_package(context)
+            self.assertTrue(package.development_release.selected)
+            processes.return_value = ['unrelated.exe']
+            package.rollback_development_package(context)
             self.assertFalse(package.development_release.selected)
             self.assertEqual(package.package_path, package.upstream_package_path)
             self.assertEqual((self.importer / 'd3d11.dll').read_bytes(), self.old_dll)
@@ -210,25 +255,47 @@ class DevelopmentReleaseTests(unittest.TestCase):
 
     def test_failed_second_replacement_recovers_complete_pre_attempt_state(self):
         from unittest.mock import patch
-        import os
         self.release.snapshot(self.importer, self.prior)
         for name in ('d3d11.dll', 'd3dcompiler_47.dll', 'd3dx.ini'):
             (self.importer / name).write_bytes(b'current development ' + name.encode())
         before = {name: (self.importer / name).read_bytes() for name in ('d3d11.dll', 'd3dcompiler_47.dll', 'd3dx.ini')}
-        replace = os.replace
+        replace = _StagedFile.replace
         failed = []
         def sharing_violation(source, target):
             if Path(target).name == 'd3dcompiler_47.dll' and not failed:
                 failed.append(True)
                 raise PermissionError('injected second-file sharing violation')
             return replace(source, target)
-        with patch('core.prepared_release.os.replace', sharing_violation):
+        with patch.object(_StagedFile, 'replace', sharing_violation):
             with self.assertRaisesRegex(PermissionError, 'sharing violation'):
                 self.release.rollback(self.importer, assert_idle=lambda: None)
         self.assertEqual(before, {name: (self.importer / name).read_bytes() for name in before})
         self.assertFalse(list(self.importer.glob('.xxmi-*.tmp')))
         self.assertFalse((self.importer / '.xxmi-recovery-required.json').exists())
         self.assertEqual(self.mod.read_bytes(), b'untouched mod')
+
+    def test_blocked_recovery_retains_authenticated_journal_and_original_bytes(self):
+        from unittest.mock import patch
+        from core.prepared_release import _read_json, _replace_set
+        contents = {name: b'candidate ' + name.encode() for name in LIBRARIES[:2]}
+        before = {name: (self.importer / name).read_bytes() for name in contents}
+        replace = _StagedFile.replace
+        changes = []
+        def blocked(source, target):
+            changes.append(Path(target).name)
+            if Path(target).name in contents and len(changes) > 2:
+                raise PermissionError('injected commit/recovery sharing violation')
+            return replace(source, target)
+        # The first replacement writes the recovery journal, then d3d11 commits.
+        with patch.object(_StagedFile, 'replace', blocked):
+            with self.assertRaisesRegex(RuntimeError, 'recovery blocked'):
+                _replace_set(self.importer, contents, lambda: None)
+        journal = self.importer / '.xxmi-recovery-required.json'
+        recovery = _read_json(journal)['recovery']
+        self.assertEqual(before, {name: Path(path).read_bytes() for name, path in recovery.items()})
+        self.assertEqual(set(self.importer.glob('.xxmi-*.tmp')), {Path(path) for path in recovery.values()})
+        with self.assertRaisesRegex(ValueError, 'requires recovery'):
+            _replace_set(self.importer, contents, lambda: None)
 
     def test_fixed_temp_symlink_is_never_followed_and_managed_symlink_is_rejected(self):
         self.release.snapshot(self.importer, self.prior)
@@ -237,6 +304,7 @@ class DevelopmentReleaseTests(unittest.TestCase):
         self.release.rollback(self.importer, assert_idle=lambda: None)
         self.assertTrue(fixed.is_symlink())
         self.assertEqual(self.mod.read_bytes(), b'untouched mod')
+
         (self.importer / 'd3d11.dll').unlink()
         (self.importer / 'd3d11.dll').symlink_to(self.mod)
         with self.assertRaisesRegex(ValueError, 'symlink'):
@@ -271,3 +339,107 @@ class DevelopmentReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'symlink'):
             self.release.deploy(self.importer, assert_idle=lambda: None)
         self.assertEqual(self.mod.read_bytes(), b'untouched mod')
+
+
+class ProcessIdleTests(unittest.TestCase):
+    def test_access_denied_and_incomplete_snapshots_fail_closed(self):
+        from unittest.mock import patch
+        for error in (PermissionError('AccessDenied'), OSError('snapshot failed')):
+            with self.subTest(error=error), patch('core.prepared_release._process_names', side_effect=error):
+                with self.assertRaisesRegex(ValueError, 'Cannot verify process identity'):
+                    assert_process_idle({'game.exe'})
+        for processes in ([], [''], ['unrelated.exe', None]):
+            with self.subTest(processes=processes), \
+                    patch('core.prepared_release._process_names', return_value=processes):
+                with self.assertRaisesRegex(ValueError, 'Cannot verify process identity'):
+                    assert_process_idle({'game.exe'})
+
+    def test_complete_snapshot_checks_names_case_insensitively(self):
+        from unittest.mock import patch
+        with patch('core.prepared_release._process_names', return_value=['unrelated.exe', 'GAME.EXE']):
+            with self.assertRaisesRegex(ValueError, 'Stop the game'):
+                assert_process_idle({'game.exe'})
+        with patch('core.prepared_release._process_names', return_value=['unrelated.exe']):
+            assert_process_idle({'game.exe'})
+
+    def test_missing_or_invalid_configured_names_fail_closed(self):
+        for names in (set(), {''}, {None}, {'folder/game.exe'}):
+            with self.subTest(names=names), self.assertRaisesRegex(ValueError, 'valid executable names'):
+                assert_process_idle(names)
+
+
+@unittest.skipUnless(os.name == 'nt', 'requires actual Windows DPAPI and protected file handles')
+class WindowsLifecycleTests(unittest.TestCase):
+    def test_real_dpapi_metadata_round_trip_and_tampering(self):
+        import base64
+        from core.prepared_release import _read_json, _write_json
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'metadata.json'
+            value = {'d3d11.dll': {'sha256': 'fixture'}, 'd3dx.ini': None}
+            _write_json(path, value)
+            self.assertEqual(_read_json(path), value)
+            wrapped = json.loads(path.read_bytes())
+            sealed = bytearray(base64.b64decode(wrapped['sealed']))
+            sealed[-1] ^= 1
+            path.write_text(json.dumps({'sealed': base64.b64encode(sealed).decode()}))
+            with self.assertRaisesRegex(ValueError, 'authentication failed'):
+                _read_json(path)
+
+    def test_real_protected_staging_blocks_write_delete_and_path_substitution(self):
+        from core.prepared_release import _replace_set
+        with tempfile.TemporaryDirectory() as directory:
+            importer = Path(directory)
+            contents = {name: b'verified fixture ' + name.encode() for name in LIBRARIES[:2]}
+            for name in contents:
+                (importer / name).write_bytes(b'prior fixture')
+            attempted = []
+            def attack_before_commit():
+                for temporary in importer.glob('.xxmi-*.tmp'):
+                    attempted.append(temporary)
+                    with self.assertRaises(PermissionError):
+                        temporary.write_bytes(b'unsigned overwrite')
+                    with self.assertRaises(PermissionError):
+                        temporary.unlink()
+                    substitute = importer / 'attacker.tmp'
+                    substitute.write_bytes(b'unsigned replacement')
+                    with self.assertRaises(PermissionError):
+                        os.replace(substitute, temporary)
+                    substitute.unlink()
+            _replace_set(importer, contents, attack_before_commit)
+            self.assertEqual(len(attempted), 4)  # Both payloads and both recovery files.
+            self.assertEqual(contents, {name: (importer / name).read_bytes() for name in contents})
+            self.assertFalse(list(importer.glob('.xxmi-*.tmp')))
+            self.assertFalse((importer / '.xxmi-recovery-required.json').exists())
+
+    def test_real_toolhelp_snapshot_finds_current_process_without_process_access(self):
+        from core.prepared_release import _process_names
+        names = _process_names()
+        self.assertIn(Path(sys.executable).name.casefold(), {name.casefold() for name in names})
+        with self.assertRaisesRegex(ValueError, 'Stop the game'):
+            assert_process_idle({Path(sys.executable).name})
+        assert_process_idle({'xxmi-absent-' + os.urandom(16).hex() + '.exe'})
+
+    def test_toolhelp_unknown_name_and_partial_enumeration_fail_closed(self):
+        import ctypes
+        from unittest.mock import MagicMock, patch
+        for failure in ('create', 'first', 'next', 'unknown'):
+            with self.subTest(failure=failure):
+                kernel = MagicMock()
+                kernel.CreateToolhelp32Snapshot.return_value = (
+                    ctypes.c_void_p(-1).value if failure == 'create' else 123)
+                def first(snapshot, pointer):
+                    if failure == 'first':
+                        ctypes.set_last_error(5)
+                        return False
+                    pointer._obj.szExeFile = '' if failure == 'unknown' else 'unrelated.exe'
+                    return True
+                kernel.Process32FirstW.side_effect = first
+                def next_process(snapshot, pointer):
+                    ctypes.set_last_error(5)
+                    return False
+                kernel.Process32NextW.side_effect = next_process
+                with patch('core.prepared_release._windows_kernel', return_value=kernel):
+                    with self.assertRaisesRegex(ValueError, 'Cannot verify process identity'):
+                        assert_process_idle({'game.exe'})
+                if failure != 'create':
+                    kernel.CloseHandle.assert_called_once_with(123)

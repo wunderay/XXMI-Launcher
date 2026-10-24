@@ -1,7 +1,7 @@
 {
-  "purpose": "Work in progress: account usage limit interrupted fixes and review; not release-qualified",
-  "native_parent": "79a8fa99db5df1532078978c8326fc8ef9b834ac",
-  "native_tree": "4f29d07d63d021bceb54113bfc444b1f074ac538",
+  "purpose": "Reviewed source candidate; Windows fixtures and real-game release qualification remain required",
+  "native_parent": "361da74afee5e56027ad5202a773cb63ac918191",
+  "native_tree": "6003544d0a08d1679aad54292ded2b9d36bc6591",
   "native_base": "a7847eae82aaac32175c9a7d199673d5c9323bcd",
-  "patch_sha256": "a91e766070623d7161fe3b757126f6927cf01394061d4a17657ed6417b494ef7"
+  "patch_sha256": "56fb1c38d680d6ff243ef9c37c4ef17661a1a6630fba25d980b885aa72855869"
 }

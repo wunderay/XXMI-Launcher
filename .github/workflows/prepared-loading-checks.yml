@@ -5,7 +5,9 @@ on:
     paths:
       - 'tools/PreparedLoading/**'
       - 'src/xxmi_launcher/core/prepared_loading.py'
-      - 'tests/test_prepared_loading.py'
+      - 'src/xxmi_launcher/core/prepared_release.py'
+      - 'src/xxmi_launcher/core/packages/migoto_package.py'
+      - 'tests/test_prepared*.py'
       - '.github/workflows/prepared-loading-checks.yml'
   workflow_dispatch:
 permissions:
@@ -14,6 +16,29 @@ concurrency:
   group: prepared-loading-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  launcher-windows:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install isolated fixture dependencies
+        shell: pwsh
+        run: python -m pip install cryptography psutil pywin32
+      - name: Test authenticated package lifecycle and qualification gates
+        shell: pwsh
+        run: |
+          $fixtureTemp = Join-Path $env:GITHUB_WORKSPACE 'work\launcher-fixtures'
+          New-Item -ItemType Directory -Force $fixtureTemp | Out-Null
+          $env:TEMP = $fixtureTemp
+          $env:TMP = $fixtureTemp
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'src\xxmi_launcher'
+          python -m unittest discover -s tests -p 'test_prepared*.py' -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   native-windows:
     runs-on: windows-2022
     timeout-minutes: 35
@@ -48,6 +73,10 @@ jobs:
       - name: Build isolated DLL and run synthetic fixtures
         shell: pwsh
         run: |
+          $fixtureTemp = Join-Path $env:GITHUB_WORKSPACE 'work\native-fixtures'
+          New-Item -ItemType Directory -Force $fixtureTemp | Out-Null
+          $env:TEMP = $fixtureTemp
+          $env:TMP = $fixtureTemp
           & ./launcher/tools/PreparedLoading/build-native.ps1 -NativeSource ./native -OutputDirectory ./work/prepared-build
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Preserve source patch

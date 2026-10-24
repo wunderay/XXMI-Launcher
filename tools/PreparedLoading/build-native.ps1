@@ -13,7 +13,7 @@ $mod = Join-Path $native 'DirectX11\ModLoading'
 $script:TestFailures = @()
 
 function Run-NativeTest {
-    param([string]$Name, [string[]]$Sources, [string[]]$Libraries = @(), [string]$PythonRunner = '', [string]$Standard = 'c++14', [switch]$CompileOnly)
+    param([string]$Name, [string[]]$Sources, [string[]]$Libraries = @(), [string]$PythonRunner = '', [string]$Standard = 'c++14', [string[]]$Definitions = @(), [switch]$CompileOnly, [switch]$SharedLibrary)
     $dir = Join-Path $tests $Name
     New-Item -ItemType Directory -Force $dir | Out-Null
     Push-Location $dir
@@ -23,11 +23,17 @@ function Run-NativeTest {
             '/DNOMINMAX', '/DWIN32_LEAN_AND_MEAN', "/I$mod",
             "/I$(Join-Path $native 'DirectXTK\Inc')")
         $arguments += $Sources | ForEach-Object { Join-Path $native $_ }
-        $arguments += "/Fe:$Name.exe"
+        $arguments += $Definitions | ForEach-Object { "/D$_" }
+        if ($SharedLibrary) {
+            $arguments += '/LD'
+            $arguments += "/Fe:$Name.dll"
+        } else {
+            $arguments += "/Fe:$Name.exe"
+        }
         if ($Libraries.Count) { $arguments += '/link'; $arguments += $Libraries }
         & cl @arguments 2>&1 | Tee-Object -FilePath build.log
         if ($LASTEXITCODE -ne 0) { throw "$Name compilation failed ($LASTEXITCODE)" }
-        if ($CompileOnly) { return }
+        if ($CompileOnly -or $SharedLibrary) { return }
         if ($PythonRunner) {
             & python (Join-Path $native $PythonRunner) (Join-Path $dir "$Name.exe") 2>&1 | Tee-Object -FilePath run.log
         } else {
@@ -85,6 +91,29 @@ Run-NativeTest -Name 'working_set' -Sources @(
     'tests\preparation_working_set\working_set_test.cpp',
     'DirectX11\ModLoading\WorkingSetPolicy.cpp'
 )
+Run-NativeTest -Name 'load_trace' -Sources @(
+    'tests\mod_loading\load_trace_test.cpp',
+    'DirectX11\ModLoading\LoadTrace.cpp'
+)
+Run-NativeTest -Name 'load_trace_streaming' -Sources @(
+    'tests\mod_loading\load_trace_streaming_test.cpp',
+    'DirectX11\ModLoading\LoadTrace.cpp',
+    'DirectX11\ModLoading\TraceControl.cpp'
+)
+Run-NativeTest -Name 'trace_worker' -Sources @(
+    'tests\mod_loading\load_trace_streaming_windows_fixture.cpp',
+    'DirectX11\ModLoading\LoadTrace.cpp',
+    'DirectX11\ModLoading\TraceControl.cpp'
+) -Definitions @('LOAD_TRACE_FIXTURE_DLL') -SharedLibrary
+Run-NativeTest -Name 'trace_host' -Sources @(
+    'tests\mod_loading\load_trace_streaming_windows_fixture.cpp'
+) -CompileOnly
+$traceDll = Join-Path $tests 'trace_worker\trace_worker.dll'
+$traceHost = Join-Path $tests 'trace_host\trace_host.exe'
+if ((Test-Path -LiteralPath $traceDll) -and (Test-Path -LiteralPath $traceHost)) {
+    & $traceHost $traceDll 2>&1 | Tee-Object -FilePath (Join-Path $out 'trace-integration.log')
+    if ($LASTEXITCODE -ne 0) { $script:TestFailures += 'Native streaming trace DLL fixture failed.' }
+}
 Run-NativeTest -Name 'standard_include_probe' -Sources @('tests\preparation_shader_cache\standard_probe.cpp') `
     -Libraries @('d3dcompiler.lib') -PythonRunner 'tests\preparation_shader_cache\run_windows_fixture.py'
 Run-NativeTest -Name 'shader_identity' -Sources @(
@@ -164,6 +193,10 @@ if ($script:TestFailures.Count) {
 
 $dll = Join-Path $bin 'd3d11.dll'
 if (!(Test-Path -LiteralPath $dll -PathType Leaf)) { throw 'Expected d3d11.dll missing.' }
+$exports = & dumpbin /nologo /exports $dll
+if ($LASTEXITCODE -ne 0) { throw 'Production DLL export inspection failed.' }
+$exports | Set-Content -LiteralPath (Join-Path $out 'production-exports.txt')
+if ($exports -match 'XXMI_Test') { throw 'Test-only exports were found in the production DLL.' }
 $digest = (Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash.ToLowerInvariant()
 $capabilities = [ordered]@{
     schema_version = 1
@@ -191,6 +224,12 @@ $provenance = [ordered]@{
     qualification = 'Synthetic Windows tests only; real game compatibility and performance unqualified.'
     capability_signature = 'not signed; launcher capability gate remains closed'
 }
+$candidate = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'native-candidate.json') -Raw | ConvertFrom-Json
+if ($candidate.patch_sha256 -ne $provenance.patch_sha256 -or $candidate.native_base -ne $provenance.native_base) {
+    throw 'Native candidate identity does not match the source patch.'
+}
+$provenance.native_source = $candidate.native_parent
+$provenance.native_tree = $candidate.native_tree
 [IO.File]::WriteAllText((Join-Path $out 'BUILD-INFO.json'),
     ($provenance | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
 & python (Join-Path $PSScriptRoot 'package-development.py') --native $native --build $out

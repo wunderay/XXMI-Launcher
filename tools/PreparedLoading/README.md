@@ -1,14 +1,20 @@
 # Prepared loading development build
 
-This package is experimental. Phase 0 measurements were waived. Synthetic
-Windows fixtures do not establish game compatibility, visual correctness or
-first-frame performance. See `native/docs/mod-loading/prepared-loading.md`
-inside `corresponding-source.zip` for implemented paths and limitations.
+This package is experimental. The user waived the initial Phase 0 prerequisite
+and later supplied a reported collector baseline; its raw local files have not
+been transferred here. Synthetic Windows fixtures do not establish game
+compatibility, visual correctness or first-frame performance. See
+`native/docs/mod-loading/prepared-loading.md` inside `corresponding-source.zip`
+for implemented paths and limitations, and `COMPLETION-STATUS.md` for remaining
+qualification gates.
 
 `BUILD-INFO.json` identifies the pinned upstream base, exact source patch, DLL,
 compiler and Windows SDK. `corresponding-source.zip` contains the native source
 used by this build, including its third-party notices. The source patch is also
 included separately. `SHA256SUMS` is published alongside the development zip.
+The build record also binds the candidate native commit and tree. Test-only
+parser/runtime exports are built in a separate fixture DLL and checked absent
+from the packaged production DLL.
 
 The build script disables deployment events. This archive has no installer and
 does not modify a game, an active DLL or launcher trust settings. Its capability

@@ -1,7 +1,6 @@
 import logging
 import subprocess
 import json
-import psutil
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,10 +15,10 @@ from core.locale_manager import L
 from core.package_manager import Package, PackageMetadata
 from core.config.enums import InputDisableMode, LogLevel
 from core.prepared_loading import PreparedLoadingSettings, PreparationCapability, inspect_capability, CAPABILITY_FILE
+from core.prepared_release import DevelopmentRelease, assert_process_idle
 
 from core.utils.dll_injector import DllInjector
-from core.utils.process_manager import LaunchContext, ProcessManager
-from core.prepared_release import DevelopmentRelease
+from core.utils.process_manager import LaunchContext
 
 log = logging.getLogger(__name__)
 
@@ -93,19 +92,10 @@ class MigotoPackage(Package):
 
     @staticmethod
     def _assert_process_idle(launch_context: LaunchContext | None = None):
+        names = set(Config.Active.Importer.process_exe_names or Config.Active.Importer.game_exe_names or ())
         if launch_context is not None:
-            if ProcessManager(launch_context).is_running():
-                raise ValueError('Stop the game before changing the selected XXMI libraries.')
-            return
-        names = set(Config.Active.Importer.process_exe_names or Config.Active.Importer.game_exe_names)
-        if not names:
-            raise ValueError('Cannot verify the game is stopped: no configured executable names.')
-        names = {name.casefold() for name in names}
-        for process in psutil.process_iter(['name']):
-            if not process.info.get('name'):
-                raise ValueError('Cannot verify process identity; development rollback refused.')
-            if process.info['name'].casefold() in names:
-                raise ValueError('Stop the game before changing the selected XXMI libraries.')
+            names.add(launch_context.process_name)
+        assert_process_idle(names)
 
     def rollback_development_package(self, launch_context: LaunchContext | None = None):
         if not self.development_release.selected:
