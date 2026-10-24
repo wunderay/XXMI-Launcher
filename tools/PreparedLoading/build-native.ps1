@@ -41,8 +41,10 @@ function Run-NativeTest {
 
 Run-NativeTest -Name 'cpu' -Sources @(
     'tests\preparation_cpu\main.cpp',
+    'tests\preparation_cpu\disk.cpp',
     'DirectX11\ModLoading\SnapshotIO.cpp',
     'DirectX11\ModLoading\CpuAssetCache.cpp',
+    'DirectX11\ModLoading\DiskAssetCache.cpp',
     'DirectX11\ModLoading\AssetCatalog.cpp',
     'DirectX11\ModLoading\PreparationScheduler.cpp'
 ) -Libraries @('ole32.lib', 'windowscodecs.lib')

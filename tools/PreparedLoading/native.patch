@@ -1,5 +1,5 @@
 diff --git a/DirectX11/CommandList.cpp b/DirectX11/CommandList.cpp
-index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..b2f5c137fdaaf159030e2bb6dc0cd6eb38151f1f 100644
+index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..91473de84deb7bf00439e972b84430ea64681f88 100644
 --- a/DirectX11/CommandList.cpp
 +++ b/DirectX11/CommandList.cpp
 @@ -14,6 +14,8 @@
@@ -262,7 +262,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..b2f5c137fdaaf159030e2bb6dc0cd6eb
  
  		// Parse the remainder as a resource pool (e.g. `PoolFoo`).
  		ret = ParseTargetPool(target, length, ini_namespace, scope, is_source);
-@@ -8859,6 +8970,28 @@ static CommandListCommand* parse_resource_copy_operation(
+@@ -8859,6 +8970,30 @@ static CommandListCommand* parse_resource_copy_operation(
  			options |= ResourceCopyOptions::COPY;
  	}
  
@@ -271,7 +271,9 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..b2f5c137fdaaf159030e2bb6dc0cd6eb
 +	// compatibility paths even if their source filename happens to match.
 +	if (src.type == ResourceCopyTargetType::CUSTOM_RESOURCE &&
 +		(options & ResourceCopyOptions::REFERENCE) &&
-+		!(options & (ResourceCopyOptions::COPY_MASK | ResourceCopyOptions::UNKNOWN | ResourceCopyOptions::NO_VIEW_CACHE)) &&
++		!(options & ResourceCopyOptions::COPY_MASK) &&
++		!(options & ResourceCopyOptions::UNKNOWN) &&
++		!(options & ResourceCopyOptions::NO_VIEW_CACHE) &&
 +		src.evaluation_mode == ResourceCopyTargetEvaluationMode::RESOURCE &&
 +		dst.evaluation_mode == ResourceCopyTargetEvaluationMode::RESOURCE &&
 +		(dst.type == ResourceCopyTargetType::SHADER_RESOURCE ||
@@ -291,7 +293,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..b2f5c137fdaaf159030e2bb6dc0cd6eb
  	// FIXME: If custom resources are copied to other custom resources by
  	// reference that are in turn bound to the pipeline we may not
  	// propagate all the bind flags correctly depending on the order
-@@ -10178,6 +10311,7 @@ void ResourceCopyTarget::SetResource(
+@@ -10178,6 +10313,7 @@ void ResourceCopyTarget::SetResource(
  		if (custom_resource->resource != res) {
  			if (custom_resource->resource)
  				custom_resource->resource->Release();
@@ -299,7 +301,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..b2f5c137fdaaf159030e2bb6dc0cd6eb
  			custom_resource->resource = res;
  			custom_resource->device = state->mOrigDevice1;
  			if (custom_resource->resource)
-@@ -11892,6 +12026,17 @@ static D3D11_UNORDERED_ACCESS_VIEW_DESC* FillOutTex3DDesc(
+@@ -11892,6 +12028,17 @@ static D3D11_UNORDERED_ACCESS_VIEW_DESC* FillOutTex3DDesc(
  #pragma endregion FillOutDesc
  
  
@@ -317,7 +319,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..b2f5c137fdaaf159030e2bb6dc0cd6eb
  template <typename ViewType,
  	 typename DescType,
  	 HRESULT (__stdcall ID3D11Device::*CreateView)(THIS_
-@@ -11966,7 +12111,19 @@ static ID3D11View* _CreateCompatibleView(
+@@ -11966,7 +12113,19 @@ static ID3D11View* _CreateCompatibleView(
  			break;
  	}
  
@@ -1567,6 +1569,161 @@ index 0000000000000000000000000000000000000000..30b238d48f9827a993b45ed0ca1c02e9
 +    std::map<DeviceResourceKey, Entry> entries_;
 +    DeviceEpoch epoch_ = 0;
 +    uint64_t maximum_, bytes_ = 0, clock_ = 0;
++};
++}
+diff --git a/DirectX11/ModLoading/DiskAssetCache.cpp b/DirectX11/ModLoading/DiskAssetCache.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..9b715d689a08abc3b28b03976ba3766070f941bf
+--- /dev/null
++++ b/DirectX11/ModLoading/DiskAssetCache.cpp
+@@ -0,0 +1,125 @@
++#include "DiskAssetCache.h"
++#include "SnapshotIO.h"
++#include <algorithm>
++#include <array>
++#include <cstring>
++#include <cerrno>
++#include <limits>
++#ifdef _WIN32
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#include <Windows.h>
++#else
++#include <codecvt>
++#include <locale>
++#include <dirent.h>
++#include <fcntl.h>
++#include <sys/stat.h>
++#include <sys/file.h>
++#include <unistd.h>
++#endif
++namespace ModLoading {
++namespace {
++constexpr size_t HeaderSize=144;
++void Put(uint8_t* p,uint64_t n,size_t count){for(size_t i=0;i<count;++i)p[i]=uint8_t(n>>(8*i));}
++uint64_t Get(const uint8_t* p,size_t count){uint64_t n=0;for(size_t i=0;i<count;++i)n|=uint64_t(p[i])<<(8*i);return n;}
++bool Layout(uint64_t width,uint64_t height,uint64_t pitch,uint64_t format,uint64_t size){return width&&height&&width<=16384&&height<=16384&&pitch==width*4&&size==pitch*height&&(format==28||format==87||format==88);}
++bool OwnedName(const std::wstring& name,bool& temporary){temporary=false;if(name.size()!=69&&name.size()!=73)return false;for(size_t i=0;i<64;++i)if(!((name[i]>=L'0'&&name[i]<=L'9')||(name[i]>=L'a'&&name[i]<=L'f')))return false;if(name.substr(64,5)!=L".xxpc")return false;temporary=name.size()==73;return !temporary||name.substr(69)==L".tmp";}
++#ifdef _WIN32
++const wchar_t Separator=L'\\';
++struct File {
++ HANDLE handle=INVALID_HANDLE_VALUE;
++ ~File(){Close();}
++ void Close(){if(handle!=INVALID_HANDLE_VALUE){CloseHandle(handle);handle=INVALID_HANDLE_VALUE;}}
++ bool Open(const std::wstring& path,bool write){handle=CreateFileW(path.c_str(),write?GENERIC_WRITE:GENERIC_READ,write?0:FILE_SHARE_READ|FILE_SHARE_DELETE,nullptr,write?CREATE_NEW:OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_OPEN_REPARSE_POINT,nullptr);if(handle==INVALID_HANDLE_VALUE)return false;BY_HANDLE_FILE_INFORMATION s{};if(!GetFileInformationByHandle(handle,&s)||(s.dwFileAttributes&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))||s.nNumberOfLinks!=1){Close();return false;}return true;}
++ bool Size(uint64_t& size){LARGE_INTEGER n{};if(!GetFileSizeEx(handle,&n)||n.QuadPart<0)return false;size=uint64_t(n.QuadPart);return true;}
++ bool Transfer(uint8_t* p,size_t size,bool write){while(size){DWORD n=0;DWORD step=DWORD((std::min)(size,size_t(65536)));BOOL ok=write?WriteFile(handle,p,step,&n,nullptr):ReadFile(handle,p,step,&n,nullptr);if(!ok||!n)return false;p+=n;size-=n;}return true;}
++ bool Flush(){return FlushFileBuffers(handle)!=FALSE;}
++};
++bool Remove(const std::wstring& path){return DeleteFileW(path.c_str())!=FALSE;}
++bool Rename(const std::wstring& from,const std::wstring& to){return MoveFileExW(from.c_str(),to.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)!=FALSE;}
++void Touch(const std::wstring& path){HANDLE h=CreateFileW(path.c_str(),FILE_WRITE_ATTRIBUTES,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,FILE_FLAG_OPEN_REPARSE_POINT,nullptr);if(h!=INVALID_HANDLE_VALUE){FILETIME now{};GetSystemTimeAsFileTime(&now);SetFileTime(h,nullptr,nullptr,&now);CloseHandle(h);}}
++#else
++const wchar_t Separator=L'/';
++std::string Native(const std::wstring& path){return std::wstring_convert<std::codecvt_utf8<wchar_t>>().to_bytes(path);}
++struct File {
++ int handle=-1;~File(){Close();}void Close(){if(handle>=0){close(handle);handle=-1;}}
++ bool Open(const std::wstring& path,bool write){handle=open(Native(path).c_str(),(write?O_WRONLY|O_CREAT|O_EXCL:O_RDONLY)|O_NOFOLLOW,0600);if(handle<0)return false;struct stat s{};if(fstat(handle,&s)||!S_ISREG(s.st_mode)||s.st_nlink!=1){Close();return false;}return true;}
++ bool Size(uint64_t& size){struct stat s{};if(fstat(handle,&s)||s.st_size<0)return false;size=uint64_t(s.st_size);return true;}
++ bool Transfer(uint8_t* p,size_t size,bool write){while(size){ssize_t n=write?::write(handle,p,(std::min)(size,size_t(65536))) : ::read(handle,p,(std::min)(size,size_t(65536)));if(n<=0)return false;p+=n;size-=size_t(n);}return true;}
++ bool Flush(){return fsync(handle)==0;}
++};
++bool Remove(const std::wstring& path){return unlink(Native(path).c_str())==0;}
++bool Rename(const std::wstring& from,const std::wstring& to){return rename(Native(from).c_str(),Native(to).c_str())==0;}
++void Touch(const std::wstring& path){utimensat(AT_FDCWD,Native(path).c_str(),nullptr,AT_SYMLINK_NOFOLLOW);}
++#endif
++struct DirectoryLock {
++#ifdef _WIN32
++ HANDLE handle=INVALID_HANDLE_VALUE;
++ explicit DirectoryLock(const std::wstring& path){handle=CreateFileW(path.c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_ALWAYS,FILE_FLAG_OPEN_REPARSE_POINT,nullptr);if(handle!=INVALID_HANDLE_VALUE){BY_HANDLE_FILE_INFORMATION s{};if(!GetFileInformationByHandle(handle,&s)||(s.dwFileAttributes&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))||s.nNumberOfLinks!=1){CloseHandle(handle);handle=INVALID_HANDLE_VALUE;}}}
++ ~DirectoryLock(){if(handle!=INVALID_HANDLE_VALUE)CloseHandle(handle);}
++ bool Valid()const{return handle!=INVALID_HANDLE_VALUE;}
++#else
++ int handle=-1;
++ explicit DirectoryLock(const std::wstring& path){handle=open(Native(path).c_str(),O_RDWR|O_CREAT|O_NOFOLLOW,0600);if(handle>=0){struct stat s{};if(fstat(handle,&s)||!S_ISREG(s.st_mode)||s.st_nlink!=1||flock(handle,LOCK_EX|LOCK_NB)){close(handle);handle=-1;}}}
++ ~DirectoryLock(){if(handle>=0)close(handle);}
++ bool Valid()const{return handle>=0;}
++#endif
++};
++struct Entry {std::wstring name;uint64_t bytes=0,touched=0;bool temporary=false;};
++}
++DiskAssetCache::DiskAssetCache(std::wstring directory,size_t budgetBytes,size_t maximumEntries):directory_(std::move(directory)),budget_(budgetBytes),maximum_(maximumEntries){}
++std::wstring DiskAssetCache::EntryName(const SourceDigest& digest){
++ std::array<uint8_t,44> key{};std::copy(digest.begin(),digest.end(),key.begin());Put(key.data()+32,1,4);Put(key.data()+36,1,4);Put(key.data()+40,1,4);auto hash=HashBytes(key.data(),key.size());std::wstring name;const wchar_t* hex=L"0123456789abcdef";for(uint8_t b:hash){name+=hex[b>>4];name+=hex[b&15];}return name+L".xxpc";
++}
++bool DiskAssetCache::Directory(){
++ if(directory_.empty()||directory_.size()>30000||!budget_||!maximum_||maximum_>4096)return false;
++#ifdef _WIN32
++ std::vector<wchar_t> buffer(32768);DWORD n=GetFullPathNameW(directory_.c_str(),DWORD(buffer.size()),buffer.data(),nullptr);if(!n||n>=buffer.size())return false;std::wstring full(buffer.data(),n);if(full.size()<3||full[1]!=L':'||full.find(L':',2)!=std::wstring::npos)return false;
++ for(size_t i=3;i<=full.size();++i){if(i!=full.size()&&full[i]!=L'\\'&&full[i]!=L'/')continue;auto part=full.substr(0,i);DWORD a=GetFileAttributesW(part.c_str());if(a==INVALID_FILE_ATTRIBUTES){if(!CreateDirectoryW(part.c_str(),nullptr)&&GetLastError()!=ERROR_ALREADY_EXISTS)return false;a=GetFileAttributesW(part.c_str());}if(a==INVALID_FILE_ATTRIBUTES||!(a&FILE_ATTRIBUTE_DIRECTORY)||(a&FILE_ATTRIBUTE_REPARSE_POINT))return false;}
++ directory_=std::move(full);
++#else
++ std::string full=Native(directory_);if(full.empty())return false;if(full[0]!='/'){char current[32768];if(!getcwd(current,sizeof(current)))return false;full=std::string(current)+"/"+full;}
++ for(size_t i=1;i<=full.size();++i){if(i!=full.size()&&full[i]!='/')continue;auto part=full.substr(0,i);struct stat s{};if(lstat(part.c_str(),&s)){if(mkdir(part.c_str(),0700)&&errno!=EEXIST)return false;if(lstat(part.c_str(),&s))return false;}if(!S_ISDIR(s.st_mode)||S_ISLNK(s.st_mode))return false;}
++ directory_=std::wstring_convert<std::codecvt_utf8<wchar_t>>().from_bytes(full);
++#endif
++ return true;
++}
++bool DiskAssetCache::MakeRoom(uint64_t bytes){
++ if(bytes>budget_)return false;
++ std::vector<Entry> entries;uint64_t total=0;size_t visited=0;
++#ifdef _WIN32
++ WIN32_FIND_DATAW data{};HANDLE search=FindFirstFileW((directory_+Separator+L"*").c_str(),&data);if(search==INVALID_HANDLE_VALUE)return false;
++ bool valid=true;do {if(++visited>maximum_+3){valid=false;break;}std::wstring name=data.cFileName;if(name==L"."||name==L".."||name==L".lock")continue;bool temporary=false;if(!OwnedName(name,temporary)||(data.dwFileAttributes&(FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_REPARSE_POINT))){valid=false;break;}uint64_t size=(uint64_t(data.nFileSizeHigh)<<32)|data.nFileSizeLow;uint64_t touched=(uint64_t(data.ftLastWriteTime.dwHighDateTime)<<32)|data.ftLastWriteTime.dwLowDateTime;entries.push_back(Entry{name,size,touched,temporary});}while(FindNextFileW(search,&data));FindClose(search);if(!valid)return false;
++#else
++ DIR* dir=opendir(Native(directory_).c_str());if(!dir)return false;bool valid=true;
++ while(auto* item=readdir(dir)){if(++visited>maximum_+3){valid=false;break;}std::string raw=item->d_name;if(raw=="."||raw==".."||raw==".lock")continue;std::wstring name;try{name=std::wstring_convert<std::codecvt_utf8<wchar_t>>().from_bytes(raw);}catch(...){valid=false;break;}bool temporary=false;struct stat s{};if(!OwnedName(name,temporary)||lstat(Native(directory_+Separator+name).c_str(),&s)||!S_ISREG(s.st_mode)||s.st_nlink!=1||s.st_size<0){valid=false;break;}entries.push_back(Entry{name,uint64_t(s.st_size),uint64_t(s.st_mtim.tv_sec)*1000000000+uint64_t(s.st_mtim.tv_nsec),temporary});}closedir(dir);if(!valid)return false;
++#endif
++ for(const auto& e:entries){if(e.bytes>std::numeric_limits<uint64_t>::max()-total)return false;total+=e.bytes;}
++ std::sort(entries.begin(),entries.end(),[](const Entry&a,const Entry&b){return a.touched<b.touched;});size_t count=entries.size();
++ // The process-exclusive directory lock proves these temporary entries have
++ // no live writer. Reclaim interrupted publications before quota admission.
++ for(const auto& e:entries)if(e.temporary){auto path=directory_+Separator+e.name;File orphan;if(orphan.Open(path,false)){orphan.Close();if(Remove(path)){total-=e.bytes;--count;}}}
++ for(const auto& e:entries){if(total<=budget_-bytes&&count+(bytes?1:0)<=maximum_)return true;if(!e.temporary&&Remove(directory_+Separator+e.name)){total-=e.bytes;--count;}}
++ return total<=budget_-bytes&&count+(bytes?1:0)<=maximum_;
++}
++bool DiskAssetCache::Load(const SourceSnapshot& source,size_t maximum,std::shared_ptr<const DecodedImage>& result){
++ if(!source.watchable||!source.bytes)return false;
++ std::lock_guard<std::mutex> lock(mutex_);
++ try {if(!Directory())return false;DirectoryLock diskLock(directory_+Separator+L".lock");if(!diskLock.Valid()||!MakeRoom(0))return false;auto path=directory_+Separator+EntryName(source.digest);File file;if(!file.Open(path,false))return false;uint64_t size=0;std::array<uint8_t,HeaderSize> header{};bool valid=file.Size(size)&&size>=HeaderSize&&file.Transfer(header.data(),header.size(),false);
++ if(valid){auto checksum=HashBytes(header.data(),112);valid=std::memcmp(header.data(),"XXMIDC01",8)==0&&Get(header.data()+8,4)==1&&Get(header.data()+12,4)==1&&Get(header.data()+68,4)==1&&std::equal(source.digest.begin(),source.digest.end(),header.begin()+16)&&std::equal(checksum.begin(),checksum.end(),header.begin()+112);}
++ uint64_t length=Get(header.data()+72,8);if(valid)valid=length<=maximum&&length<=std::vector<uint8_t>().max_size()&&length==size-HeaderSize&&Get(header.data()+64,4)<=1&&Layout(Get(header.data()+48,4),Get(header.data()+52,4),Get(header.data()+56,4),Get(header.data()+60,4),length);
++ if(!valid){file.Close();Remove(path);return false;}
++ auto pixels=std::make_shared<std::vector<uint8_t>>(size_t(length));if(!file.Transfer(pixels->data(),pixels->size(),false)){file.Close();Remove(path);return false;}auto digest=HashBytes(pixels->data(),pixels->size());if(!std::equal(digest.begin(),digest.end(),header.begin()+80)){file.Close();Remove(path);return false;}
++ auto image=std::make_shared<DecodedImage>();image->width=uint32_t(Get(header.data()+48,4));image->height=uint32_t(Get(header.data()+52,4));image->rowPitch=uint32_t(Get(header.data()+56,4));image->format=uint32_t(Get(header.data()+60,4));image->metadataSRGB=Get(header.data()+64,4)!=0;image->pixels=pixels;file.Close();Touch(path);result=std::move(image);return true;
++ }catch(...){return false;}
++}
++bool DiskAssetCache::Store(const SourceSnapshot& source,const DecodedImage& image){
++ if(!source.watchable||!source.bytes||!image.pixels||image.decoderVersion!=1||!Layout(image.width,image.height,image.rowPitch,image.format,image.pixels->size()))return false;
++ std::lock_guard<std::mutex> lock(mutex_);try {if(!Directory())return false;DirectoryLock diskLock(directory_+Separator+L".lock");if(!diskLock.Valid()||image.pixels->size()>std::numeric_limits<uint64_t>::max()-HeaderSize||!MakeRoom(image.pixels->size()+HeaderSize))return false;
++ std::array<uint8_t,HeaderSize> header{};std::memcpy(header.data(),"XXMIDC01",8);Put(header.data()+8,1,4);Put(header.data()+12,1,4);std::copy(source.digest.begin(),source.digest.end(),header.begin()+16);Put(header.data()+48,image.width,4);Put(header.data()+52,image.height,4);Put(header.data()+56,image.rowPitch,4);Put(header.data()+60,image.format,4);Put(header.data()+64,image.metadataSRGB?1:0,4);Put(header.data()+68,1,4);Put(header.data()+72,image.pixels->size(),8);auto digest=HashBytes(image.pixels->data(),image.pixels->size());std::copy(digest.begin(),digest.end(),header.begin()+80);digest=HashBytes(header.data(),112);std::copy(digest.begin(),digest.end(),header.begin()+112);
++ auto path=directory_+Separator+EntryName(source.digest),temporary=path+L".tmp";File file;if(!file.Open(temporary,true))return false;bool ok=file.Transfer(header.data(),header.size(),true)&&file.Transfer(const_cast<uint8_t*>(image.pixels->data()),image.pixels->size(),true)&&file.Flush();file.Close();if(ok)ok=Rename(temporary,path);if(!ok)Remove(temporary);return ok;
++ }catch(...){return false;}
++}
++}
+diff --git a/DirectX11/ModLoading/DiskAssetCache.h b/DirectX11/ModLoading/DiskAssetCache.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..9a46a526c204645aec79e6faccb8d14cd7ea589c
+--- /dev/null
++++ b/DirectX11/ModLoading/DiskAssetCache.h
+@@ -0,0 +1,18 @@
++#pragma once
++#include "PreparedTypes.h"
++#include <mutex>
++namespace ModLoading {
++// Dedicated derived-data directory ONLY, outside recursively loaded mod trees.
++// All filesystem work is performed by Load/Store on preparation workers.
++class DiskAssetCache {
++public:
++ explicit DiskAssetCache(std::wstring directory,size_t budgetBytes=size_t(1024)*1024*1024,size_t maximumEntries=512);
++ bool Load(const SourceSnapshot& source,size_t maxDecodedBytes,std::shared_ptr<const DecodedImage>& result);
++ bool Store(const SourceSnapshot& source,const DecodedImage& image);
++ static std::wstring EntryName(const SourceDigest& digest);
++private:
++ bool Directory();
++ bool MakeRoom(uint64_t bytes);
++ std::wstring directory_;size_t budget_,maximum_;std::mutex mutex_;
 +};
 +}
 diff --git a/DirectX11/ModLoading/GenerationManager.cpp b/DirectX11/ModLoading/GenerationManager.cpp
@@ -3099,12 +3256,13 @@ index 0000000000000000000000000000000000000000..3882aa2b2a3198d3a2d15411dd10baea
 +#endif
 diff --git a/DirectX11/ModLoading/PreparationScheduler.cpp b/DirectX11/ModLoading/PreparationScheduler.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..2dfa81ce6c9957ab669288f8fbefabe7c64780a0
+index 0000000000000000000000000000000000000000..07f15e00562d0ca4a8d08b70691fa3557a56a991
 --- /dev/null
 +++ b/DirectX11/ModLoading/PreparationScheduler.cpp
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,77 @@
 +#include "PreparationScheduler.h"
 +#include "SnapshotIO.h"
++#include "DiskAssetCache.h"
 +#include <algorithm>
 +#include <stdexcept>
 +#ifdef _WIN32
@@ -3141,6 +3299,12 @@ index 0000000000000000000000000000000000000000..2dfa81ce6c9957ab669288f8fbefabe7
 + minimum_=(std::max)(minimum_,minimum);CancelQueued();compatibility_.clear();limits_=limits;reservation_=Reservation(limits);cache_.SetCapacity(limits.cpuBytes);}
 + wake_.notify_all();return true;
 +}
++bool PreparationScheduler::ConfigureDiskCache(const std::wstring& directory,size_t budgetBytes){
++ if(directory.size()>30000||(!directory.empty()&&(!budgetBytes||uint64_t(budgetBytes)>uint64_t(4096)*1024*1024)))return false;
++ std::shared_ptr<DiskAssetCache> candidate;
++ try {if(!directory.empty())candidate=std::make_shared<DiskAssetCache>(directory,budgetBytes);}catch(...){return false;}
++ std::lock_guard<std::mutex> lock(mutex_);if(stopping_)return false;disk_=std::move(candidate);return true;
++}
 +void PreparationScheduler::CancelBefore(Generation generation){
 + std::lock_guard<std::mutex> lock(mutex_);minimum_=(std::max)(minimum_,generation);
 + for(auto it=compatibility_.begin();it!=compatibility_.end();)if(it->first.second<minimum_)it=compatibility_.erase(it);else ++it;
@@ -3155,11 +3319,11 @@ index 0000000000000000000000000000000000000000..2dfa81ce6c9957ab669288f8fbefabe7
 + HRESULT com=CoInitializeEx(nullptr,COINIT_MULTITHREADED);
 +#endif
 + for(;;){
-+  Job job;
++  Job job;std::shared_ptr<DiskAssetCache> disk;
 +  {std::unique_lock<std::mutex> lock(mutex_);wake_.wait(lock,[this]{return stopping_||(!queue_.empty()&&active_<limits_.workers&&limits_.cpuBytes);});if(stopping_)break;
-+   auto best=std::max_element(queue_.begin(),queue_.end(),[](const Job&a,const Job&b){return a.priority<b.priority||(a.priority==b.priority&&a.order>b.order);});job=std::move(*best);queue_.erase(best);++active_;}
++   auto best=std::max_element(queue_.begin(),queue_.end(),[](const Job&a,const Job&b){return a.priority<b.priority||(a.priority==b.priority&&a.order>b.order);});job=std::move(*best);queue_.erase(best);++active_;disk=disk_;}
 +  std::shared_ptr<PreparedAsset> asset;
-+  try {asset=std::make_shared<PreparedAsset>();std::string error;if(!reader_(job.path,job.maxBytes,asset->snapshot,error)||!asset->snapshot.bytes||asset->snapshot.bytes->size()>job.maxBytes)asset.reset();else {asset->generation=job.generation;if(asset->snapshot.watchable&&DecodeSnapshot(asset->snapshot,job.reservation-asset->snapshot.bytes->size(),asset->decoded,error))asset->state=PreparationState::DecodedReady;}}catch(...){asset.reset();}
++  try {asset=std::make_shared<PreparedAsset>();std::string error;if(!reader_(job.path,job.maxBytes,asset->snapshot,error)||!asset->snapshot.bytes||asset->snapshot.bytes->size()>job.maxBytes)asset.reset();else {asset->generation=job.generation;if(asset->snapshot.watchable){size_t decodedBudget=job.reservation-asset->snapshot.bytes->size();bool restored=disk&&disk->Load(asset->snapshot,decodedBudget,asset->decoded);if(restored||DecodeSnapshot(asset->snapshot,decodedBudget,asset->decoded,error)){asset->state=PreparationState::DecodedReady;if(!restored&&disk)disk->Store(asset->snapshot,*asset->decoded);}}}}catch(...){asset.reset();}
 +  {std::lock_guard<std::mutex> lock(mutex_);pending_.erase({job.path,job.generation});--active_;
 +   if(asset&&!asset->snapshot.watchable){
 +    if(!stopping_&&job.generation>=minimum_){try {if(compatibility_.size()>=limits_.maxQueued)compatibility_.erase(compatibility_.begin());compatibility_[{job.path,job.generation}]=asset->snapshot.compatibilityReason.empty() ? "source alias dependencies require legacy loading" : asset->snapshot.compatibilityReason;}catch(const std::bad_alloc&) {}}
@@ -3175,10 +3339,10 @@ index 0000000000000000000000000000000000000000..2dfa81ce6c9957ab669288f8fbefabe7
 +}
 diff --git a/DirectX11/ModLoading/PreparationScheduler.h b/DirectX11/ModLoading/PreparationScheduler.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..a9bd3235bf946c542d9503ee85dff8e2e3356dea
+index 0000000000000000000000000000000000000000..b4e7717159dac7e76efda2e48da3b19e64e4e895
 --- /dev/null
 +++ b/DirectX11/ModLoading/PreparationScheduler.h
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,40 @@
 +#pragma once
 +#include "CpuAssetCache.h"
 +#include <condition_variable>
@@ -3186,6 +3350,7 @@ index 0000000000000000000000000000000000000000..a9bd3235bf946c542d9503ee85dff8e2
 +#include <set>
 +#include <thread>
 +namespace ModLoading {
++class DiskAssetCache;
 +class PreparationScheduler {
 +public:
 + using SnapshotReader = std::function<bool(const std::wstring&, size_t, SourceSnapshot&, std::string&)>;
@@ -3200,6 +3365,8 @@ index 0000000000000000000000000000000000000000..a9bd3235bf946c542d9503ee85dff8e2
 + std::string CompatibilityReason(const std::wstring& path, Generation generation);
 + // Never joins or waits for worker I/O. Existing reservations remain accounted on shrink.
 + bool Reconfigure(const PreparationLimits& limits, Generation minimum);
++ // Configuration only: no filesystem access, waiting or worker retirement. Empty disables.
++ bool ConfigureDiskCache(const std::wstring& directory,size_t budgetBytes=size_t(1024)*1024*1024);
 + void CancelBefore(Generation generation);
 + void Stop();
 + size_t ResidentBytes() const { return cache_.ResidentBytes(); }
@@ -3209,6 +3376,7 @@ index 0000000000000000000000000000000000000000..a9bd3235bf946c542d9503ee85dff8e2
 + void Worker();
 + void CancelQueued();
 + PreparationLimits limits_; CpuAssetCache cache_; size_t reservation_; SnapshotReader reader_; size_t active_=0;
++ std::shared_ptr<DiskAssetCache> disk_;
 + std::mutex mutex_; std::condition_variable wake_; std::vector<std::thread> workers_;
 + std::vector<Job> queue_;std::set<std::pair<std::wstring,Generation>> pending_;
 + std::map<std::pair<std::wstring,Generation>,std::string> compatibility_;
@@ -6178,12 +6346,93 @@ index 0000000000000000000000000000000000000000..88f21c64ee9f8a66a9ec6cd4efa37875
 +    ], check=True)
 +    subprocess.run([str(executable)], check=True)
 +print("preparation_changes: portable state and worker checks passed")
+diff --git a/tests/preparation_cpu/disk.cpp b/tests/preparation_cpu/disk.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..9e39378ec36e8592d06e67eaba90c61698cd09df
+--- /dev/null
++++ b/tests/preparation_cpu/disk.cpp
+@@ -0,0 +1,75 @@
++#include "DiskAssetCache.h"
++#include "PreparationScheduler.h"
++#include "SnapshotIO.h"
++#include <cassert>
++#include <iostream>
++#include <chrono>
++#include <cstdio>
++#include <fstream>
++#include <thread>
++#ifdef _WIN32
++#include <Windows.h>
++#else
++#include <fcntl.h>
++#include <sys/stat.h>
++#include <unistd.h>
++#endif
++using namespace ModLoading;
++namespace {
++std::string Name(const SourceDigest& digest){auto name=DiskAssetCache::EntryName(digest);return std::string(name.begin(),name.end());}
++void WriteFileBytes(const std::string& path,const std::vector<uint8_t>& bytes){std::ofstream file(path,std::ios::binary|std::ios::trunc);file.write(reinterpret_cast<const char*>(bytes.data()),std::streamsize(bytes.size()));assert(file.good());}
++std::vector<uint8_t> ReadFileBytes(const std::string& path){std::ifstream file(path,std::ios::binary);assert(file.good());return std::vector<uint8_t>((std::istreambuf_iterator<char>(file)),std::istreambuf_iterator<char>());}
++void FixHeader(std::vector<uint8_t>& bytes){assert(bytes.size()>=144);auto checksum=HashBytes(bytes.data(),112);std::copy(checksum.begin(),checksum.end(),bytes.begin()+112);}
++bool Exists(const std::string& path){return std::ifstream(path,std::ios::binary).good();}
++SourceSnapshot Source(uint8_t value){SourceSnapshot s;s.bytes=std::make_shared<const std::vector<uint8_t>>(4,value);s.digest=HashBytes(s.bytes->data(),s.bytes->size());return s;}
++void RemoveDirectory(const char* path){std::string lock=std::string(path)+"/.lock";std::remove(lock.c_str());
++#ifdef _WIN32
++ assert(RemoveDirectoryA(path));
++#else
++ assert(rmdir(path)==0);
++#endif
++}
++void Old(const std::string& path){
++#ifdef _WIN32
++ HANDLE file=CreateFileA(path.c_str(),FILE_WRITE_ATTRIBUTES,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,0,nullptr);assert(file!=INVALID_HANDLE_VALUE);FILETIME old{};old.dwLowDateTime=1;assert(SetFileTime(file,nullptr,nullptr,&old));assert(CloseHandle(file));
++#else
++ timespec times[2]={{1,0},{1,0}};assert(utimensat(AT_FDCWD,path.c_str(),times,0)==0);
++#endif
++}
++}
++void RunDiskCacheTests(){
++ auto source=Source(uint8_t('a'));DecodedImage image;image.width=1;image.height=1;image.rowPitch=4;image.format=28;image.metadataSRGB=true;image.pixels=std::make_shared<const std::vector<uint8_t>>(4,uint8_t(23));
++ const std::string path="disk-fixture/"+Name(source.digest);std::shared_ptr<const DecodedImage> restored;
++ DiskAssetCache cache(L"disk-fixture",1024,8);assert(!cache.Load(source,4,restored));assert(cache.Store(source,image));assert(!Exists(path+".tmp"));assert(cache.Store(source,image));
++ {DiskAssetCache restarted(L"disk-fixture",1024,8);assert(restarted.Load(source,4,restored));assert(*restored->pixels==*image.pixels&&restored->format==28&&restored->metadataSRGB&&restored->decoderVersion==1);}
++ auto saved=ReadFileBytes(path);assert(saved.size()==148);auto mutate=saved;mutate.back()^=1;WriteFileBytes(path,mutate);assert(!cache.Load(source,4,restored));assert(!Exists(path));
++ // Correct header checksums cannot make unknown schemas, decoders or layouts acceptable.
++ for(size_t offset:{size_t(8),size_t(12),size_t(48),size_t(60),size_t(68)}){mutate=saved;mutate[offset]=offset==48?0:2;FixHeader(mutate);WriteFileBytes(path,mutate);assert(!cache.Load(source,4,restored));assert(!Exists(path));}
++ mutate=saved;for(size_t i=72;i<80;++i)mutate[i]=255;FixHeader(mutate);WriteFileBytes(path,mutate);assert(!cache.Load(source,4,restored));assert(!Exists(path));
++ WriteFileBytes(path,std::vector<uint8_t>(12,uint8_t(0)));assert(!cache.Load(source,4,restored));assert(!Exists(path));
++ assert(cache.Store(source,image));assert(!cache.Load(source,3,restored));assert(!Exists(path)); // bounded restore rejects before allocation
++ assert(cache.Store(source,image));auto changed=Source(uint8_t('b'));assert(!cache.Load(changed,4,restored));assert(Exists(path));source.watchable=false;assert(!cache.Load(source,4,restored));assert(!cache.Store(source,image));source.watchable=true;
++ auto unsupported=image;unsupported.decoderVersion=2;assert(!cache.Store(source,unsupported));
++ WriteFileBytes("disk-fixture/unowned.txt",std::vector<uint8_t>(1,uint8_t(7)));assert(!cache.Store(changed,image));assert(Exists("disk-fixture/unowned.txt"));std::remove("disk-fixture/unowned.txt");
++ std::remove(path.c_str());RemoveDirectory("disk-fixture");
++ // Two entries fit. A recent read protects the entry from the next LRU eviction.
++ DiskAssetCache small(L"disk-budget",296,8);auto a=Source(uint8_t(1)),b=Source(uint8_t(2)),c=Source(uint8_t(3));assert(small.Store(a,image));assert(small.Store(b,image));Old("disk-budget/"+Name(b.digest));assert(small.Load(a,4,restored));assert(small.Store(c,image));assert(!Exists("disk-budget/"+Name(b.digest)));assert(small.Load(a,4,restored));assert(small.Load(c,4,restored));
++ std::remove(("disk-budget/"+Name(a.digest)).c_str());std::remove(("disk-budget/"+Name(c.digest)).c_str());RemoveDirectory("disk-budget");
++ // A cache directory alias must not redirect writes into another directory.
++#ifdef _WIN32
++ assert(CreateDirectoryW(L"disk-real-root",nullptr));bool directoryAlias=CreateSymbolicLinkW(L"disk-root-alias",L"disk-real-root",3)!=FALSE;if(!directoryAlias&&GetLastError()==ERROR_INVALID_PARAMETER)directoryAlias=CreateSymbolicLinkW(L"disk-root-alias",L"disk-real-root",1)!=FALSE;
++ if(directoryAlias){DiskAssetCache redirected(L"disk-root-alias",1024,8);assert(!redirected.Store(a,image));assert(RemoveDirectoryW(L"disk-root-alias"));}else std::cout<<"Disk-root symlink fixture skipped: privilege unavailable\n";
++ assert(RemoveDirectoryW(L"disk-real-root"));
++#else
++ assert(mkdir("disk-real-root",0700)==0);assert(symlink("disk-real-root","disk-root-alias")==0);DiskAssetCache redirected(L"disk-root-alias",1024,8);assert(!redirected.Store(a,image));assert(unlink("disk-root-alias")==0);assert(rmdir("disk-real-root")==0);
++#endif
++ // An interrupted atomic publication cannot permanently consume the only slot.
++ DiskAssetCache orphaned(L"disk-orphans",148,1);assert(!orphaned.Load(a,4,restored));const std::string orphan="disk-orphans/"+Name(a.digest)+".tmp";WriteFileBytes(orphan,std::vector<uint8_t>(148,uint8_t(0)));assert(orphaned.Store(a,image));assert(!Exists(orphan));assert(orphaned.Load(a,4,restored));std::remove(("disk-orphans/"+Name(a.digest)).c_str());RemoveDirectory("disk-orphans");
++ DiskAssetCache tooSmall(L"disk-too-small",147,8);assert(!tooSmall.Store(a,image));RemoveDirectory("disk-too-small");
++ // Fresh source verification + restored pixels works on a platform without WIC,
++ // and after reconstructing the worker pool, proving that decode was bypassed.
++ WriteFileBytes("disk-source.bin",std::vector<uint8_t>(4,uint8_t('a')));SourceSnapshot verified;std::string error;assert(ReadVerifiedSnapshot(L"disk-source.bin",4,verified,error));DiskAssetCache seed(L"disk-restart",1024,8);assert(seed.Store(verified,image));
++ PreparationLimits limits;limits.cpuBytes=16;limits.maxAssetBytes=4;limits.workers=1;limits.maxQueued=2;
++ for(Generation generation=1;generation<=2;++generation){PreparationScheduler scheduler(limits);assert(scheduler.ConfigureDiskCache(L"disk-restart",1024));assert(scheduler.Enqueue(L"disk-source.bin",generation));std::shared_ptr<const PreparedAsset> ready;auto until=std::chrono::steady_clock::now()+std::chrono::seconds(5);while(!(ready=scheduler.TryGet(L"disk-source.bin",generation))&&std::chrono::steady_clock::now()<until)std::this_thread::yield();assert(ready&&ready->state==PreparationState::DecodedReady&&ready->decoded&&*ready->decoded->pixels==*image.pixels);assert(scheduler.ResidentBytes()==8&&scheduler.ReservedBytes()==0);scheduler.Stop();}
++ WriteFileBytes("disk-source.bin",std::vector<uint8_t>(4,uint8_t('c')));assert(ReadVerifiedSnapshot(L"disk-source.bin",4,verified,error));assert(!seed.Load(verified,4,restored));std::remove("disk-source.bin");std::remove(("disk-restart/"+Name(source.digest)).c_str());RemoveDirectory("disk-restart");
++}
 diff --git a/tests/preparation_cpu/main.cpp b/tests/preparation_cpu/main.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..a3a14701a5fa453e5a2e3da4075b15e204bbf6f8
+index 0000000000000000000000000000000000000000..9ef722a3f454a7636af7dc606da1b81e8cfa4944
 --- /dev/null
 +++ b/tests/preparation_cpu/main.cpp
-@@ -0,0 +1,125 @@
+@@ -0,0 +1,127 @@
 +#include "AssetCatalog.h"
 +#include "PreparationScheduler.h"
 +#include "SnapshotIO.h"
@@ -6216,7 +6465,9 @@ index 0000000000000000000000000000000000000000..a3a14701a5fa453e5a2e3da4075b15e2
 + assert(!scheduler.CompatibilityReason(alias,1).empty());assert(!scheduler.TryGet(alias,1));assert(scheduler.ReservedBytes()==0);assert(scheduler.ResidentBytes()==0);
 + Write(target,"efgh");assert(ReadVerifiedSnapshot(alias,4,after,error));assert(before.digest!=after.digest);assert(!after.watchable);assert(!scheduler.TryGet(alias,1));assert(!scheduler.Enqueue(alias,1));scheduler.Stop();
 +}
++void RunDiskCacheTests();
 +int main(){
++ RunDiskCacheTests();
 + assert(Hex(HashBytes(nullptr,0))=="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
 + const char* abc="abc";assert(Hex(HashBytes(reinterpret_cast<const uint8_t*>(abc),3))=="ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
 + std::vector<uint8_t> million(1000000,uint8_t('a'));assert(Hex(HashBytes(million.data(),million.size()))=="cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
@@ -6311,10 +6562,10 @@ index 0000000000000000000000000000000000000000..a3a14701a5fa453e5a2e3da4075b15e2
 +}
 diff --git a/tests/preparation_cpu/run.sh b/tests/preparation_cpu/run.sh
 new file mode 100755
-index 0000000000000000000000000000000000000000..38ff4b9230f53cc227329d094237f6fe029b63ab
+index 0000000000000000000000000000000000000000..d2e674ce1bf9f5efabc5cf0b873b82329b58c56d
 --- /dev/null
 +++ b/tests/preparation_cpu/run.sh
-@@ -0,0 +1,13 @@
+@@ -0,0 +1,15 @@
 +#!/usr/bin/env bash
 +set -euo pipefail
 +root="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -6322,7 +6573,9 @@ index 0000000000000000000000000000000000000000..38ff4b9230f53cc227329d094237f6fe
 +mkdir -p "$build"
 +c++ -std=c++14 -pthread -Wall -Wextra -Werror -I "$root/DirectX11/ModLoading" \
 + "$root/tests/preparation_cpu/main.cpp" \
++ "$root/tests/preparation_cpu/disk.cpp" \
 + "$root/DirectX11/ModLoading/SnapshotIO.cpp" \
++ "$root/DirectX11/ModLoading/DiskAssetCache.cpp" \
 + "$root/DirectX11/ModLoading/CpuAssetCache.cpp" \
 + "$root/DirectX11/ModLoading/AssetCatalog.cpp" \
 + "$root/DirectX11/ModLoading/PreparationScheduler.cpp" -o "$build/test"
@@ -6527,10 +6780,10 @@ index 0000000000000000000000000000000000000000..b45911e21704f40247acaa919d98e683
 +"$build/test"
 diff --git a/tests/preparation_gpu/test_gpu_device.cpp b/tests/preparation_gpu/test_gpu_device.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..d7050d70d53ccda6d4b12ea7c1c9283473eb84ea
+index 0000000000000000000000000000000000000000..6abd426bf7688e813a6625a3323f3002bd5ecb3b
 --- /dev/null
 +++ b/tests/preparation_gpu/test_gpu_device.cpp
-@@ -0,0 +1,238 @@
+@@ -0,0 +1,309 @@
 +// Standalone Windows regression host. WARP is this fixture's real rendering
 +// device, never a device used to prepare resources for another game device.
 +#include "PreparationPlanner.h"
@@ -6560,6 +6813,17 @@ index 0000000000000000000000000000000000000000..d7050d70d53ccda6d4b12ea7c1c92834
 +    const HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, flags,
 +        nullptr, 0, D3D11_SDK_VERSION, device.GetAddressOf(), nullptr, context.GetAddressOf());
 +    assert(SUCCEEDED(hr)); return device;
++}
++SharedShaderBytecode CompileStage(const char* source, const char* profile) {
++    ComPtr<ID3DBlob> bytecode, errors;
++    const HRESULT hr = D3DCompile(source, std::strlen(source), nullptr, nullptr, nullptr,
++        "main", profile, 0, 0, bytecode.GetAddressOf(), errors.GetAddressOf());
++    if (FAILED(hr) && errors)
++        std::cerr << profile << ": " << static_cast<const char*>(errors->GetBufferPointer()) << std::endl;
++    assert(SUCCEEDED(hr));
++    const auto* bytes = static_cast<const uint8_t*>(bytecode->GetBufferPointer());
++    auto retained = SharedShaderBytecode::Retain(bytecode.Get(), HashBytes(bytes, bytecode->GetBufferSize()));
++    assert(retained); return retained;
 +}
 +void Created(PreparationPlanner& planner) {
 +    GpuPumpLimits limits; limits.operations = 8; limits.bytes = 16 * 1024 * 1024; limits.milliseconds = 1000;
@@ -6710,13 +6974,50 @@ index 0000000000000000000000000000000000000000..d7050d70d53ccda6d4b12ea7c1c92834
 +    Created(planner); assert(planner.TryAcquire(shaderKey)->shader);
 +    assert(planner.QueuedShaderBytecodeBytes() == 0 && SharedShaderBytecode::LiveRetainedBytes() == 0);
 +    shaderLimit.RetireDevice();
-+    // A complete independent state bundle publishes atomically, including an
-+    // explicit null vertex-stage override. Failed partial creation stays a miss.
-+    assert(SUCCEEDED(D3DCompile(hlsl, sizeof(hlsl) - 1, nullptr, nullptr, nullptr, "main", "ps_5_0", 0, 0, blob.GetAddressOf(), nullptr)));
++    // Compile/create every nonnull SM5 stage as one atomic bundle. This checks
++    // device object creation, not linked pipeline rendering or game correctness.
++    const char* stageSources[] = {
++        "float4 main(float4 position : POSITION) : SV_POSITION { return position; }",
++        R"hlsl(
++            struct CP { float4 position : POSITION; };
++            struct HSConstants { float edges[3] : SV_TessFactor; float inside : SV_InsideTessFactor; };
++            HSConstants PatchConstants(InputPatch<CP, 3> points, uint patchId : SV_PrimitiveID) {
++                HSConstants result; result.edges[0] = result.edges[1] = result.edges[2] = 1;
++                result.inside = 1; return result;
++            }
++            [domain("tri")] [partitioning("integer")] [outputtopology("triangle_cw")]
++            [outputcontrolpoints(3)] [patchconstantfunc("PatchConstants")]
++            CP main(InputPatch<CP, 3> points, uint index : SV_OutputControlPointID, uint patchId : SV_PrimitiveID) {
++                return points[index];
++            }
++        )hlsl",
++        R"hlsl(
++            struct CP { float4 position : POSITION; };
++            struct HSConstants { float edges[3] : SV_TessFactor; float inside : SV_InsideTessFactor; };
++            [domain("tri")]
++            float4 main(HSConstants constants, float3 location : SV_DomainLocation,
++                        const OutputPatch<CP, 3> points) : SV_POSITION {
++                return location.x * points[0].position + location.y * points[1].position + location.z * points[2].position;
++            }
++        )hlsl",
++        R"hlsl(
++            struct V { float4 position : SV_POSITION; };
++            [maxvertexcount(3)]
++            void main(triangle V vertices[3], inout TriangleStream<V> stream) {
++                stream.Append(vertices[0]); stream.Append(vertices[1]); stream.Append(vertices[2]);
++            }
++        )hlsl",
++        hlsl,
++        "[numthreads(1, 1, 1)] void main(uint3 id : SV_DispatchThreadID) {}"
++    };
++    const char* stageProfiles[] = {"vs_5_0", "hs_5_0", "ds_5_0", "gs_5_0", "ps_5_0", "cs_5_0"};
 +    auto input = std::make_shared<ShaderBundleInput>();
-+    shaderBytes = static_cast<const uint8_t*>(blob->GetBufferPointer());
-+    input->stages[4] = SharedShaderBytecode::Retain(blob.Get(), HashBytes(shaderBytes, blob->GetBufferSize()));
-+    input->stageOverrideMask = (1u << 0) | (1u << 4);
++    uint64_t bundleBytecodeBytes = 0;
++    for (size_t stage = 0; stage < input->stages.size(); ++stage) {
++        input->stages[stage] = CompileStage(stageSources[stage], stageProfiles[stage]);
++        bundleBytecodeBytes += input->stages[stage].Size();
++    }
++    input->stageOverrideMask = 63;
 +    input->createBlendState = input->createDepthStencilState = input->createRasterizerState = input->createSamplerState = true;
 +    for (auto& target : input->blend.RenderTarget) {
 +        target.SrcBlend = target.SrcBlendAlpha = D3D11_BLEND_ONE;
@@ -6734,11 +7035,34 @@ index 0000000000000000000000000000000000000000..d7050d70d53ccda6d4b12ea7c1c92834
 +    input->sampler.AddressU = input->sampler.AddressV = input->sampler.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
 +    input->sampler.MaxAnisotropy = 1; input->sampler.ComparisonFunc = D3D11_COMPARISON_NEVER; input->sampler.MaxLOD = D3D11_FLOAT32_MAX;
 +    GpuPreparationRequest bundle; bundle.kind = GpuPreparationKind::ShaderBundle; bundle.shaderBundle = input;
-+    bundle.dependencyReadOnly = true; bundle.estimatedBytes = blob->GetBufferSize() + 5 * 65536;
++    bundle.dependencyReadOnly = true; bundle.estimatedBytes = bundleBytecodeBytes + 10 * 65536;
 +    DeviceResourceKey bundleKey; assert(planner.Enqueue(bundle, &bundleKey) == GpuQueueResult::Queued); Created(planner);
 +    auto bundleObject = planner.TryAcquire(bundleKey); assert(bundleObject && bundleObject->bundle);
-+    assert(!bundleObject->bundle->vertex && bundleObject->bundle->pixel && bundleObject->bundle->blend &&
-+        bundleObject->bundle->depthStencil && bundleObject->bundle->rasterizer && bundleObject->bundle->sampler);
++    assert(bundleObject->bundle->vertex && bundleObject->bundle->hull && bundleObject->bundle->domain &&
++        bundleObject->bundle->geometry && bundleObject->bundle->pixel && bundleObject->bundle->compute);
++    assert(bundleObject->bundle->blend && bundleObject->bundle->depthStencil &&
++        bundleObject->bundle->rasterizer && bundleObject->bundle->sampler);
++    // Retain the separate intentional-null override case; a missing VS here is
++    // complete declared intent, while the nonnull PS must still be created.
++    auto nullInput = std::make_shared<ShaderBundleInput>();
++    nullInput->stageOverrideMask = (1u << 0) | (1u << 4); nullInput->stages[4] = input->stages[4];
++    GpuPreparationRequest nullBundle = bundle; nullBundle.shaderBundle = nullInput;
++    nullBundle.estimatedBytes = nullInput->stages[4].Size() + 65536;
++    DeviceResourceKey nullKey; assert(planner.Enqueue(nullBundle, &nullKey) == GpuQueueResult::Queued); Created(planner);
++    auto nullObject = planner.TryAcquire(nullKey);
++    assert(nullObject && nullObject->bundle && !nullObject->bundle->vertex && nullObject->bundle->pixel);
++    // Valid compiled VS bytes are incompatible with the hull-stage API. Stage
++    // identity changes the key, and failed creation must publish no partial set.
++    auto wrongStageInput = std::make_shared<ShaderBundleInput>(*input);
++    wrongStageInput->stages[1] = input->stages[0];
++    auto wrongStage = bundle; wrongStage.shaderBundle = wrongStageInput;
++    DeviceResourceKey wrongStageKey;
++    assert(planner.ComputeKey(wrongStage, wrongStageKey) && (wrongStageKey < bundleKey || bundleKey < wrongStageKey));
++    assert(planner.Enqueue(wrongStage) == GpuQueueResult::Queued);
++    GpuPumpLimits wrongStageLimits; wrongStageLimits.bytes = 16 * 1024 * 1024; wrongStageLimits.milliseconds = 1000;
++    const auto wrongStageResult = planner.Pump(true, wrongStageLimits);
++    assert(wrongStageResult.failed == 1 && wrongStageResult.created == 0 && !planner.TryAcquire(wrongStageKey));
++    assert(planner.Enqueue(wrongStage) == GpuQueueResult::CompatibilityOnly);
 +    auto badInput = std::make_shared<ShaderBundleInput>(*input);
 +    badInput->blend.RenderTarget[0].BlendEnable = TRUE;
 +    badInput->blend.RenderTarget[0].SrcBlend = static_cast<D3D11_BLEND>(999);
@@ -6753,21 +7077,21 @@ index 0000000000000000000000000000000000000000..d7050d70d53ccda6d4b12ea7c1c92834
 +    assert(planner.Enqueue(badBundle) == GpuQueueResult::Queued); // failure memo retired with the previous epoch
 +    planner.RetireDevice(); assert(planner.BeginDevice(second.Get(), AllocateDeviceEpoch()));
 +    assert(!planner.TryAcquire(bufferKey) && !planner.TryAcquire(textureKey) && !planner.TryAcquire(shaderKey));
-+    assert(ProcessGpuAllocationLedger().Bytes() == buffer.estimatedBytes + texture.estimatedBytes + encoded.estimatedBytes + bundle.estimatedBytes);
++    assert(ProcessGpuAllocationLedger().Bytes() == buffer.estimatedBytes + texture.estimatedBytes + encoded.estimatedBytes + bundle.estimatedBytes + nullBundle.estimatedBytes);
 +    PreparationPlanner disabled(0);
 +    assert(disabled.BeginDevice(second.Get(), AllocateDeviceEpoch()));
 +    assert(disabled.Enqueue(buffer) == GpuQueueResult::CompatibilityOnly && disabled.Pump(true).created == 0);
 +    planner.RetireDevice(); disabled.RetireDevice();
 +    // Drop every preparation/cache lease while the original context still owns
 +    // its bound SRV. The token attached to the actual resource must survive.
-+    bound.Reset(); prepared.reset(); textureObject.reset(); encodedObject.reset(); bundleObject.reset();
++    bound.Reset(); prepared.reset(); textureObject.reset(); encodedObject.reset(); bundleObject.reset(); nullObject.reset();
 +    assert(ProcessGpuAllocationLedger().Bytes() >= buffer.estimatedBytes);
 +    context->ClearState(); context->Flush();
 +    secondContext->ClearState(); secondContext->Flush();
 +    // Drivers may intern fixed state COM objects until device teardown.
 +    staging.Reset(); context.Reset(); secondContext.Reset(); device.Reset(); second.Reset();
 +    assert(ProcessGpuAllocationLedger().Bytes() == 0);
-+    std::cout << "gpu device: WARP creation, views, shaders, ownership, context, epoch checks passed\n";
++    std::cout << "gpu device: WARP six-stage creation, four fixed states, views, ownership, context, epoch checks passed\n";
 +}
 diff --git a/tests/preparation_gpu/test_gpu_policy.cpp b/tests/preparation_gpu/test_gpu_policy.cpp
 new file mode 100644
