@@ -5016,7 +5016,7 @@ index 0000000000000000000000000000000000000000..88f21c64ee9f8a66a9ec6cd4efa37875
 +print("preparation_changes: portable state and worker checks passed")
 diff --git a/tests/preparation_cpu/main.cpp b/tests/preparation_cpu/main.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..c906b8be9a1cd08e13efcce0610ce6fb0c213f41
+index 0000000000000000000000000000000000000000..da24eec9a6cffa6feaca90c969d457f43acc4d25
 --- /dev/null
 +++ b/tests/preparation_cpu/main.cpp
 @@ -0,0 +1,75 @@
@@ -5041,11 +5041,11 @@ index 0000000000000000000000000000000000000000..c906b8be9a1cd08e13efcce0610ce6fb
 +using namespace ModLoading;
 +static std::string Hex(const SourceDigest& d){const char* digits="0123456789abcdef";std::string out;for(auto b:d){out+=digits[b>>4];out+=digits[b&15];}return out;}
 +static void Write(const char* p,const char* content){std::ofstream f(p,std::ios::binary);f<<content;assert(f.good());}
-+static std::shared_ptr<const PreparedAsset> Asset(const wchar_t* p,Generation g,size_t n){auto a=std::make_shared<PreparedAsset>();a->generation=g;a->snapshot.path=p;a->snapshot.bytes=std::make_shared<const std::vector<uint8_t>>(n,42);return a;}
++static std::shared_ptr<const PreparedAsset> Asset(const wchar_t* p,Generation g,size_t n){auto a=std::make_shared<PreparedAsset>();a->generation=g;a->snapshot.path=p;a->snapshot.bytes=std::make_shared<const std::vector<uint8_t>>(n,uint8_t(42));return a;}
 +int main(){
 + assert(Hex(HashBytes(nullptr,0))=="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
 + const char* abc="abc";assert(Hex(HashBytes(reinterpret_cast<const uint8_t*>(abc),3))=="ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
-+ std::vector<uint8_t> million(1000000,'a');assert(Hex(HashBytes(million.data(),million.size()))=="cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
++ std::vector<uint8_t> million(1000000,uint8_t('a'));assert(Hex(HashBytes(million.data(),million.size()))=="cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
 + #ifdef _WIN32
 + HRESULT com=CoInitializeEx(nullptr,COINIT_MULTITHREADED);assert(SUCCEEDED(com));
 + // 1x1 24-bit BMP, red in BGR storage, includes row padding.

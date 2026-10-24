@@ -10,6 +10,7 @@ $bin = Join-Path $out 'bin'
 $tests = Join-Path $out 'tests'
 New-Item -ItemType Directory -Force $bin, $tests | Out-Null
 $mod = Join-Path $native 'DirectX11\ModLoading'
+$script:TestFailures = @()
 
 function Run-NativeTest {
     param([string]$Name, [string[]]$Sources, [string[]]$Libraries = @())
@@ -28,6 +29,9 @@ function Run-NativeTest {
         if ($LASTEXITCODE -ne 0) { throw "$Name compilation failed ($LASTEXITCODE)" }
         & (Join-Path $dir "$Name.exe") 2>&1 | Tee-Object -FilePath run.log
         if ($LASTEXITCODE -ne 0) { throw "$Name failed ($LASTEXITCODE)" }
+    } catch {
+        $script:TestFailures += "$Name`: $($_.Exception.Message)"
+        Write-Output "FAIL: $Name`: $($_.Exception.Message)"
     } finally { Pop-Location }
 }
 
@@ -66,10 +70,10 @@ $buildArguments = @((Join-Path $native 'StereovisionHacks.sln'), '/m', '/t:Build
     '/p:Configuration=Zip Release', '/p:Platform=x64', "/p:OutDir=$bin\",
     '/p:PostBuildEventUseInBuild=false', '/p:PreBuildEventUseInBuild=false', '/v:minimal')
 & msbuild @buildArguments 2>&1 | Tee-Object -FilePath (Join-Path $out 'native-build.log')
-if ($LASTEXITCODE -ne 0) { throw "Native DLL compilation failed ($LASTEXITCODE)" }
+if ($LASTEXITCODE -ne 0) { $script:TestFailures += "Native DLL compilation failed ($LASTEXITCODE)" }
 
 $toolkit = Get-ChildItem -LiteralPath $bin -Recurse -File -Filter 'DirectXTK.lib' | Select-Object -First 1
-if (!$toolkit) { throw 'Built DirectXTK static library was not found.' }
+if ($toolkit) {
 Run-NativeTest -Name 'gpu_device' -Sources @(
     'tests\preparation_gpu\test_gpu_device.cpp',
     'DirectX11\ModLoading\SnapshotIO.cpp',
@@ -79,6 +83,11 @@ Run-NativeTest -Name 'gpu_device' -Sources @(
     'DirectX11\ModLoading\LoadTrace.cpp'
 ) -Libraries @($toolkit.FullName, 'd3d11.lib', 'dxgi.lib', 'd3dcompiler.lib',
     'windowscodecs.lib', 'ole32.lib')
+} else { $script:TestFailures += 'Built DirectXTK static library was not found.' }
+if ($script:TestFailures.Count) {
+    $script:TestFailures | Set-Content -LiteralPath (Join-Path $out 'failures.txt')
+    throw ($script:TestFailures -join '; ')
+}
 
 $dll = Join-Path $bin 'd3d11.dll'
 if (!(Test-Path -LiteralPath $dll -PathType Leaf)) { throw 'Expected d3d11.dll missing.' }
