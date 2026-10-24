@@ -5,8 +5,8 @@ and later supplied a reported collector baseline; its raw local files have not
 been transferred here. Synthetic Windows fixtures do not establish game
 compatibility, visual correctness or first-frame performance. See
 `native/docs/mod-loading/prepared-loading.md` inside `corresponding-source.zip`
-for implemented paths and limitations, and `COMPLETION-STATUS.md` for remaining
-qualification gates.
+for implemented paths and limitations. The launcher repository records remaining
+qualification gates in `tools/PreparedLoading/COMPLETION-STATUS.md`.
 
 `BUILD-INFO.json` identifies the pinned upstream base, exact source patch, DLL,
 compiler and Windows SDK. `corresponding-source.zip` contains the native source

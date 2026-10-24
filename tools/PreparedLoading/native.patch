@@ -15247,10 +15247,10 @@ index 0000000000000000000000000000000000000000..36ee8fdc7ff150d82882a25e167f3d39
 +#endif
 diff --git a/DirectX11/ModLoading/ShaderSourceCache.h b/DirectX11/ModLoading/ShaderSourceCache.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..ac51a4ef9317af3381af3ab80d14ca76e9dacec7
+index 0000000000000000000000000000000000000000..9f80e5cfca2b167efdc240b50bd4696eca123b53
 --- /dev/null
 +++ b/DirectX11/ModLoading/ShaderSourceCache.h
-@@ -0,0 +1,138 @@
+@@ -0,0 +1,140 @@
 +#pragma once
 +#include "PreparedTypes.h"
 +#include "RefreshCpuBudget.h"
@@ -15347,6 +15347,8 @@ index 0000000000000000000000000000000000000000..ac51a4ef9317af3381af3ab80d14ca76
 +	bool Open(bool system, const std::string& name, const void* parent,
 +		const void*& bytes, size_t& size, std::string& error);
 +	bool Close(const void* bytes);
++	// Discovery Open can grow the dependency vector and invalidate this
++	// reference. Pin Source().bytes before retaining input across Open calls.
 +	const SourceSnapshot& Source() const;
 +private:
 +	friend bool PrepareShader(const ShaderCompileRequest&, ResourceRefreshCpuBudget&,
@@ -21384,18 +21386,42 @@ index 0000000000000000000000000000000000000000..10c7883dbe5c743ffa7d568f4c4face3
 +int main(int argc,char** argv){assert(argc==2);std::string root=argv[1];assert(CreateDirectoryA((root+"/mod").c_str(),nullptr));assert(CreateDirectoryA((root+"/mod/sub").c_str(),nullptr));assert(CreateDirectoryA((root+"/cwd").c_str(),nullptr));assert(SetCurrentDirectoryA((root+"/cwd").c_str()));Put(root+"/mod/pick.hls","ROOT_MARKER\n");Put(root+"/mod/sub/pick.hls","PARENT_MARKER\n");Put(root+"/cwd/pick.hls","CWD_MARKER\n");std::string sourceName=root+"/mod/main.hls";Probe("top-local","#include \"pick.hls\"\n",sourceName);Probe("top-system","#include <pick.hls>\n",sourceName);Put(root+"/mod/sub/one.hls","#include \"pick.hls\"\n");Probe("nested-local","#include \"sub/one.hls\"\n",sourceName);Put(root+"/mod/sub/one.hls","#include <pick.hls>\n");Probe("nested-system","#include \"sub/one.hls\"\n",sourceName);assert(DeleteFileA((root+"/mod/pick.hls").c_str()));Put(root+"/mod/sub/one.hls","#include \"pick.hls\"\n");Probe("fallback-local","#include \"sub/one.hls\"\n",sourceName);Put(root+"/mod/sub/one.hls","#include <pick.hls>\n");Probe("fallback-system","#include \"sub/one.hls\"\n",sourceName);}
 diff --git a/tests/preparation_shader_cache/windows.cpp b/tests/preparation_shader_cache/windows.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..98e6f76a03b5095851b0e77127d7e5b355ea61a9
+index 0000000000000000000000000000000000000000..f4a99c2b24779a0340bebe6365ec640773c660df
 --- /dev/null
 +++ b/tests/preparation_shader_cache/windows.cpp
-@@ -0,0 +1,152 @@
+@@ -0,0 +1,194 @@
 +#include "ShaderSourceCache.h"
 +#include "SnapshotIO.h"
 +#include <cassert>
++#include <cstdio>
 +#include <cstring>
 +#include <fstream>
 +#include <iostream>
 +#include <Windows.h>
 +using namespace ModLoading;
++static void Milestone(const char* stage)
++{
++	std::fprintf(stderr, "shader fixture: %s\n", stage);
++	std::fflush(stderr);
++}
++static LONG WINAPI ReportFixtureException(EXCEPTION_POINTERS* exception)
++{
++	const auto address = exception->ExceptionRecord->ExceptionAddress;
++	HMODULE module = nullptr;
++	char modulePath[32768] = "<unresolved>";
++	uintptr_t offset = 0;
++	if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
++		GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
++		reinterpret_cast<LPCWSTR>(address), &module)) {
++		GetModuleFileNameA(module, modulePath, DWORD(sizeof(modulePath)));
++		offset = reinterpret_cast<uintptr_t>(address) - reinterpret_cast<uintptr_t>(module);
++	}
++	std::fprintf(stderr, "shader fixture exception: code=0x%08lx address=%p module=%s offset=0x%llx\n",
++		static_cast<unsigned long>(exception->ExceptionRecord->ExceptionCode), address,
++		modulePath, static_cast<unsigned long long>(offset));
++	std::fflush(stderr);
++	return EXCEPTION_EXECUTE_HANDLER;
++}
 +static void Put(const std::wstring& path,const std::string& text){HANDLE file=CreateFileW(path.c_str(),GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);assert(file!=INVALID_HANDLE_VALUE);DWORD count=0;assert(WriteFile(file,text.data(),DWORD(text.size()),&count,nullptr)&&count==text.size());CloseHandle(file);}
 +struct Include final : ID3DInclude {
 + ShaderIncludeSession& session;std::string& error;
@@ -21448,6 +21474,8 @@ index 0000000000000000000000000000000000000000..98e6f76a03b5095851b0e77127d7e5b3
 +	return comparison;
 +}
 +int wmain(int argc,wchar_t** argv){
++	SetUnhandledExceptionFilter(ReportFixtureException);
++	Milestone("start");
 + assert(argc==2);std::wstring root=argv[1];assert(CreateDirectoryW((root+L"/mod").c_str(),nullptr));assert(CreateDirectoryW((root+L"/mod/sub").c_str(),nullptr));
 + Put(root+L"/mod/main.hls","#ifdef PIXEL_SHADER\n#include \"sub/one.hls\"\n#else\n#include \"inactive.hls\"\n#endif\nfloat4 main():SV_Target {return VALUE;}\n");Put(root+L"/mod/sub/one.hls","#include <two.hls>\n");Put(root+L"/mod/sub/two.hls","#define VALUE float4(1,0,0,1)\n");
 + ShaderCompileRequest request;request.sourcePath=root+L"/mod/main.hls";request.workingDirectory=root;request.sourceName="main.hls";request.target="ps_5_0";request.recursiveIncludes=1;request.defines={{"PIXEL_SHADER",""}};request.flags=D3DCOMPILE_OPTIMIZATION_LEVEL3;request.maxSourceBytes=65536;request.maxClosureBytes=65536;request.maxBytecodeBytes=65536;
@@ -21472,8 +21500,11 @@ index 0000000000000000000000000000000000000000..98e6f76a03b5095851b0e77127d7e5b3
 +	// SDK run 40143744821 showed independent DEBUG compilations differ only
 +	// in SPDB, even for a direct-call repeat. Keep the complete debug DXBC in
 +	// production/cache; remove DEBUG_INFO only from these test comparisons.
++	Milestone("direct DEBUG strip begin");
 +	const auto directDebugComparison = StripDebugForComparison(flagged.bytecode);
++	Milestone("direct DEBUG strip complete; production DEBUG strip begin");
 +	const auto productionDebugComparison = StripDebugForComparison(p1.bytecode);
++	Milestone("production DEBUG strip complete");
 +	assert(directDebugComparison.size() < flagged.bytecode.size());
 +	assert(productionDebugComparison.size() < p1.bytecode.size());
 +	if (directDebugComparison != productionDebugComparison) {
@@ -21486,9 +21517,13 @@ index 0000000000000000000000000000000000000000..98e6f76a03b5095851b0e77127d7e5b3
 +	// DXBC equivalence between a direct SDK call and the production adapter.
 +	request.flags = D3DCOMPILE_OPTIMIZATION_LEVEL3;
 +	PreparedShaderBytecode optimizedDirect, optimizedProduction, optimizedHit;
++	Milestone("optimized direct begin");
 +	assert(PrepareShader(request, budget, nullptr, callbacks, optimizedDirect, error));
++	Milestone("optimized direct complete; production begin");
 +	assert(PrepareD3DShader(request, budget, &production, optimizedProduction, error));
++	Milestone("optimized production complete; cached production begin");
 +	assert(PrepareD3DShader(request, budget, &production, optimizedHit, error));
++	Milestone("optimized cached production complete");
 +	assert(!optimizedProduction.cacheHit);
 +	assert(optimizedHit.cacheHit);
 +	assert(optimizedProduction.key != p1.key);
@@ -21510,12 +21545,18 @@ index 0000000000000000000000000000000000000000..98e6f76a03b5095851b0e77127d7e5b3
 + ShaderCompilerCallbacks standardCallbacks;
 + auto compareStandard=[&](ShaderIncludeSession& session,bool compile,std::vector<uint8_t>* bytes,std::string& failure){
 +  Include includes(session,failure);ID3DBlob *immutable=nullptr,*reference=nullptr,*errors=nullptr;
-+  const auto& source=session.Source();HRESULT customResult,standardResult;
-+  if(compile){customResult=D3DCompile(source.bytes->data(),source.bytes->size(),request.sourceName.c_str(),macros,&includes,"main","ps_5_0",request.flags,0,&immutable,&errors);}
-+  else {customResult=D3DPreprocess(source.bytes->data(),source.bytes->size(),request.sourceName.c_str(),macros,&includes,&immutable,&errors);}
++  // Discovery Open grows dependencies and can invalidate Source() references.
++  // Pin the immutable byte owner across both compiler invocations instead.
++  const auto sourceBytes=session.Source().bytes;HRESULT customResult,standardResult;
++  Milestone(compile?"standard custom compile begin":"standard custom preprocess begin");
++  if(compile){customResult=D3DCompile(sourceBytes->data(),sourceBytes->size(),request.sourceName.c_str(),macros,&includes,"main","ps_5_0",request.flags,0,&immutable,&errors);}
++  else {customResult=D3DPreprocess(sourceBytes->data(),sourceBytes->size(),request.sourceName.c_str(),macros,&includes,&immutable,&errors);}
++  Milestone(compile?"standard custom compile complete":"standard custom preprocess complete");
 +  if(errors){failure.assign(static_cast<char*>(errors->GetBufferPointer()),errors->GetBufferSize());errors->Release();errors=nullptr;}
-+  if(compile){standardResult=D3DCompile(source.bytes->data(),source.bytes->size(),request.sourceName.c_str(),macros,D3D_COMPILE_STANDARD_FILE_INCLUDE,"main","ps_5_0",request.flags,0,&reference,&errors);}
-+  else {standardResult=D3DPreprocess(source.bytes->data(),source.bytes->size(),request.sourceName.c_str(),macros,D3D_COMPILE_STANDARD_FILE_INCLUDE,&reference,&errors);}
++  Milestone(compile?"standard SDK compile begin":"standard SDK preprocess begin");
++  if(compile){standardResult=D3DCompile(sourceBytes->data(),sourceBytes->size(),request.sourceName.c_str(),macros,D3D_COMPILE_STANDARD_FILE_INCLUDE,"main","ps_5_0",request.flags,0,&reference,&errors);}
++  else {standardResult=D3DPreprocess(sourceBytes->data(),sourceBytes->size(),request.sourceName.c_str(),macros,D3D_COMPILE_STANDARD_FILE_INCLUDE,&reference,&errors);}
++  Milestone(compile?"standard SDK compile complete":"standard SDK preprocess complete");
 +  if(errors){if(FAILED(standardResult))failure.assign(static_cast<char*>(errors->GetBufferPointer()),errors->GetBufferSize());errors->Release();}
 +  bool same=SUCCEEDED(customResult)&&SUCCEEDED(standardResult)&&immutable&&reference&&immutable->GetBufferSize()==reference->GetBufferSize()&&std::memcmp(immutable->GetBufferPointer(),reference->GetBufferPointer(),immutable->GetBufferSize())==0;
 +  if(same&&bytes){auto begin=static_cast<const uint8_t*>(immutable->GetBufferPointer());bytes->assign(begin,begin+immutable->GetBufferSize());}
@@ -21529,6 +21570,7 @@ index 0000000000000000000000000000000000000000..98e6f76a03b5095851b0e77127d7e5b3
 + for(int fallback=0;fallback<2;++fallback){
 +  if(fallback)assert(DeleteFileW((root+L"/mod/two.hls").c_str()));
 +  for(int topSystem=0;topSystem<2;++topSystem)for(int nestedSystem=0;nestedSystem<2;++nestedSystem){
++   std::fprintf(stderr,"shader fixture standard case: fallback=%d topSystem=%d nestedSystem=%d\n",fallback,topSystem,nestedSystem);std::fflush(stderr);
 +   Put(root+L"/mod/main.hls",std::string(topSystem?"#include <sub/one.hls>\n":"#include \"sub/one.hls\"\n")+"float4 main():SV_Target{return VALUE;}\n");
 +   Put(root+L"/mod/sub/one.hls",nestedSystem?"#include <two.hls>\n":"#include \"two.hls\"\n");
 +   PreparedShaderBytecode a,b;if(!PrepareShader(request,budget,&standardCache,standardCallbacks,a,error)){std::cerr<<error<<'\n';return 3;}
@@ -21536,7 +21578,9 @@ index 0000000000000000000000000000000000000000..98e6f76a03b5095851b0e77127d7e5b3
 +   assert(a.lookupPaths.size()==size_t(fallback?3:2));
 +  }
 + }
++ Milestone("standard SDK eight cases complete; production -1 begin");
 + PreparedShaderBytecode standardProduction,standardHit;assert(PrepareD3DShader(request,budget,&production,standardProduction,error));assert(PrepareD3DShader(request,budget,&production,standardHit,error));assert(!standardProduction.cacheHit&&standardHit.cacheHit&&standardProduction.bytecode==standardHit.bytecode&&standardProduction.lookupPaths.size()==3);
++ Milestone("standard production -1 complete");
 + assert(standardCompiles==8);assert(SetCurrentDirectoryW(previous));
 + std::cout<<"actual D3DCompile: source/include/flags, direct compile counter=5, raw DEBUG cache retention, DEBUG executable/reflection equivalence, exact optimized DXBC; -1 SDK preprocess+bytecode equivalence 8 cases with cached compile avoidance passed\n";
 +}
