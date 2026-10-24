@@ -51,7 +51,8 @@ Run-NativeTest -Name 'config' -Sources @(
 ) -Libraries @('ole32.lib', 'windowscodecs.lib')
 Run-NativeTest -Name 'changes' -Sources @(
     'tests\preparation_changes\change_reconciler_test.cpp',
-    'DirectX11\ModLoading\ChangeReconciler.cpp'
+    'DirectX11\ModLoading\ChangeReconciler.cpp',
+    'DirectX11\ModLoading\ChangeMonitor.cpp'
 )
 Run-NativeTest -Name 'windows_changes' -Sources @(
     'tests\preparation_changes\change_monitor_windows_test.cpp',

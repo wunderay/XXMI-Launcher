@@ -24,6 +24,7 @@ jobs:
           repository: SpectrumQT/XXMI-Libs-Package
           ref: a7847eae82aaac32175c9a7d199673d5c9323bcd
           path: native
+          fetch-depth: 0
           persist-credentials: false
       - name: Apply exact native candidate
         shell: pwsh

@@ -5016,7 +5016,7 @@ index 0000000000000000000000000000000000000000..88f21c64ee9f8a66a9ec6cd4efa37875
 +print("preparation_changes: portable state and worker checks passed")
 diff --git a/tests/preparation_cpu/main.cpp b/tests/preparation_cpu/main.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..da24eec9a6cffa6feaca90c969d457f43acc4d25
+index 0000000000000000000000000000000000000000..e7b1b245636ec4674b54f4fda831b39fc82cde0b
 --- /dev/null
 +++ b/tests/preparation_cpu/main.cpp
 @@ -0,0 +1,75 @@
@@ -5068,7 +5068,7 @@ index 0000000000000000000000000000000000000000..da24eec9a6cffa6feaca90c969d457f4
 + SourceSnapshot changed;assert(ReadVerifiedSnapshot(wide,4,changed,error));assert(changed.digest!=first.digest);assert((*first.bytes)[0]=='a');
 + assert(!ReadVerifiedSnapshot(L"missing.bin",4,changed,error));
 + CpuAssetCache cache(8);assert(cache.Reserve(4));assert(cache.Publish(Asset(L"a",1,4),4));auto pinned=cache.Find(L"a",1);assert(cache.Reserve(4));assert(cache.Publish(Asset(L"b",1,4),4));auto alsoPinned=cache.Find(L"b",1);assert(!cache.Reserve(1));assert(cache.ResidentBytes()==8);alsoPinned.reset();assert(cache.Reserve(4));assert(!cache.Find(L"b",1));cache.ReleaseReservation(4);assert(cache.Find(L"a",1)==pinned);
-+ CpuAssetCache combined(8);auto withPixels=std::make_shared<PreparedAsset>();withPixels->snapshot.path=L"decoded";withPixels->snapshot.bytes=std::make_shared<const std::vector<uint8_t>>(4,0);auto imagePixels=std::make_shared<DecodedImage>();imagePixels->pixels=std::make_shared<const std::vector<uint8_t>>(4,0);withPixels->decoded=imagePixels;assert(combined.Reserve(8));assert(combined.Publish(withPixels,8));assert(combined.ResidentBytes()==8);assert(!combined.Reserve(1));
++ CpuAssetCache combined(8);auto withPixels=std::make_shared<PreparedAsset>();withPixels->snapshot.path=L"decoded";withPixels->snapshot.bytes=std::make_shared<const std::vector<uint8_t>>(4,uint8_t(0));auto imagePixels=std::make_shared<DecodedImage>();imagePixels->pixels=std::make_shared<const std::vector<uint8_t>>(4,uint8_t(0));withPixels->decoded=imagePixels;assert(combined.Reserve(8));assert(combined.Publish(withPixels,8));assert(combined.ResidentBytes()==8);assert(!combined.Reserve(1));
 + AssetCatalog catalog(2);auto a=catalog.Register(L"a",1);assert(a);assert(!catalog.Register(L"bad",1,{999}));assert(catalog.Register(L"b",1,{a}));assert(!catalog.Register(L"c",1));assert(catalog.Register(L"a",2)==a);
 + PreparationLimits limits;limits.cpuBytes=16;limits.maxAssetBytes=4;limits.workers=1;limits.maxQueued=2;
 + PreparationScheduler scheduler(limits);assert(scheduler.Enqueue(wide,1));assert(scheduler.Enqueue(wide,1));
@@ -5083,7 +5083,7 @@ index 0000000000000000000000000000000000000000..da24eec9a6cffa6feaca90c969d457f4
 + std::mutex blockMutex;std::condition_variable blockWake;bool entered=false,release=false;
 + PreparationLimits blockedLimits;blockedLimits.cpuBytes=16;blockedLimits.maxAssetBytes=4;blockedLimits.workers=1;blockedLimits.maxQueued=4;
 + PreparationScheduler blocked(blockedLimits,[&](const std::wstring& name,size_t maximum,SourceSnapshot& out,std::string&)->bool{
-+  assert(maximum==4);std::unique_lock<std::mutex> lock(blockMutex);entered=true;blockWake.notify_all();blockWake.wait(lock,[&]{return release;});out.path=name;out.bytes=std::make_shared<const std::vector<uint8_t>>(4,1);return true;
++  assert(maximum==4);std::unique_lock<std::mutex> lock(blockMutex);entered=true;blockWake.notify_all();blockWake.wait(lock,[&]{return release;});out.path=name;out.bytes=std::make_shared<const std::vector<uint8_t>>(4,uint8_t(1));return true;
 + });
 + assert(blocked.Enqueue(L"blocking",1));{std::unique_lock<std::mutex> lock(blockMutex);assert(blockWake.wait_for(lock,std::chrono::seconds(5),[&]{return entered;}));}
 + assert(blocked.Enqueue(L"queued",1));assert(blocked.ReservedBytes()==16);
