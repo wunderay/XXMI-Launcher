@@ -140,9 +140,9 @@ if (Test-Path -LiteralPath (Join-Path $bin 'd3d11.dll')) {
     $fixtureBin = Join-Path $out 'native-fixture\bin'
     New-Item -ItemType Directory -Force $fixtureBin | Out-Null
     Get-ChildItem -LiteralPath $bin -Filter '*.lib' | Copy-Item -Destination $fixtureBin
-    $fixtureArgs = @((Join-Path $native 'DirectX11\DirectX11.vcxproj'), '/m', '/t:Build',
-        '/p:Configuration=Zip Release', '/p:Platform=x64', "/p:SolutionDir=$native\",
-        "/p:OutDir=$fixtureBin\", '/p:BuildProjectReferences=false', '/p:ModLoadingTestHooks=true',
+    $fixtureArgs = @((Join-Path $native 'StereovisionHacks.sln'), '/m', '/t:Build',
+        '/p:Configuration=Zip Release', '/p:Platform=x64',
+        "/p:OutDir=$fixtureBin\", '/p:ModLoadingTestHooks=true',
         '/p:PostBuildEventUseInBuild=false', '/p:PreBuildEventUseInBuild=false', '/v:minimal')
     & msbuild @fixtureArgs 2>&1 | Tee-Object -FilePath (Join-Path $out 'native-fixture-build.log')
     if ($LASTEXITCODE -ne 0) {

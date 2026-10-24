@@ -1,0 +1,65 @@
+{
+  "status": "reported-evidence-not-accessed",
+  "prepared_optimization_qualified": false,
+  "release_qualified": false,
+  "receipt_source": "User handoff supplied to implementation agent; actual files on user C paths were not transferred. URL pending.",
+  "capture_id": "capture-20261024-080235-fb104129",
+  "started_utc": "2026-10-24T08:02:35.0645999Z",
+  "ended_utc": "2026-10-24T08:03:35.8521680Z",
+  "game": "ZenlessZoneZero",
+  "pid": 148888,
+  "collector_version": "0.1.6",
+  "all_measurements_reported": true,
+  "native_identity_ack_reported": "verified",
+  "dll_version": "1.2.2.5",
+  "reported_sha256": {
+    "dll": "1879da9e1580f4b39201ba9a090ea5b3cb7f6946377a61e351198fedf3e88222",
+    "report": "1057e69d254d80f3fd9b3d9604f1017ddd1db2a5f5f7b97a0263eca36c840e20",
+    "analysis": "371bda775348dff108a6303547b1b9ea9a0ef36b64710b1ecf44e1de200768e4",
+    "native_source_zip": "32c3e462470b9e5ad8234bdbb646e21c0bb0d91c834511fcb7c3065c13200bad",
+    "collector_zip": "ba286a770bf3a990bba05c331a81b6444737b90430f48795639972e03978af44"
+  },
+  "reported_collection": {
+    "events": 44443,
+    "complete_csv_footer": true,
+    "dropped_full": 0,
+    "dropped_contention": 0,
+    "malformed_rows": 0,
+    "size_limit_reached": false
+  },
+  "reported_frames": {
+    "n": 3515,
+    "median_ms": 11.0079,
+    "p95_ms": 22.6554,
+    "p99_ms": 121.2792,
+    "max_ms": 1315.5506
+  },
+  "reported_stages": {
+    "combined_load": {
+      "n": 368,
+      "p95_ms": 96.5641
+    },
+    "read": {
+      "n": 439,
+      "p95_ms": 5.86
+    },
+    "gpu_create": {
+      "n": 489,
+      "p95_ms": 1.0496
+    },
+    "present_cpu": {
+      "n": 3544,
+      "p95_ms": 0.326
+    },
+    "views": {
+      "n": 39603,
+      "p95_ms": 0.0187
+    }
+  },
+  "collector_history": "Prior 8192-record buffer reportedly lost 38940 events after 9.8 seconds; 0.1.6 reportedly drains every 100 ms with loss-aware accounting. Neither report has been independently inspected here.",
+  "qualification_limits": [
+    "Baseline diagnostic receipt only; hashes are reported, not verified against files.",
+    "No paired candidate captures, >=100 warm activations per scenario, complete operation accounting or independent visual first-frame acceptance supplied.",
+    "No release recovery/matrix evidence or authorized publisher signing key supplied."
+  ]
+}

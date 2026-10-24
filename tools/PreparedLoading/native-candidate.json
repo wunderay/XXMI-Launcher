@@ -1,7 +1,7 @@
 {
-  "purpose": "Compatibility preflight; unfinished general Runtime pipeline",
-  "native_parent": "6548844a37c2cc6a302231aeddee8ec29c4a1cc5",
-  "native_tree": "00b7def464de6a3416bfeafa191c4d3da02a9f11",
+  "purpose": "Work in progress: account usage limit interrupted fixes and review; not release-qualified",
+  "native_parent": "79a8fa99db5df1532078978c8326fc8ef9b834ac",
+  "native_tree": "4f29d07d63d021bceb54113bfc444b1f074ac538",
   "native_base": "a7847eae82aaac32175c9a7d199673d5c9323bcd",
-  "patch_sha256": "7182428aa73fee757c2619dfbab5a8ba7e31d08f16511cb75cdcb600e3517bb4"
+  "patch_sha256": "a91e766070623d7161fe3b757126f6927cf01394061d4a17657ed6417b494ef7"
 }

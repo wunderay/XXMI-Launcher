@@ -71,6 +71,20 @@ class PreparedLoadingTests(unittest.TestCase):
             self.signatures[self.marker.name] = self.security.sign(data)
             self.assertFalse(self.inspect().supported)
 
+    def test_signed_v2_feature_contract_is_authenticated_and_version_gated(self):
+        from core.prepared_loading import V2_FEATURES
+        self.write_marker(mod_loading_version=2, features=list(V2_FEATURES))
+        capability = self.inspect()
+        self.assertTrue(capability.supported)
+        self.assertEqual(capability.protocol_version, 2)
+        self.assertEqual(capability.features, V2_FEATURES)
+        self.write_marker(mod_loading_version=2, features=[{}])
+        self.assertFalse(self.inspect().supported)
+        self.write_marker(mod_loading_version=3, features=list(V2_FEATURES))
+        self.assertFalse(self.inspect().supported)
+        self.write_marker(mod_loading_version=1, features=list(V2_FEATURES))
+        self.assertEqual(self.inspect().features, ())
+
     def test_old_configuration_defaults_and_json_settings_roundtrip(self):
         defaults = PreparedLoadingSettings(**{})
         self.assertEqual(defaults.preparation_mode, 'off')
@@ -284,3 +298,67 @@ class PreparationStatusTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class ProtocolV2SettingsTests(unittest.TestCase):
+    def capability(self, features=None):
+        from core.prepared_loading import V2_FEATURES
+        return PreparationCapability(True, 'v2 fixture', 'a' * 64, tuple(MODES), 2,
+                                     tuple(V2_FEATURES if features is None else features))
+
+    def test_every_stage_is_explicitly_disabled_by_default(self):
+        from core.prepared_loading import FEATURE_FLAGS
+        ini = PreparedLoadingTests.ini()
+        apply_preparation_settings(ini, PreparedLoadingSettings(preparation_mode='adaptive'), self.capability())
+        section = ini.get_section('ModLoading')
+        for key in FEATURE_FLAGS:
+            self.assertEqual(section.get_option(key), '0')
+        self.assertEqual(section.get_option('refresh_key'), '')
+
+    def test_each_flag_remains_independently_disableable(self):
+        from core.prepared_loading import FEATURE_FLAGS
+        for disabled in FEATURE_FLAGS:
+            settings = PreparedLoadingSettings(preparation_mode='prepared_profile')
+            for key in FEATURE_FLAGS:
+                setattr(settings, f'preparation_{key}', key != disabled)
+            ini = PreparedLoadingTests.ini()
+            apply_preparation_settings(ini, settings, self.capability())
+            for key in FEATURE_FLAGS:
+                self.assertEqual(ini.get_section('ModLoading').get_option(key), str(int(key != disabled)))
+
+    def test_missing_signed_feature_never_enables_requested_flag(self):
+        ini = PreparedLoadingTests.ini()
+        settings = PreparedLoadingSettings(preparation_mode='adaptive', preparation_general_fast_refresh=True)
+        apply_preparation_settings(ini, settings, self.capability(features=[]))
+        self.assertEqual(ini.get_section('ModLoading').get_option('general_fast_refresh'), '0')
+
+    def test_profile_and_full_rescan_roundtrip(self):
+        settings = PreparedLoadingSettings(preparation_mode='prepared_profile',
+            preparation_profile_name='My selected outfit', preparation_profile_members='ResourceBody|CustomShaderSkin',
+            preparation_full_rescan_key='ctrl shift no_alt VK_F9')
+        ini = PreparedLoadingTests.ini()
+        apply_preparation_settings(ini, settings, self.capability())
+        restored = PreparedLoadingTests.ini(ini.to_string())
+        section = restored.get_section('ModLoading')
+        self.assertEqual(section.get_option('profile_members'), 'ResourceBody|CustomShaderSkin')
+        self.assertEqual(section.get_option('full_rescan_key'), 'ctrl shift no_alt VK_F9')
+
+    def test_invalid_profile_or_conflicting_keys_fail_before_mutating_ini(self):
+        for overrides in ({'preparation_profile_members': 'ResourceBody\n[Rendering]'},
+                          {'preparation_profile_name': 'hello;bad'},
+                          {'preparation_cpu_cache_enabled': 1},
+                          {'preparation_refresh_key': 'ctrl shift no_alt VK_F8',
+                           'preparation_full_rescan_key': 'ctrl shift no_alt VK_F8'}):
+            ini = PreparedLoadingTests.ini()
+            before = ini.to_string()
+            with self.assertRaises(ValueError):
+                apply_preparation_settings(ini, PreparedLoadingSettings(preparation_mode='adaptive', **overrides), self.capability())
+            self.assertEqual(ini.to_string(), before)
+
+    def test_v1_still_uses_existing_mode_and_budgets_without_enabling_new_flags(self):
+        ini = PreparedLoadingTests.ini()
+        settings = PreparedLoadingSettings(preparation_mode='adaptive', preparation_general_fast_refresh=True)
+        apply_preparation_settings(ini, settings, PreparationCapability(True, 'v1', modes=tuple(MODES)))
+        section = ini.get_section('ModLoading')
+        self.assertEqual(section.get_option('mode'), 'adaptive')
+        self.assertEqual(section.get_option('cpu_cache_mb'), '512')
+        self.assertIsNone(section.get_option('general_fast_refresh'))

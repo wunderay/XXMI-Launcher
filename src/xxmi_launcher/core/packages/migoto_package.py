@@ -1,6 +1,7 @@
 import logging
 import subprocess
 import json
+import psutil
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,7 +18,8 @@ from core.config.enums import InputDisableMode, LogLevel
 from core.prepared_loading import PreparedLoadingSettings, PreparationCapability, inspect_capability, CAPABILITY_FILE
 
 from core.utils.dll_injector import DllInjector
-from core.utils.process_manager import LaunchContext
+from core.utils.process_manager import LaunchContext, ProcessManager
+from core.prepared_release import DevelopmentRelease
 
 log = logging.getLogger(__name__)
 
@@ -65,11 +67,81 @@ class MigotoPackage(Package):
             exit_after_update=False,
         ))
 
+        self._development_launch_context = None
+        self.upstream_package_path = self.package_path
+        self.development_release = DevelopmentRelease(self.package_path.parent / 'XXMI-Development', self.security)
+        if self.development_release.selected:
+            try:
+                self.package_path = self.development_release.resolve()
+            except Exception as error:
+                # Keep rollback available when a pin is damaged; pre-launch still
+                # refuses it and update/repair stays blocked until rollback.
+                log.error('Selected development package is unavailable: %s', error)
         Events.Subscribe(Events.MigotoManager.OpenModsFolder, self.handle_open_mods_folder)
+
+    def select_development_package(self, archive: Path, signature: str, *, version: str):
+        """Stage a publisher-authenticated package; deployment waits for pre-launch."""
+        if self.development_release.selected:
+            raise ValueError('Roll back the selected development package before selecting another.')
+        self.development_release.snapshot(Config.Active.Importer.importer_path,
+                                          self.upstream_package_path / 'Manifest.json')
+        capability = self.development_release.select(archive, signature, version=version,
+                                                     importer=Config.Active.Importer.importer_path)
+        self.package_path = self.development_release.resolve(Config.Active.Importer.importer_path)
+        self.manifest = None
+        return capability
+
+    @staticmethod
+    def _assert_process_idle(launch_context: LaunchContext | None = None):
+        if launch_context is not None:
+            if ProcessManager(launch_context).is_running():
+                raise ValueError('Stop the game before changing the selected XXMI libraries.')
+            return
+        names = set(Config.Active.Importer.process_exe_names or Config.Active.Importer.game_exe_names)
+        if not names:
+            raise ValueError('Cannot verify the game is stopped: no configured executable names.')
+        names = {name.casefold() for name in names}
+        for process in psutil.process_iter(['name']):
+            if not process.info.get('name'):
+                raise ValueError('Cannot verify process identity; development rollback refused.')
+            if process.info['name'].casefold() in names:
+                raise ValueError('Stop the game before changing the selected XXMI libraries.')
+
+    def rollback_development_package(self, launch_context: LaunchContext | None = None):
+        if not self.development_release.selected:
+            raise ValueError('No development package is selected.')
+        selection = self.development_release.selection()
+        if selection.get('importer') != str(Config.Active.Importer.importer_path.resolve()):
+            raise ValueError('Roll back from the importer used to select this development package.')
+        backup = self.development_release.rollback(Config.Active.Importer.importer_path,
+            assert_idle=lambda: self._assert_process_idle(launch_context))
+        # The upstream package was never replaced. Its authenticated manifest remains
+        # the source of truth for ordinary deployments after explicit rollback.
+        self.development_release.selection_path.unlink()
+        self.package_path = self.upstream_package_path
+        self.manifest = None
+        self.load_manifest()
+        Config.Active.Importer.deployed_migoto_signatures = {
+            name: self.get_signature(Path(name)) for name in ('d3d11.dll', 'd3dcompiler_47.dll')
+            if (Config.Active.Importer.importer_path / name).exists()
+        }
+        return backup
+
+    def update(self, clean=False):
+        if self.development_release.selected:
+            raise ValueError('Development package is pinned. Roll back explicitly before updating or repairing XXMI.')
+        return super().update(clean=clean)
+
+    def update_available(self):
+        if self.development_release.selected:
+            return False
+        return super().update_available()
 
     def preparation_capability(self) -> PreparationCapability:
         # Refresh signatures so a package update cannot reuse cached metadata.
         try:
+            if self.development_release.selected:
+                self.package_path = self.development_release.resolve(Config.Active.Importer.importer_path)
             self.load_manifest()
             return inspect_capability(
                 Config.Active.Importer.importer_path / 'd3d11.dll',
@@ -163,6 +235,8 @@ class MigotoPackage(Package):
         )), L('error_title_package_corrupted_by_antivirus', 'Data Corruption Detected'))
 
     def download_latest_version(self):
+        if self.development_release.selected:
+            raise ValueError('Development package is pinned; roll back before downloading upstream XXMI.')
         try:
             super().download_latest_version()
         except Exception as e:
@@ -171,6 +245,8 @@ class MigotoPackage(Package):
             raise
 
     def install_latest_version(self, clean):
+        if self.development_release.selected:
+            raise ValueError('Development package is pinned; roll back before installing upstream XXMI.')
         try:
             Events.Fire(Events.PackageManager.InitializeInstallation())
             self.move_contents(self.downloaded_asset_path, self.package_path)
@@ -189,17 +265,28 @@ class MigotoPackage(Package):
         subprocess.Popen(['explorer.exe', mods_path])
 
     def run_pre_launch(self, launch_context: LaunchContext):
+        if self.development_release.selected:
+            self._assert_process_idle(launch_context)
+            self.package_path = self.development_release.resolve(Config.Active.Importer.importer_path)
+            self.manifest = None
         # Deploy new or updated XXMI libraries to model importer folder
+        self._development_launch_context = launch_context if self.development_release.selected else None
         try:
             self.deploy_package_files()
         except Exception as e:
+            if self.development_release.selected:
+                raise
             self.restore_package_files(e, validate=False)
+        finally:
+            self._development_launch_context = None
 
         # Check signatures to prevent 3rd-party 3dmigoto libraries from loading
-        if not Config.Active.Migoto.unsafe_mode:
+        if self.development_release.selected or not Config.Active.Migoto.unsafe_mode:
             try:
                 self.validate_deployed_files()
             except Exception as e:
+                if self.development_release.selected:
+                    raise
                 self.restore_package_files(e, validate=True)
 
     def restore_package_files(self, e: Exception, validate=False):
@@ -263,6 +350,17 @@ class MigotoPackage(Package):
         return False, ''
 
     def deploy_package_files(self, force: bool = False):
+        if self.development_release.selected:
+            if self._development_launch_context is None:
+                raise ValueError('Pinned development libraries deploy only after the pre-launch idle check.')
+            signatures = self.development_release.deploy(Config.Active.Importer.importer_path,
+                assert_idle=lambda: self._assert_process_idle(self._development_launch_context))
+            Config.Active.Importer.deployed_migoto_signatures.update(signatures)
+            # This path does not run ordinary cleanup (including nvapi removal),
+            # and never consults unsafe_mode to authorize selected code.
+            self.package_path = self.development_release.resolve(Config.Active.Importer.importer_path)
+            self.manifest = None
+            return
         Events.Fire(Events.Application.Busy())
 
         Paths.verify_path(Config.Active.Importer.importer_path)
@@ -334,6 +432,8 @@ class MigotoPackage(Package):
         self.validate_files([self.package_path / f for f in package_libs])
 
     def uninstall(self):
+        if self.development_release.selected:
+            raise ValueError('Roll back the development package before uninstalling XXMI.')
         log.debug(f'Uninstalling package {self.metadata.package_name}...')
 
         if self.package_path.is_dir():

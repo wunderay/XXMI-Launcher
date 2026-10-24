@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "qualified_importers": [],
+  "status": "No actual-game qualification evidence imported. ZZMI is the first evidence protocol; no importer/version is qualified by shipping this tool.",
+  "other_importers": "Require independent importer-specific evidence and reviewed protocol; fail closed."
+}

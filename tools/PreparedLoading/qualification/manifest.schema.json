@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Prepared Loading offline evidence manifest v1",
+  "description": "Envelope schema only; qualify.py performs semantic and provenance gates. No real-game evidence is shipped.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "origin",
+    "baseline",
+    "candidate",
+    "scenarios",
+    "recovery",
+    "review"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "origin": {
+      "enum": [
+        "actual-game",
+        "synthetic-test"
+      ]
+    },
+    "baseline": {
+      "$ref": "#/$defs/run"
+    },
+    "candidate": {
+      "$ref": "#/$defs/run"
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "cache_state"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "cache_state": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "recovery": {
+      "$ref": "#/$defs/artifact"
+    },
+    "review": {
+      "$ref": "#/$defs/artifact"
+    },
+    "release_coverage": {
+      "$ref": "#/$defs/artifact"
+    }
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "required": [
+        "source_sha",
+        "importer",
+        "importer_version",
+        "game_version",
+        "hardware",
+        "driver",
+        "source_archive",
+        "patch",
+        "dll",
+        "compiler",
+        "mod_manifest",
+        "settings",
+        "config",
+        "scenario_protocol",
+        "instrumentation",
+        "samples",
+        "trace",
+        "capture"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "source_archive": {
+          "$ref": "#/$defs/artifact"
+        },
+        "patch": {
+          "$ref": "#/$defs/artifact"
+        },
+        "dll": {
+          "$ref": "#/$defs/artifact"
+        },
+        "compiler": {
+          "$ref": "#/$defs/artifact"
+        },
+        "mod_manifest": {
+          "$ref": "#/$defs/artifact"
+        },
+        "settings": {
+          "$ref": "#/$defs/artifact"
+        },
+        "config": {
+          "$ref": "#/$defs/artifact"
+        },
+        "scenario_protocol": {
+          "$ref": "#/$defs/artifact"
+        },
+        "instrumentation": {
+          "$ref": "#/$defs/artifact"
+        },
+        "samples": {
+          "$ref": "#/$defs/artifact"
+        },
+        "trace": {
+          "$ref": "#/$defs/artifact"
+        },
+        "capture": {
+          "$ref": "#/$defs/artifact"
+        },
+        "importer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "importer_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "game_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "hardware": {
+          "type": "string",
+          "minLength": 1
+        },
+        "driver": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        }
+      }
+    }
+  }
+}

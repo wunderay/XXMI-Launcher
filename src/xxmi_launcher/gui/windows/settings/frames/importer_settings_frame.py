@@ -1,4 +1,6 @@
 import subprocess
+import json
+from pathlib import Path
 import webbrowser
 import re
 import psutil
@@ -142,10 +144,44 @@ class ModelImporterSettingsFrame(SettingsContentFrame):
                             tooltip=lambda: self._preparation_capability.format_diagnostics(self._preparation_status) + '\n\n'
                                 'Off disables preparation. Adaptive prepares observed assets. Prepared profile uses '
                                 'the native prepared working set. Options require an authenticated compatible package. '
-                                'Automatic generation activation is disabled.',
+                                'Use the independent protocol v2 switches to opt into each rollout stage.',
                             value_validate_command=self.validate_preparation_mode,
                             enabled_if=Condition(variables=('Vars.Active.Migoto.manage_xxmi_dll_config',), predicate=self.can_prepare),
                         ),
+                        *tuple(SettingsOption(
+                            label_text=label,
+                            widget=OptionWidget.CHECKBOX,
+                            value_variable=f'Vars.Active.Migoto.preparation_{key}',
+                            tooltip='Requires authenticated preparation protocol v2. Disabled by default; each rollout stage can be disabled independently.',
+                            enabled_if=Condition(variables=('Vars.Active.Migoto.manage_xxmi_dll_config',),
+                                predicate=lambda key=key: self.can_prepare_feature(key)),
+                        ) for key, label in (
+                            ('cpu_cache_enabled', 'Enable CPU cache'),
+                            ('gpu_cache_enabled', 'Enable GPU prewarming'),
+                            ('adaptive_learning', 'Learn observed asset usage'),
+                            ('transactional_activation', 'Enable transactional refresh'),
+                            ('general_fast_refresh', 'Enable general configuration refresh'),
+                        )),
+                        SettingsOption(
+                            label_text='Full preparation rescan shortcut',
+                            widget=OptionWidget.DROPDOWN,
+                            value_variable='Vars.Active.Migoto.preparation_full_rescan_key',
+                            dropdown_values=REFRESH_KEYS,
+                            tooltip='Rebuilds the preparation plan from all declared assets. Must differ from the activation shortcut; F10 remains available.',
+                            enabled_if=Condition(variables=('Vars.Active.Migoto.manage_xxmi_dll_config',),
+                                predicate=lambda: self.can_prepare_feature('full_rescan_key')),
+                        ),
+                        *tuple(SettingsOption(
+                            label_text=label,
+                            widget=OptionWidget.INPUT_STR,
+                            value_variable=f'Vars.Active.Migoto.preparation_{key}',
+                            tooltip=tooltip,
+                            enabled_if=Condition(variables=('Vars.Active.Migoto.manage_xxmi_dll_config',),
+                                predicate=lambda key=key: self.can_prepare_feature(key)),
+                        ) for key, label, tooltip in (
+                            ('profile_name', 'Preparation profile name', 'Optional display label. Up to 128 plain characters.'),
+                            ('profile_members', 'Preparation profile members', 'Exact Resource/CustomShader IDs separated by |. Empty selects all declared assets. Dependencies are validated by the native compiler.'),
+                        )),
                         *tuple(SettingsOption(
                             label_text=label,
                             widget=OptionWidget.INPUT_INT,
@@ -184,6 +220,22 @@ class ModelImporterSettingsFrame(SettingsContentFrame):
                             tooltip='Enable only during a known loading window. Disabled by default. '
                                 'GPU cache memory and creation/upload budgets still apply.',
                             enabled_if=Condition(variables=('Vars.Active.Migoto.manage_xxmi_dll_config',), predicate=self.can_prepare),
+                        ),
+                        SettingsOption(
+                            label_text='Isolated development package',
+                            widget=OptionWidget.BUTTON,
+                            value_variable='',
+                            button_text='Select signed package',
+                            button_command=self.select_development_package,
+                            tooltip='Select the publisher-signed ZIP and its release metadata JSON (version and archive signature). Stages a pinned isolated package for the next launch; never changes DLL trust.',
+                        ),
+                        SettingsOption(
+                            label_text='Development package pin / rollback',
+                            widget=OptionWidget.BUTTON,
+                            value_variable='',
+                            button_text='Status and rollback',
+                            button_command=self.development_package_status,
+                            tooltip='Shows the selected exact version and archive hash. Explicit rollback restores the previous DLLs and managed configuration after verifying the game is stopped.',
                         ),
                         SettingsOption(
                             label_text=f'Preparation snapshot: {self._preparation_status.label}',
@@ -358,6 +410,10 @@ class ModelImporterSettingsFrame(SettingsContentFrame):
     def can_prepare(self):
         return self._preparation_capability.supported and self.manage_xxmi_dll_config()
 
+    def can_prepare_feature(self, key):
+        return (self.can_prepare() and self._preparation_capability.protocol_version >= 2
+                and key in self._preparation_capability.features)
+
     @staticmethod
     def get_preparation_status(capability):
         return read_preparation_status(Config.Active.Importer.importer_path / STATUS_FILE,
@@ -381,6 +437,63 @@ class ModelImporterSettingsFrame(SettingsContentFrame):
             return ''
         except (ValueError, TypeError, TclError):
             return 'Enter an integer.'
+
+    @staticmethod
+    def _development_error(error):
+        Events.Call(Events.Application.ShowError(
+            title='Development package operation refused', message=str(error),
+            confirm_text='Close', modal=True,
+        ))
+
+    def select_development_package(self):
+        archive = filedialog.askopenfilename(title='Select publisher-signed development package',
+                                             filetypes=[('Signed release archive', '*.zip')])
+        if not archive:
+            return
+        metadata = filedialog.askopenfilename(title='Select publisher release metadata (version and signature)',
+                                              filetypes=[('Release metadata', '*.json')])
+        if not metadata:
+            return
+        try:
+            path = Path(metadata)
+            if path.stat().st_size > 65536:
+                raise ValueError('Release metadata exceeds 64 KiB.')
+            value = json.loads(path.read_text(encoding='utf-8'))
+            version, signature = value['version'], value['signature']
+            if not isinstance(version, str) or not isinstance(signature, str):
+                raise ValueError('Release metadata requires string version and signature fields.')
+            # Metadata is only an untrusted discovery hint. The publisher archive
+            # signature, signed marker stage/version, and every DLL are verified.
+            Launcher.xxmi_injector.select_development_package(Path(archive), signature, version=version)
+            Events.Call(Events.Application.ShowInfo(
+                title='Development package selected',
+                message=f'Pinned version {version}. Deployment waits until the next verified pre-launch. Upstream XXMI updates and repair are blocked until explicit rollback.',
+                confirm_text='Close', modal=True,
+            ))
+        except Exception as error:
+            self._development_error(error)
+
+    def development_package_status(self):
+        package = Launcher.xxmi_injector
+        try:
+            if not package.development_release.selected:
+                Events.Call(Events.Application.ShowInfo(title='Development package',
+                    message='No development package is selected. Ordinary authenticated XXMI updates are enabled.',
+                    confirm_text='Close', modal=True))
+                return
+            selection = package.development_release.selection()
+            requested = Events.Call(Events.Application.ShowInfo(
+                title='Development package pin',
+                message=f"Version: {selection['version']}\nStage: {selection['stage']}\nArchive SHA256: {selection['archive_sha256']}\nImporter: {selection['importer']}\n\nRollback restores prior libraries and managed configuration. Mods remain untouched. Stop the game before rollback.",
+                confirm_text='Roll back', cancel_text='Close', modal=True,
+            ))
+            if requested:
+                package.rollback_development_package()
+                Events.Call(Events.Application.ShowInfo(title='Development package rolled back',
+                    message='Prior libraries and managed configuration were restored and verified. Ordinary authenticated XXMI updates are enabled.',
+                    confirm_text='Close', modal=True))
+        except Exception as error:
+            self._development_error(error)
 
     def show_preparation_diagnostics(self):
         capability = self.get_preparation_capability()
