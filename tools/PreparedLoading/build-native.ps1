@@ -58,6 +58,7 @@ Run-NativeTest -Name 'config' -Sources @(
 Run-NativeTest -Name 'refresh' -Sources @(
     'tests\preparation_refresh\main.cpp',
     'DirectX11\ModLoading\ResourceRefresh.cpp',
+    'DirectX11\ModLoading\RefreshCpuBudget.cpp',
     'DirectX11\ModLoading\ResourceRefreshClosure.cpp',
     'DirectX11\ModLoading\SnapshotIO.cpp'
 ) -Libraries @('ole32.lib', 'windowscodecs.lib') `
@@ -81,6 +82,7 @@ Run-NativeTest -Name 'runtime_policy' -Sources @('tests\preparation_runtime\main
 Run-NativeTest -Name 'refresh_device' -Sources @(
     'tests\preparation_refresh\test_refresh_device.cpp',
     'DirectX11\ModLoading\ResourceRefresh.cpp',
+    'DirectX11\ModLoading\RefreshCpuBudget.cpp',
     'DirectX11\ModLoading\ResourceRefreshOverlay.cpp',
     'DirectX11\ModLoading\ResourceRefreshClosure.cpp',
     'DirectX11\ModLoading\SnapshotIO.cpp'
