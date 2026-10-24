@@ -1,5 +1,5 @@
 diff --git a/DirectX11/CommandList.cpp b/DirectX11/CommandList.cpp
-index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..88ac3d0ca90877cb60eecae7b62d0dce8e80c1cb 100644
+index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..b2f5c137fdaaf159030e2bb6dc0cd6eb38151f1f 100644
 --- a/DirectX11/CommandList.cpp
 +++ b/DirectX11/CommandList.cpp
 @@ -14,6 +14,8 @@
@@ -34,17 +34,52 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..88ac3d0ca90877cb60eecae7b62d0dce
  	}
  
  	if (pErrorMsgs) {
-@@ -2614,6 +2622,9 @@ void CustomShader::substantiate(ID3D11Device *mOrigDevice1)
+@@ -2607,6 +2615,7 @@ bool CustomShader::compile(char type, wchar_t *filename, const wstring *wname, c
+ err_close:
+ 	CloseHandle(f);
+ err:
++	preparation_compile_failed = true;
+ 	return true;
+ }
+ 
+@@ -2614,6 +2623,28 @@ void CustomShader::substantiate(ID3D11Device *mOrigDevice1)
  {
  	if (substantiated)
  		return;
++	if (ModLoading::TryUsePreparedShaderBundle(*this, mOrigDevice1)) {
++		// Match the legacy shader-map cleanup and release its bytecode owners
++		// only after the complete compatible bundle has been acquired.
++		if (vs) CleanupShaderMaps(vs);
++		if (hs) CleanupShaderMaps(hs);
++		if (ds) CleanupShaderMaps(ds);
++		if (gs) CleanupShaderMaps(gs);
++		if (ps) CleanupShaderMaps(ps);
++		if (cs) CleanupShaderMaps(cs);
++		ID3DBlob** bytecode[] = {&vs_bytecode, &hs_bytecode, &ds_bytecode,
++			&gs_bytecode, &ps_bytecode, &cs_bytecode};
++		for (auto blob : bytecode) {
++			if (*blob) (*blob)->Release();
++			*blob = nullptr;
++		}
++		preparation_bundle.reset();
++		substantiated = true;
++		return;
++	}
 +	// Aggregate shader/state object creation and cleanup, not compilation.
 +	ModLoading::ScopedLoadTrace trace(ModLoading::LoadStage::GpuCreation,
 +		reinterpret_cast<uintptr_t>(this));
  	substantiated = true;
  
  	if (vs_bytecode) {
-@@ -6441,6 +6452,9 @@ void CustomResource::Substantiate(ID3D11Device *mOrigDevice1,
+@@ -2664,6 +2695,7 @@ void CustomShader::substantiate(ID3D11Device *mOrigDevice1)
+ 
+ 	if (sampler_override == 1)
+ 		mOrigDevice1->CreateSamplerState(&sampler_desc, &sampler_state);
++	preparation_bundle.reset();
+ }
+ 
+ // Similar to memcpy, but also takes a mask. Any bits in the mask that are set
+@@ -6441,6 +6473,9 @@ void CustomResource::Substantiate(ID3D11Device *mOrigDevice1,
  	// parameters while probing the hardware before it settles on the one
  	// it will actually use.
  
@@ -54,7 +89,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..88ac3d0ca90877cb60eecae7b62d0dce
  	LockResourceCreationMode();
  
  	if (!filename.empty()) {
-@@ -6471,9 +6485,26 @@ void CustomResource::Substantiate(ID3D11Device *mOrigDevice1,
+@@ -6471,9 +6506,26 @@ void CustomResource::Substantiate(ID3D11Device *mOrigDevice1,
  void CustomResource::LoadBufferFromFile(ID3D11Device *mOrigDevice1)
  {
  	DWORD size, read_size;
@@ -81,7 +116,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..88ac3d0ca90877cb60eecae7b62d0dce
  	f = CreateFile(filename.c_str(), GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
  	if (f == INVALID_HANDLE_VALUE) {
  		LogOverlayW(LOG_WARNING, L"Failed to load custom buffer resource %ls: %d\n", filename.c_str(), GetLastError());
-@@ -6487,7 +6518,15 @@ void CustomResource::LoadBufferFromFile(ID3D11Device *mOrigDevice1)
+@@ -6487,7 +6539,15 @@ void CustomResource::LoadBufferFromFile(ID3D11Device *mOrigDevice1)
  		goto out_close;
  	}
  
@@ -98,7 +133,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..88ac3d0ca90877cb60eecae7b62d0dce
  		LogOverlayW(LOG_WARNING, L"Error reading custom buffer from file %ls\n", filename.c_str());
  		goto out_delete;
  	}
-@@ -6588,8 +6627,25 @@ void CustomResource::LoadFromFile(ID3D11Device *mOrigDevice1)
+@@ -6588,8 +6648,25 @@ void CustomResource::LoadFromFile(ID3D11Device *mOrigDevice1)
  	// Needs to be called at some point before CreateXXXTextureFromFile:
  	EnsureCOM();
  
@@ -126,7 +161,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..88ac3d0ca90877cb60eecae7b62d0dce
  		LogInfoW(L"Loading custom resource %s as DDS, bind_flags=0x%03x\n", filename.c_str(), bind_flags);
  		hr = DirectX::CreateDDSTextureFromFileEx(mOrigDevice1,
  				filename.c_str(), 0,
-@@ -6602,6 +6658,7 @@ void CustomResource::LoadFromFile(ID3D11Device *mOrigDevice1)
+@@ -6602,6 +6679,7 @@ void CustomResource::LoadFromFile(ID3D11Device *mOrigDevice1)
  				D3D11_USAGE_DEFAULT, bind_flags, 0, misc_flags,
  				GetWICFlags(filename), &resource, NULL);
  	}
@@ -134,7 +169,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..88ac3d0ca90877cb60eecae7b62d0dce
  	if (SUCCEEDED(hr)) {
  		device = mOrigDevice1;
  		is_null = false;
-@@ -6664,7 +6721,13 @@ void CustomResource::SubstantiateBuffer(ID3D11Device *mOrigDevice1, void **buf,
+@@ -6664,7 +6742,13 @@ void CustomResource::SubstantiateBuffer(ID3D11Device *mOrigDevice1, void **buf,
  		pInitialData = &data;
  	}
  
@@ -149,7 +184,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..88ac3d0ca90877cb60eecae7b62d0dce
  	if (SUCCEEDED(hr)) {
  		LogInfo("Substantiated custom %S [%S], bind_flags=0x%03x\n",
  				lookup_enum_name(CustomResourceTypeNames, override_type), name.c_str(), desc.BindFlags);
-@@ -6692,7 +6755,12 @@ void CustomResource::SubstantiateTexture1D(ID3D11Device *mOrigDevice1)
+@@ -6692,7 +6776,12 @@ void CustomResource::SubstantiateTexture1D(ID3D11Device *mOrigDevice1)
  	desc.MiscFlags = misc_flags;
  	OverrideTexDesc(&desc);
  
@@ -163,7 +198,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..88ac3d0ca90877cb60eecae7b62d0dce
  	if (SUCCEEDED(hr)) {
  		LogInfo("Substantiated custom %S [%S], bind_flags=0x%03x\n",
  				lookup_enum_name(CustomResourceTypeNames, override_type), name.c_str(), desc.BindFlags);
-@@ -6719,7 +6787,12 @@ void CustomResource::SubstantiateTexture2D(ID3D11Device *mOrigDevice1)
+@@ -6719,7 +6808,12 @@ void CustomResource::SubstantiateTexture2D(ID3D11Device *mOrigDevice1)
  	desc.MiscFlags = misc_flags;
  	OverrideTexDesc(&desc);
  
@@ -177,7 +212,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..88ac3d0ca90877cb60eecae7b62d0dce
  	if (SUCCEEDED(hr)) {
  		LogInfo("Substantiated custom %S [%S], bind_flags=0x%03x\n",
  				lookup_enum_name(CustomResourceTypeNames, override_type), name.c_str(), desc.BindFlags);
-@@ -6746,7 +6819,12 @@ void CustomResource::SubstantiateTexture3D(ID3D11Device *mOrigDevice1)
+@@ -6746,7 +6840,12 @@ void CustomResource::SubstantiateTexture3D(ID3D11Device *mOrigDevice1)
  	desc.MiscFlags = misc_flags;
  	OverrideTexDesc(&desc);
  
@@ -191,7 +226,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..88ac3d0ca90877cb60eecae7b62d0dce
  	if (SUCCEEDED(hr)) {
  		LogInfo("Substantiated custom %S [%S], bind_flags=0x%03x\n",
  				lookup_enum_name(CustomResourceTypeNames, override_type), name.c_str(), desc.BindFlags);
-@@ -6871,6 +6949,7 @@ void CustomResource::OverrideOutOfBandInfo(DXGI_FORMAT *format, UINT *stride)
+@@ -6871,6 +6970,7 @@ void CustomResource::OverrideOutOfBandInfo(DXGI_FORMAT *format, UINT *stride)
  
  void CustomResource::ResetRuntimeState()
  {
@@ -199,17 +234,18 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..88ac3d0ca90877cb60eecae7b62d0dce
  	if (resource) {
  		resource->Release();
  		resource = nullptr;
-@@ -6895,6 +6974,9 @@ void CustomResource::CopyMetadataFrom(const CustomResource& src)
+@@ -6895,6 +6995,10 @@ void CustomResource::CopyMetadataFrom(const CustomResource& src)
  	max_copies_per_frame = src.max_copies_per_frame;
  
  	filename = src.filename;
 +	preparation_writable = true;
 +	preparation_known_read = false;
++	preparation_known_srv = false;
 +	preparation_unknown_uses = 0;
  
  	override_type = src.override_type;
  	override_format = src.override_format;
-@@ -8629,8 +8711,15 @@ bool ResourceCopyTarget::ParseTarget(const wchar_t *target, bool is_source, cons
+@@ -8629,8 +8733,15 @@ bool ResourceCopyTarget::ParseTarget(const wchar_t *target, bool is_source, cons
  		// Parse the remainder as a custom resource (e.g. `ResourceFoo`).
  		ret = ParseTargetCustomResource(target, length, ini_namespace, scope);
  		//LogInfo("ParseTarget: %d at ParseTargetCustomResource\n", ret);
@@ -226,7 +262,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..88ac3d0ca90877cb60eecae7b62d0dce
  
  		// Parse the remainder as a resource pool (e.g. `PoolFoo`).
  		ret = ParseTargetPool(target, length, ini_namespace, scope, is_source);
-@@ -8859,6 +8948,24 @@ static CommandListCommand* parse_resource_copy_operation(
+@@ -8859,6 +8970,28 @@ static CommandListCommand* parse_resource_copy_operation(
  			options |= ResourceCopyOptions::COPY;
  	}
  
@@ -235,7 +271,9 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..88ac3d0ca90877cb60eecae7b62d0dce
 +	// compatibility paths even if their source filename happens to match.
 +	if (src.type == ResourceCopyTargetType::CUSTOM_RESOURCE &&
 +		(options & ResourceCopyOptions::REFERENCE) &&
-+		!(options & ResourceCopyOptions::UNKNOWN) &&
++		!(options & (ResourceCopyOptions::COPY_MASK | ResourceCopyOptions::UNKNOWN | ResourceCopyOptions::NO_VIEW_CACHE)) &&
++		src.evaluation_mode == ResourceCopyTargetEvaluationMode::RESOURCE &&
++		dst.evaluation_mode == ResourceCopyTargetEvaluationMode::RESOURCE &&
 +		(dst.type == ResourceCopyTargetType::SHADER_RESOURCE ||
 +		 dst.type == ResourceCopyTargetType::VERTEX_BUFFER ||
 +		 dst.type == ResourceCopyTargetType::INDEX_BUFFER ||
@@ -245,13 +283,15 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..88ac3d0ca90877cb60eecae7b62d0dce
 +			if (source->preparation_unknown_uses)
 +				--source->preparation_unknown_uses;
 +			source->preparation_known_read = true;
++			if (dst.type == ResourceCopyTargetType::SHADER_RESOURCE)
++				source->preparation_known_srv = true;
 +		}
 +	}
 +
  	// FIXME: If custom resources are copied to other custom resources by
  	// reference that are in turn bound to the pipeline we may not
  	// propagate all the bind flags correctly depending on the order
-@@ -10178,6 +10285,7 @@ void ResourceCopyTarget::SetResource(
+@@ -10178,6 +10311,7 @@ void ResourceCopyTarget::SetResource(
  		if (custom_resource->resource != res) {
  			if (custom_resource->resource)
  				custom_resource->resource->Release();
@@ -259,11 +299,36 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..88ac3d0ca90877cb60eecae7b62d0dce
  			custom_resource->resource = res;
  			custom_resource->device = state->mOrigDevice1;
  			if (custom_resource->resource)
-@@ -11966,7 +12074,12 @@ static ID3D11View* _CreateCompatibleView(
+@@ -11892,6 +12026,17 @@ static D3D11_UNORDERED_ACCESS_VIEW_DESC* FillOutTex3DDesc(
+ #pragma endregion FillOutDesc
+ 
+ 
++static ID3D11View* TryPreparedCompatibleView(ID3D11Resource* resource,
++	CommandListState* state, const D3D11_SHADER_RESOURCE_VIEW_DESC* desc)
++{
++	return ModLoading::TryGetPreparedShaderResourceView(resource, state->mOrigDevice1, desc);
++}
++template <typename DescType>
++static ID3D11View* TryPreparedCompatibleView(ID3D11Resource*, CommandListState*, const DescType*)
++{
++	return nullptr;
++}
++
+ template <typename ViewType,
+ 	 typename DescType,
+ 	 HRESULT (__stdcall ID3D11Device::*CreateView)(THIS_
+@@ -11966,7 +12111,19 @@ static ID3D11View* _CreateCompatibleView(
  			break;
  	}
  
 -	hr = (state->mOrigDevice1->*CreateView)(resource, pDesc, &view);
++	// The fully resolved target descriptor is available here. Prepared views
++	// are reused only after semantic descriptor equality and resource identity.
++	if (!(options & ResourceCopyOptions::NO_VIEW_CACHE)) {
++		if (auto prepared = TryPreparedCompatibleView(resource, state, pDesc))
++			return prepared;
++	}
++
 +	{
 +		ModLoading::ScopedLoadTrace trace(ModLoading::LoadStage::ViewCreation,
 +			reinterpret_cast<uintptr_t>(resource));
@@ -274,10 +339,32 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..88ac3d0ca90877cb60eecae7b62d0dce
  		LogInfo("Resource copy CreateCompatibleView failed: %x\n", hr);
  		if (pDesc)
 diff --git a/DirectX11/CommandList.h b/DirectX11/CommandList.h
-index d893ac4db9feec6625fb2dfd652f9eacf02eee61..dbfbd69502868ec1b974befabf8e50c919d640cd 100644
+index d893ac4db9feec6625fb2dfd652f9eacf02eee61..0f5ab9f3429df0c6ce2172560cbb57e2430c413d 100644
 --- a/DirectX11/CommandList.h
 +++ b/DirectX11/CommandList.h
-@@ -551,6 +551,7 @@ public:
+@@ -321,6 +321,8 @@ static EnumName_t<const wchar_t *, D3DCompileFlags> D3DCompileFlagNames[] = {
+ 	{NULL, D3DCompileFlags::INVALID} // End of list marker
+ };
+ 
++namespace ModLoading { struct ShaderBundleInput; }
++
+ class CustomShader
+ {
+ public:
+@@ -336,6 +338,12 @@ public:
+ 	ID3DBlob *vs_bytecode, *hs_bytecode, *ds_bytecode;
+ 	ID3DBlob *gs_bytecode, *ps_bytecode, *cs_bytecode;
+ 
++	// Captured once at the explicit configuration loading boundary. Retained
++	// compiled blobs are shared without copying their bytes on first use.
++	std::shared_ptr<const ModLoading::ShaderBundleInput> preparation_bundle;
++	std::shared_ptr<void> preparation_pin;
++	bool preparation_compile_failed = false;
++
+ 	int blend_override;
+ 	D3D11_BLEND_DESC blend_desc;
+ 	D3D11_BLEND_DESC blend_mask;
+@@ -551,6 +559,7 @@ public:
  	wstring name;
  
  	ID3D11Resource *resource;
@@ -285,7 +372,7 @@ index d893ac4db9feec6625fb2dfd652f9eacf02eee61..dbfbd69502868ec1b974befabf8e50c9
  	std::unique_ptr<ResourceHandleInfo> handle_info;
  	ResourcePool resource_pool;
  	ID3D11Device *device;
-@@ -577,6 +578,16 @@ public:
+@@ -577,6 +586,17 @@ public:
  	wstring filename;
  	bool substantiated;
  
@@ -294,6 +381,7 @@ index d893ac4db9feec6625fb2dfd652f9eacf02eee61..dbfbd69502868ec1b974befabf8e50c9
 +	unsigned preparation_unknown_uses = 0;
 +	bool preparation_writable = false;
 +	bool preparation_known_read = false;
++	bool preparation_known_srv = false;
 +	bool PreparationReadOnly() const {
 +		return preparation_known_read && !preparation_writable &&
 +			!preparation_unknown_uses && !pool && pool_index < 0;
@@ -409,7 +497,7 @@ index efb38dd02fe71b57d8ad549f274aceb3e8bb620f..88ef8be0301f5311cee96d03a9e608be
      <ClInclude Include="HookedContext.h" />
      <ClInclude Include="HookedDevice.h" />
 diff --git a/DirectX11/HackerDXGI.cpp b/DirectX11/HackerDXGI.cpp
-index 37fc24fae6e4335b7ce17d189aa3bc75e755e5bd..832b72d73b4e26e7029e4bc00828b4e29e3954a6 100644
+index 37fc24fae6e4335b7ce17d189aa3bc75e755e5bd..39431902e9dc7e026de8fc75d6d88e24bc06f0c2 100644
 --- a/DirectX11/HackerDXGI.cpp
 +++ b/DirectX11/HackerDXGI.cpp
 @@ -70,6 +70,8 @@
@@ -428,7 +516,7 @@ index 37fc24fae6e4335b7ce17d189aa3bc75e755e5bd..832b72d73b4e26e7029e4bc00828b4e2
 +	// Preparation is render-owned, after any compatible configuration reload.
 +	// A regular Present is not itself a loading window; the experimental setting
 +	// explicitly controls whether bounded driver creation is admitted here.
-+	ModLoading::PumpRuntime(mHackerDevice->mOrigDevice1,
++	ModLoading::PumpRuntime(mHackerDevice->GetPassThroughOrigDevice1(),
 +		mHackerDevice->GetPreparationEpoch());
 +
  	// Draw the on-screen overlay text with hunting and informational
@@ -1297,7 +1385,7 @@ index 0000000000000000000000000000000000000000..ed3cdf4a4b64b43f37386e89485c44cf
 +}
 diff --git a/DirectX11/ModLoading/CpuAssetCache.cpp b/DirectX11/ModLoading/CpuAssetCache.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..6527dcd10209774b69c9fff53ad532fe2004e7d7
+index 0000000000000000000000000000000000000000..38aa421a5a4c9c14428fd690868d2e51b5aab4a2
 --- /dev/null
 +++ b/DirectX11/ModLoading/CpuAssetCache.cpp
 @@ -0,0 +1,38 @@
@@ -1328,7 +1416,7 @@ index 0000000000000000000000000000000000000000..6527dcd10209774b69c9fff53ad532fe
 + std::lock_guard<std::mutex> lock(mutex_);
 + if(reservation>reserved_)return false;
 + reserved_-=reservation;
-+ if(!asset||!asset->snapshot.bytes||asset->ByteSize()>reservation)return false;
++ if(!asset||!asset->snapshot.watchable||!asset->snapshot.bytes||asset->ByteSize()>reservation)return false;
 + auto key=std::make_pair(asset->snapshot.path,asset->generation);
 + if(entries_.count(key))return true;
 + size_t n=asset->ByteSize();if(!MakeRoom(n))return false;
@@ -2205,10 +2293,10 @@ index 0000000000000000000000000000000000000000..8efa3476846ad59dc38735b97b646a11
 +}
 diff --git a/DirectX11/ModLoading/PreparationPlanner.cpp b/DirectX11/ModLoading/PreparationPlanner.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..53b37dbb9fcea63f618195d49f190249cae92027
+index 0000000000000000000000000000000000000000..b3dd9d89f05a1b7dd50b14c8a7107a79b696a6dd
 --- /dev/null
 +++ b/DirectX11/ModLoading/PreparationPlanner.cpp
-@@ -0,0 +1,438 @@
+@@ -0,0 +1,636 @@
 +#include "PreparationPlanner.h"
 +#ifdef _WIN32
 +#include <dxgi1_4.h>
@@ -2217,6 +2305,7 @@ index 0000000000000000000000000000000000000000..53b37dbb9fcea63f618195d49f190249
 +#include <chrono>
 +#include <cstring>
 +#include <limits>
++#include <mutex>
 +#include "LoadTrace.h"
 +#include "DDSTextureLoader.h"
 +#include "WICTextureLoader.h"
@@ -2248,7 +2337,87 @@ index 0000000000000000000000000000000000000000..53b37dbb9fcea63f618195d49f190249
 +    std::atomic<ULONG> refs_{1};
 +    std::shared_ptr<const LiveGpuAllocationLedger::Lease> lease_;
 +};
++struct ShaderBytecodeRegistry {
++    struct Entry {
++        std::weak_ptr<ID3DBlob> owner;
++        SourceDigest digest;
++        size_t bytes;
++    };
++    std::mutex mutex;
++    std::atomic<uint64_t> liveBytes{0};
++    std::map<ID3DBlob*, Entry> owners;
++};
++ShaderBytecodeRegistry& BytecodeRegistry() {
++    // Shared owners can outlive configuration services during DLL teardown.
++    // This CPU-only accounting registry has no loader-lock destructor work.
++    static auto* registry = new ShaderBytecodeRegistry;
++    return *registry;
++}
 +void Append(std::vector<uint32_t>& v, std::initializer_list<uint32_t> fields) { v.insert(v.end(), fields); }
++uint32_t FloatBits(float value) { uint32_t bits; std::memcpy(&bits, &value, sizeof(bits)); return bits; }
++void AppendDigest(std::vector<uint32_t>& v, const SourceDigest& digest) {
++    for (size_t i = 0; i < digest.size(); i += 4)
++        v.push_back(uint32_t(digest[i]) | uint32_t(digest[i + 1]) << 8 |
++            uint32_t(digest[i + 2]) << 16 | uint32_t(digest[i + 3]) << 24);
++}
++bool AppendBundle(std::vector<uint32_t>& v, const ShaderBundleInput& bundle, uint64_t estimate) {
++    if (bundle.stageOverrideMask & ~63u) return false;
++    Append(v, {bundle.stageOverrideMask, uint32_t(bundle.createBlendState), uint32_t(bundle.createDepthStencilState),
++        uint32_t(bundle.createRasterizerState), uint32_t(bundle.createSamplerState)});
++    uint64_t bytecodeBytes = 0;
++    bool hasOperation = bundle.stageOverrideMask || bundle.createBlendState || bundle.createDepthStencilState ||
++        bundle.createRasterizerState || bundle.createSamplerState;
++    if (!hasOperation) return false;
++    for (size_t stage = 0; stage < bundle.stages.size(); ++stage) {
++        const auto& code = bundle.stages[stage];
++        if (code && !(bundle.stageOverrideMask & (1u << stage))) return false;
++        Append(v, {uint32_t(bool(code)), uint32_t(code.Size()), uint32_t(uint64_t(code.Size()) >> 32)});
++        if (code) {
++            if (code.Size() > estimate - bytecodeBytes) return false;
++            bytecodeBytes += code.Size(); AppendDigest(v, code.Digest());
++        }
++    }
++    if (bundle.createBlendState) {
++        const auto& d = bundle.blend;
++        Append(v, {uint32_t(d.AlphaToCoverageEnable), uint32_t(d.IndependentBlendEnable)});
++        for (const auto& target : d.RenderTarget)
++            Append(v, {uint32_t(target.BlendEnable), uint32_t(target.SrcBlend), uint32_t(target.DestBlend), uint32_t(target.BlendOp),
++                uint32_t(target.SrcBlendAlpha), uint32_t(target.DestBlendAlpha), uint32_t(target.BlendOpAlpha), target.RenderTargetWriteMask});
++    }
++    if (bundle.createDepthStencilState) {
++        const auto& d = bundle.depthStencil;
++        Append(v, {uint32_t(d.DepthEnable), uint32_t(d.DepthWriteMask), uint32_t(d.DepthFunc), uint32_t(d.StencilEnable), d.StencilReadMask, d.StencilWriteMask});
++        for (const auto* face : {&d.FrontFace, &d.BackFace})
++            Append(v, {uint32_t(face->StencilFailOp), uint32_t(face->StencilDepthFailOp), uint32_t(face->StencilPassOp), uint32_t(face->StencilFunc)});
++    }
++    if (bundle.createRasterizerState) {
++        const auto& d = bundle.rasterizer;
++        Append(v, {uint32_t(d.FillMode), uint32_t(d.CullMode), uint32_t(d.FrontCounterClockwise), uint32_t(d.DepthBias),
++            FloatBits(d.DepthBiasClamp), FloatBits(d.SlopeScaledDepthBias), uint32_t(d.DepthClipEnable), uint32_t(d.ScissorEnable),
++            uint32_t(d.MultisampleEnable), uint32_t(d.AntialiasedLineEnable)});
++    }
++    if (bundle.createSamplerState) {
++        const auto& d = bundle.sampler;
++        Append(v, {uint32_t(d.Filter), uint32_t(d.AddressU), uint32_t(d.AddressV), uint32_t(d.AddressW), FloatBits(d.MipLODBias),
++            d.MaxAnisotropy, uint32_t(d.ComparisonFunc), FloatBits(d.BorderColor[0]), FloatBits(d.BorderColor[1]),
++            FloatBits(d.BorderColor[2]), FloatBits(d.BorderColor[3]), FloatBits(d.MinLOD), FloatBits(d.MaxLOD)});
++    }
++    return true;
++}
++uint64_t RetainedShaderBytecodeBytes(const GpuPreparationRequest& request) {
++    if (request.kind == GpuPreparationKind::ShaderBundle) {
++        uint64_t total = 0;
++        if (request.shaderBundle)
++            for (const auto& stage : request.shaderBundle->stages) {
++                if (stage.Size() > (std::numeric_limits<uint64_t>::max)() - total) return (std::numeric_limits<uint64_t>::max)();
++                total += stage.Size();
++            }
++        return total;
++    }
++    if (request.kind >= GpuPreparationKind::VertexShader && request.kind <= GpuPreparationKind::ComputeShader)
++        return request.shaderBytecode ? request.shaderBytecode.Size() : request.snapshot.bytes ? request.snapshot.bytes->size() : 0;
++    return 0;
++}
 +bool ReadOnly(UINT bind, UINT cpu, D3D11_USAGE usage, UINT misc) {
 +    const UINT allowed = D3D11_BIND_VERTEX_BUFFER | D3D11_BIND_INDEX_BUFFER |
 +        D3D11_BIND_CONSTANT_BUFFER | D3D11_BIND_SHADER_RESOURCE;
@@ -2289,8 +2458,13 @@ index 0000000000000000000000000000000000000000..53b37dbb9fcea63f618195d49f190249
 +    switch (d.ViewDimension) {
 +    case D3D11_SRV_DIMENSION_BUFFER: Append(v, {d.Buffer.FirstElement, d.Buffer.NumElements}); break;
 +    case D3D11_SRV_DIMENSION_BUFFEREX: Append(v, {d.BufferEx.FirstElement, d.BufferEx.NumElements, d.BufferEx.Flags}); break;
++    case D3D11_SRV_DIMENSION_TEXTURE1D: Append(v, {d.Texture1D.MostDetailedMip, d.Texture1D.MipLevels}); break;
++    case D3D11_SRV_DIMENSION_TEXTURE1DARRAY: Append(v, {d.Texture1DArray.MostDetailedMip, d.Texture1DArray.MipLevels, d.Texture1DArray.FirstArraySlice, d.Texture1DArray.ArraySize}); break;
 +    case D3D11_SRV_DIMENSION_TEXTURE2D: Append(v, {d.Texture2D.MostDetailedMip, d.Texture2D.MipLevels}); break;
 +    case D3D11_SRV_DIMENSION_TEXTURE2DARRAY: Append(v, {d.Texture2DArray.MostDetailedMip, d.Texture2DArray.MipLevels, d.Texture2DArray.FirstArraySlice, d.Texture2DArray.ArraySize}); break;
++    case D3D11_SRV_DIMENSION_TEXTURE2DMS: break;
++    case D3D11_SRV_DIMENSION_TEXTURE2DMSARRAY: Append(v, {d.Texture2DMSArray.FirstArraySlice, d.Texture2DMSArray.ArraySize}); break;
++    case D3D11_SRV_DIMENSION_TEXTURE3D: Append(v, {d.Texture3D.MostDetailedMip, d.Texture3D.MipLevels}); break;
 +    case D3D11_SRV_DIMENSION_TEXTURECUBE: Append(v, {d.TextureCube.MostDetailedMip, d.TextureCube.MipLevels}); break;
 +    case D3D11_SRV_DIMENSION_TEXTURECUBEARRAY: Append(v, {d.TextureCubeArray.MostDetailedMip, d.TextureCubeArray.MipLevels, d.TextureCubeArray.First2DArrayFace, d.TextureCubeArray.NumCubes}); break;
 +    default: return false;
@@ -2363,7 +2537,7 @@ index 0000000000000000000000000000000000000000..53b37dbb9fcea63f618195d49f190249
 +}
 +DeviceResourceKey PreparationPlanner::CanonicalKey(const DeviceResourceKey& requestKey, const PreparedGpuObject& object) const {
 +    DeviceResourceKey key = requestKey;
-+    if (key.effectiveOptions.size() > 1 &&
++    if (key.effectiveOptions.size() > 3 && !key.effectiveOptions[3] &&
 +        key.effectiveOptions[1] != uint32_t(GpuPreparationKind::EncodedDDS) &&
 +        key.effectiveOptions[1] != uint32_t(GpuPreparationKind::EncodedWIC)) return key;
 +    auto& v = key.effectiveOptions; Append(v, {0x44455343});
@@ -2393,13 +2567,56 @@ index 0000000000000000000000000000000000000000..53b37dbb9fcea63f618195d49f190249
 +    if (object.shaderResourceView) { D3D11_SHADER_RESOURCE_VIEW_DESC d{}; object.shaderResourceView->GetDesc(&d); AppendView(v, d); }
 +    return key;
 +}
++uint64_t SharedShaderBytecode::LiveRetainedBytes() { return BytecodeRegistry().liveBytes.load(std::memory_order_relaxed); }
++SharedShaderBytecode SharedShaderBytecode::Retain(ID3DBlob* blob, const SourceDigest& digest, uint64_t maximumRetainedBytes) {
++    SharedShaderBytecode result;
++    if (!maximumRetainedBytes || !blob || !blob->GetBufferPointer() || !blob->GetBufferSize()) return result;
++    auto& registry = BytecodeRegistry();
++    std::lock_guard<std::mutex> lock(registry.mutex);
++    // Weak entries retain neither the blob nor its charge. Clean them before
++    // admission so repeated F10 generations cannot grow the index unboundedly.
++    for (auto it = registry.owners.begin(); it != registry.owners.end();)
++        if (it->second.owner.expired()) it = registry.owners.erase(it); else ++it;
++    const size_t bytes = blob->GetBufferSize();
++    auto existing = registry.owners.find(blob);
++    if (existing != registry.owners.end()) {
++        if (existing->second.bytes != bytes || existing->second.digest != digest) return result;
++        result.owner_ = existing->second.owner.lock();
++        if (!result.owner_) return result;
++    } else {
++        if (registry.owners.size() >= 4096 || bytes > maximumRetainedBytes) return result;
++        auto live = registry.liveBytes.load(std::memory_order_relaxed);
++        do {
++            if (live > maximumRetainedBytes - bytes) return result;
++        } while (!registry.liveBytes.compare_exchange_weak(live, live + bytes, std::memory_order_relaxed));
++        blob->AddRef();
++        // No registry mutex in the deleter: control-block/map allocation may
++        // fail while admission holds that mutex. Final release decrements only
++        // after the compiled blob's own Release returns.
++        auto* accounting = &registry;
++        result.owner_ = std::shared_ptr<ID3DBlob>(blob, [accounting, bytes](ID3DBlob* retained) {
++            retained->Release(); accounting->liveBytes.fetch_sub(bytes, std::memory_order_relaxed);
++        });
++        registry.owners.emplace(blob, ShaderBytecodeRegistry::Entry{result.owner_, digest, bytes});
++    }
++    result.data_ = static_cast<const uint8_t*>(blob->GetBufferPointer()); result.size_ = bytes; result.digest_ = digest;
++    return result;
++}
++PreparedShaderBundle::~PreparedShaderBundle() {
++    for (auto* child : {static_cast<ID3D11DeviceChild*>(vertex), static_cast<ID3D11DeviceChild*>(hull),
++        static_cast<ID3D11DeviceChild*>(domain), static_cast<ID3D11DeviceChild*>(geometry),
++        static_cast<ID3D11DeviceChild*>(pixel), static_cast<ID3D11DeviceChild*>(compute),
++        static_cast<ID3D11DeviceChild*>(blend), static_cast<ID3D11DeviceChild*>(depthStencil),
++        static_cast<ID3D11DeviceChild*>(rasterizer), static_cast<ID3D11DeviceChild*>(sampler)})
++        if (child) child->Release();
++}
 +PreparedGpuObject::~PreparedGpuObject() {
 +    if (shaderResourceView) shaderResourceView->Release();
 +    if (shader) shader->Release();
 +    if (resource) resource->Release();
 +}
-+PreparationPlanner::PreparationPlanner(uint64_t cacheBytes, size_t maxQueued)
-+    : cache_(cacheBytes), maxQueued_((std::min)(size_t(4096), maxQueued)), enabled_(cacheBytes != 0) {}
++PreparationPlanner::PreparationPlanner(uint64_t cacheBytes, size_t maxQueued, uint64_t maxRetainedShaderBytecodeBytes)
++    : cache_(cacheBytes), maxQueued_((std::min)(size_t(4096), maxQueued)), maxShaderBytecodeBytes_(maxRetainedShaderBytecodeBytes), enabled_(cacheBytes != 0) {}
 +PreparationPlanner::~PreparationPlanner() { RetireDevice(); }
 +bool PreparationPlanner::OnOwner() const { return owner_ == std::this_thread::get_id(); }
 +bool PreparationPlanner::BeginDevice(ID3D11Device* device, DeviceEpoch epoch) {
@@ -2412,7 +2629,7 @@ index 0000000000000000000000000000000000000000..53b37dbb9fcea63f618195d49f190249
 +    return true;
 +}
 +void PreparationPlanner::RetireDevice() {
-+    queue_.clear(); resolvedKeys_.clear(); queuedBytes_ = 0; budget_ = MemoryBudgetController(128ull * 1024 * 1024, safetyHeadroom_);
++    queue_.clear(); resolvedKeys_.clear(); failedKeys_.clear(); queuedBytes_ = 0; queuedShaderBytecodeBytes_ = 0; budget_ = MemoryBudgetController(128ull * 1024 * 1024, safetyHeadroom_);
 +    cache_.BeginEpoch(0); device_ = nullptr; singleThreaded_ = false; concurrentCreates_ = false;
 +}
 +void PreparationPlanner::SetSafetyHeadroom(uint64_t bytes) {
@@ -2422,15 +2639,24 @@ index 0000000000000000000000000000000000000000..53b37dbb9fcea63f618195d49f190249
 +    budget_.Update(QueryBudget());
 +    for (const auto& entry : queue_)
 +        if (!budget_.Reserve({entry.request.estimatedBytes, entry.request.pendingGenerationOverlap})) {
-+            queue_.clear(); queuedBytes_ = 0; budget_ = MemoryBudgetController(128ull * 1024 * 1024, bytes); break;
++            queue_.clear(); queuedBytes_ = 0; queuedShaderBytecodeBytes_ = 0; budget_ = MemoryBudgetController(128ull * 1024 * 1024, bytes); break;
 +        }
 +}
 +bool PreparationPlanner::MakeKey(const GpuPreparationRequest& r, DeviceResourceKey& key) const {
-+    if (!r.dependencyReadOnly || !r.snapshot.bytes || r.snapshot.bytes->empty() || !r.estimatedBytes) return false;
-+    key.digest = r.snapshot.digest; key.epoch = cache_.Epoch();
++    if (!r.dependencyReadOnly || !r.estimatedBytes || (r.createShaderResourceView && r.createDefaultShaderResourceView)) return false;
++    const bool bundle = r.kind == GpuPreparationKind::ShaderBundle;
++    const bool shader = r.kind >= GpuPreparationKind::VertexShader && r.kind <= GpuPreparationKind::ComputeShader;
++    if (bundle) {
++        if (!r.shaderBundle || r.shaderBytecode || r.createShaderResourceView || r.createDefaultShaderResourceView || !r.subresources.empty()) return false;
++    } else if (shader && r.shaderBytecode) {
++        if (r.snapshot.bytes || r.shaderBundle) return false;
++    } else if (!r.snapshot.bytes || r.snapshot.bytes->empty() || r.shaderBundle || r.shaderBytecode) return false;
++    key.digest = bundle ? SourceDigest{} : r.shaderBytecode ? r.shaderBytecode.Digest() : r.snapshot.digest;
++    key.epoch = cache_.Epoch();
 +    auto& v = key.effectiveOptions;
-+    Append(v, {1, uint32_t(r.kind), uint32_t(r.createShaderResourceView), uint32_t(r.creationOptions.size())});
++    Append(v, {2, uint32_t(r.kind), uint32_t(r.createShaderResourceView), uint32_t(r.createDefaultShaderResourceView), uint32_t(r.creationOptions.size())});
 +    v.insert(v.end(), r.creationOptions.begin(), r.creationOptions.end());
++    if (bundle) return AppendBundle(v, *r.shaderBundle, r.estimatedBytes);
 +    if (r.kind == GpuPreparationKind::Buffer) {
 +        const auto& d = r.buffer;
 +        if (!d.ByteWidth || !ReadOnly(d.BindFlags, d.CPUAccessFlags, d.Usage, d.MiscFlags) ||
@@ -2461,14 +2687,15 @@ index 0000000000000000000000000000000000000000..53b37dbb9fcea63f618195d49f190249
 +            d.SampleDesc.Quality, uint32_t(d.Usage), d.BindFlags, d.CPUAccessFlags, d.MiscFlags});
 +    } else if (r.kind == GpuPreparationKind::EncodedDDS || r.kind == GpuPreparationKind::EncodedWIC) {
 +        const uint64_t required = EstimateEncodedTextureBytes(r.snapshot, r.kind);
-+        if (!required || r.estimatedBytes < required || r.createShaderResourceView ||
++        if (!required || r.estimatedBytes < required ||
 +            !ReadOnly(r.loaderBindFlags, 0, D3D11_USAGE_DEFAULT, r.loaderMiscFlags) ||
 +            r.loaderBindFlags != D3D11_BIND_SHADER_RESOURCE || (r.wicLoaderFlags & ~3u) ||
 +            (r.loaderMiscFlags & ~UINT(D3D11_RESOURCE_MISC_TEXTURECUBE)) || !r.subresources.empty()) return false;
 +        Append(v, {r.loaderBindFlags, r.loaderMiscFlags, r.wicLoaderFlags, uint32_t(r.forceSRGB),
 +            uint32_t(r.maxTextureSize), uint32_t(uint64_t(r.maxTextureSize) >> 32)});
 +    } else {
-+        if (r.createShaderResourceView || !r.subresources.empty()) return false;
++        const auto codeBytes = r.shaderBytecode ? r.shaderBytecode.Size() : r.snapshot.bytes->size();
++        if (!shader || r.estimatedBytes < codeBytes || r.createShaderResourceView || r.createDefaultShaderResourceView || !r.subresources.empty()) return false;
 +    }
 +    return !r.createShaderResourceView || AppendView(v, r.shaderResourceView);
 +}
@@ -2492,6 +2719,12 @@ index 0000000000000000000000000000000000000000..53b37dbb9fcea63f618195d49f190249
 +    if (adapter3) adapter3->Release(); if (adapter) adapter->Release(); if (dxgiDevice) dxgiDevice->Release();
 +    return sample;
 +}
++bool PreparationPlanner::ComputeKey(const GpuPreparationRequest& request, DeviceResourceKey& key) const {
++    if (!enabled_ || !device_ || !OnOwner() || !cache_.Epoch() || request.estimatedBytes > cache_.CapacityBytes()) return false;
++    DeviceResourceKey candidate;
++    if (!MakeKey(request, candidate)) return false;
++    key = std::move(candidate); return true;
++}
 +GpuQueueResult PreparationPlanner::Enqueue(const GpuPreparationRequest& request, DeviceResourceKey* key) {
 +    if (!enabled_) return GpuQueueResult::CompatibilityOnly;
 +    if (!device_ || !cache_.Epoch()) return GpuQueueResult::WrongDevice;
@@ -2500,10 +2733,16 @@ index 0000000000000000000000000000000000000000..53b37dbb9fcea63f618195d49f190249
 +    if (request.estimatedBytes > cache_.CapacityBytes() || !MakeKey(request, candidate)) return GpuQueueResult::CompatibilityOnly;
 +    if (key) *key = candidate;
 +    if (TryAcquire(candidate)) return GpuQueueResult::AlreadyReady;
++    if (failedKeys_.find(candidate) != failedKeys_.end()) return GpuQueueResult::CompatibilityOnly;
 +    for (const auto& pending : queue_)
 +        if (!(candidate < pending.key) && !(pending.key < candidate)) return GpuQueueResult::Queued;
++    // Saturation disables new speculative keys for this epoch rather than
++    // evicting failure knowledge and retrying unsupported creations forever.
++    if (failedKeys_.size() >= (std::max)(size_t(1), maxQueued_ * 4)) return GpuQueueResult::CompatibilityOnly;
 +    if (queue_.size() >= maxQueued_) return GpuQueueResult::Full;
-+    if ((request.kind == GpuPreparationKind::EncodedDDS || request.kind == GpuPreparationKind::EncodedWIC) &&
++    const auto retainedShaderBytes = RetainedShaderBytecodeBytes(request);
++    if (retainedShaderBytes > maxShaderBytecodeBytes_ - queuedShaderBytecodeBytes_) return GpuQueueResult::BudgetBlocked;
++    if ((request.kind == GpuPreparationKind::EncodedDDS || request.kind == GpuPreparationKind::EncodedWIC || request.createDefaultShaderResourceView) &&
 +        resolvedKeys_.size() + queue_.size() >= (std::max)(size_t(1), maxQueued_ * 4)) {
 +        for (auto alias = resolvedKeys_.begin(); alias != resolvedKeys_.end();) {
 +            if (!cache_.Find(alias->second)) alias = resolvedKeys_.erase(alias); else ++alias;
@@ -2517,38 +2756,56 @@ index 0000000000000000000000000000000000000000..53b37dbb9fcea63f618195d49f190249
 +    }
 +    try { queue_.push_back({request, std::move(candidate)}); }
 +    catch (...) { budget_.Complete(request.estimatedBytes + request.pendingGenerationOverlap); throw; }
-+    queuedBytes_ += request.estimatedBytes;
++    queuedBytes_ += request.estimatedBytes; queuedShaderBytecodeBytes_ += retainedShaderBytes;
 +    return GpuQueueResult::Queued;
 +}
 +std::shared_ptr<PreparedGpuObject> PreparationPlanner::Create(const GpuPreparationRequest& r, HRESULT& hr) {
 +    auto result = std::make_shared<PreparedGpuObject>(); hr = E_INVALIDARG;
-+    const auto& bytes = *r.snapshot.bytes;
++    const auto* bytes = r.shaderBytecode ? r.shaderBytecode.Data() : r.snapshot.bytes ? r.snapshot.bytes->data() : nullptr;
++    const size_t byteCount = r.shaderBytecode ? r.shaderBytecode.Size() : r.snapshot.bytes ? r.snapshot.bytes->size() : 0;
 +    ScopedLoadTrace trace(LoadStage::GpuCreation); trace.SetBytes(r.estimatedBytes);
 +    switch (r.kind) {
 +    case GpuPreparationKind::Buffer: {
 +        std::vector<uint8_t> padded(r.buffer.ByteWidth, 0);
-+        std::memcpy(padded.data(), bytes.data(), (std::min)(padded.size(), bytes.size()));
++        std::memcpy(padded.data(), bytes, (std::min)(padded.size(), byteCount));
 +        D3D11_SUBRESOURCE_DATA initial{}; initial.pSysMem = padded.data(); ID3D11Buffer* buffer = nullptr;
 +        hr = device_->CreateBuffer(&r.buffer, &initial, &buffer); result->resource = buffer; break;
 +    }
 +    case GpuPreparationKind::EncodedDDS:
-+        hr = DirectX::CreateDDSTextureFromMemoryEx(device_, bytes.data(), bytes.size(), r.maxTextureSize,
++        hr = DirectX::CreateDDSTextureFromMemoryEx(device_, bytes, byteCount, r.maxTextureSize,
 +            D3D11_USAGE_DEFAULT, r.loaderBindFlags, 0, r.loaderMiscFlags, r.forceSRGB, &result->resource, nullptr);
 +        break;
 +    case GpuPreparationKind::EncodedWIC:
-+        hr = DirectX::CreateWICTextureFromMemoryEx(device_, bytes.data(), bytes.size(), r.maxTextureSize,
++        hr = DirectX::CreateWICTextureFromMemoryEx(device_, bytes, byteCount, r.maxTextureSize,
 +            D3D11_USAGE_DEFAULT, r.loaderBindFlags, 0, r.loaderMiscFlags, r.wicLoaderFlags, &result->resource, nullptr);
 +        break;
 +    case GpuPreparationKind::Texture2D: {
 +        std::vector<D3D11_SUBRESOURCE_DATA> initial(r.subresources.size());
 +        for (size_t i = 0; i < initial.size(); ++i) {
-+            initial[i].pSysMem = bytes.data() + r.subresources[i].offset;
++            initial[i].pSysMem = bytes + r.subresources[i].offset;
 +            initial[i].SysMemPitch = r.subresources[i].rowPitch; initial[i].SysMemSlicePitch = r.subresources[i].slicePitch;
 +        }
 +        ID3D11Texture2D* texture = nullptr;
 +        hr = device_->CreateTexture2D(&r.texture, initial.data(), &texture); result->resource = texture; break;
 +    }
-+#define PREPARE_SHADER(Kind, Type, Method) case GpuPreparationKind::Kind: { Type* shader = nullptr; hr = device_->Method(bytes.data(), bytes.size(), nullptr, &shader); result->shader = shader; break; }
++    case GpuPreparationKind::ShaderBundle: {
++        result->bundle = std::make_shared<PreparedShaderBundle>();
++        const auto& input = *r.shaderBundle; auto& output = *result->bundle; hr = S_OK;
++#define PREPARE_BUNDLE_STAGE(Index, Member, Method) if (SUCCEEDED(hr) && input.stages[Index]) hr = device_->Method(input.stages[Index].Data(), input.stages[Index].Size(), nullptr, &output.Member);
++        PREPARE_BUNDLE_STAGE(0, vertex, CreateVertexShader)
++        PREPARE_BUNDLE_STAGE(1, hull, CreateHullShader)
++        PREPARE_BUNDLE_STAGE(2, domain, CreateDomainShader)
++        PREPARE_BUNDLE_STAGE(3, geometry, CreateGeometryShader)
++        PREPARE_BUNDLE_STAGE(4, pixel, CreatePixelShader)
++        PREPARE_BUNDLE_STAGE(5, compute, CreateComputeShader)
++#undef PREPARE_BUNDLE_STAGE
++        if (SUCCEEDED(hr) && input.createBlendState) hr = device_->CreateBlendState(&input.blend, &output.blend);
++        if (SUCCEEDED(hr) && input.createDepthStencilState) hr = device_->CreateDepthStencilState(&input.depthStencil, &output.depthStencil);
++        if (SUCCEEDED(hr) && input.createRasterizerState) hr = device_->CreateRasterizerState(&input.rasterizer, &output.rasterizer);
++        if (SUCCEEDED(hr) && input.createSamplerState) hr = device_->CreateSamplerState(&input.sampler, &output.sampler);
++        break;
++    }
++#define PREPARE_SHADER(Kind, Type, Method) case GpuPreparationKind::Kind: { Type* shader = nullptr; hr = device_->Method(bytes, byteCount, nullptr, &shader); result->shader = shader; break; }
 +    PREPARE_SHADER(VertexShader, ID3D11VertexShader, CreateVertexShader)
 +    PREPARE_SHADER(PixelShader, ID3D11PixelShader, CreatePixelShader)
 +    PREPARE_SHADER(GeometryShader, ID3D11GeometryShader, CreateGeometryShader)
@@ -2558,19 +2815,32 @@ index 0000000000000000000000000000000000000000..53b37dbb9fcea63f618195d49f190249
 +#undef PREPARE_SHADER
 +    }
 +    trace.SetResult(hr);
-+    if (SUCCEEDED(hr) && r.createShaderResourceView) {
++    if (SUCCEEDED(hr) && (r.createShaderResourceView || r.createDefaultShaderResourceView)) {
 +        ScopedLoadTrace viewTrace(LoadStage::ViewCreation);
-+        hr = device_->CreateShaderResourceView(result->resource, &r.shaderResourceView, &result->shaderResourceView);
++        hr = device_->CreateShaderResourceView(result->resource, r.createDefaultShaderResourceView ? nullptr : &r.shaderResourceView, &result->shaderResourceView);
 +        viewTrace.SetResult(hr);
 +    }
 +    if (SUCCEEDED(hr)) {
-+        result->allocationEstimate = ProcessGpuAllocationLedger().Track(r.estimatedBytes);
-+        if (!result->allocationEstimate) hr = E_OUTOFMEMORY;
-+        else {
-+            auto* attachment = new AllocationEstimateAttachment(result->allocationEstimate);
-+            ID3D11DeviceChild* child = result->resource ? static_cast<ID3D11DeviceChild*>(result->resource) : result->shader;
-+            hr = child ? child->SetPrivateDataInterface(AllocationEstimateGuid, attachment) : E_UNEXPECTED;
-+            attachment->Release();
++        std::array<ID3D11DeviceChild*, 12> children{};
++        children[0] = result->resource; children[1] = result->shader;
++        if (result->bundle) {
++            const auto& b = *result->bundle;
++            children[2] = b.vertex; children[3] = b.hull; children[4] = b.domain; children[5] = b.geometry;
++            children[6] = b.pixel; children[7] = b.compute; children[8] = b.blend;
++            children[9] = b.depthStencil; children[10] = b.rasterizer; children[11] = b.sampler;
++        }
++        // An intentional null-only stage bundle has no GPU allocation to track.
++        const bool hasAllocation = std::any_of(children.begin(), children.end(), [](ID3D11DeviceChild* child) { return child != nullptr; });
++        if (hasAllocation) {
++            result->allocationEstimate = ProcessGpuAllocationLedger().Track(r.estimatedBytes);
++            if (!result->allocationEstimate) hr = E_OUTOFMEMORY;
++            else {
++                auto* attachment = new AllocationEstimateAttachment(result->allocationEstimate);
++                for (auto* child : children) {
++                    if (child && SUCCEEDED(hr)) hr = child->SetPrivateDataInterface(AllocationEstimateGuid, attachment);
++                }
++                attachment->Release();
++            }
 +        }
 +    }
 +    return SUCCEEDED(hr) ? result : nullptr;
@@ -2583,7 +2853,9 @@ index 0000000000000000000000000000000000000000..53b37dbb9fcea63f618195d49f190249
 +        const auto& next = queue_.front();
 +        if (next.request.estimatedBytes > limits.bytes) {
 +            budget_.Complete(next.request.estimatedBytes + next.request.pendingGenerationOverlap);
-+            queuedBytes_ -= next.request.estimatedBytes; queue_.pop_front(); ++result.compatibilitySkipped;
++            queuedBytes_ -= next.request.estimatedBytes;
++            queuedShaderBytecodeBytes_ -= RetainedShaderBytecodeBytes(next.request);
++            queue_.pop_front(); ++result.compatibilitySkipped;
 +            continue;
 +        }
 +        if (next.request.estimatedBytes > limits.bytes - processedBytes ||
@@ -2595,14 +2867,16 @@ index 0000000000000000000000000000000000000000..53b37dbb9fcea63f618195d49f190249
 +        if (!budget_.Reserve({next.request.estimatedBytes, next.request.pendingGenerationOverlap})) {
 +            // Pressure invalidates speculative reservations; retain CPU sources
 +            // in the CPU cache and let the runtime count a preparation miss.
-+            queue_.clear(); queuedBytes_ = 0;
++            queue_.clear(); queuedBytes_ = 0; queuedShaderBytecodeBytes_ = 0;
 +            budget_ = MemoryBudgetController(128ull * 1024 * 1024, safetyHeadroom_); break;
 +        }
 +        // Make space before driver allocation, preserving active leases. A
 +        // configured cache cap includes the pending allocation's peak estimate.
 +        if (!cache_.MakeRoom(next.request.estimatedBytes)) {
 +            budget_.Complete(next.request.estimatedBytes + next.request.pendingGenerationOverlap);
-+            queuedBytes_ -= next.request.estimatedBytes; queue_.pop_front(); ++result.compatibilitySkipped;
++            queuedBytes_ -= next.request.estimatedBytes;
++            queuedShaderBytecodeBytes_ -= RetainedShaderBytecodeBytes(next.request);
++            queue_.pop_front(); ++result.compatibilitySkipped;
 +            continue;
 +        }
 +        auto work = std::move(queue_.front()); queue_.pop_front();
@@ -2610,8 +2884,14 @@ index 0000000000000000000000000000000000000000..53b37dbb9fcea63f618195d49f190249
 +        struct ReservationCompletion {
 +            MemoryBudgetController& budget;
 +            uint64_t bytes;
-+            ~ReservationCompletion() { budget.Complete(bytes); }
-+        } completion{budget_, work.request.estimatedBytes + work.request.pendingGenerationOverlap};
++            uint64_t& retainedShaderBytes;
++            uint64_t requestShaderBytes;
++            ~ReservationCompletion() {
++                budget.Complete(bytes);
++                retainedShaderBytes = retainedShaderBytes >= requestShaderBytes ? retainedShaderBytes - requestShaderBytes : 0;
++            }
++        } completion{budget_, work.request.estimatedBytes + work.request.pendingGenerationOverlap,
++            queuedShaderBytecodeBytes_, RetainedShaderBytecodeBytes(work.request)};
 +        HRESULT hr = E_FAIL; auto object = Create(work.request, hr);
 +        if (object) {
 +            const auto canonical = CanonicalKey(work.key, *object);
@@ -2621,7 +2901,13 @@ index 0000000000000000000000000000000000000000..53b37dbb9fcea63f618195d49f190249
 +                if (canonical < work.key || work.key < canonical) resolvedKeys_[work.key] = canonical;
 +                ++result.created;
 +            } else ++result.failed;
-+        } else ++result.failed;
++        } else {
++            ++result.failed;
++            if (FAILED(hr) && hr != E_OUTOFMEMORY && hr != E_PENDING &&
++                hr != DXGI_ERROR_DEVICE_REMOVED && hr != DXGI_ERROR_DEVICE_RESET && hr != DXGI_ERROR_DEVICE_HUNG &&
++                hr != DXGI_ERROR_WAS_STILL_DRAWING && failedKeys_.size() < (std::max)(size_t(1), maxQueued_ * 4))
++                failedKeys_.insert(work.key);
++        }
 +        if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET || FAILED(device_->GetDeviceRemovedReason())) {
 +            result.deviceRemoved = true; RetireDevice(); break;
 +        }
@@ -2649,10 +2935,10 @@ index 0000000000000000000000000000000000000000..53b37dbb9fcea63f618195d49f190249
 +#endif
 diff --git a/DirectX11/ModLoading/PreparationPlanner.h b/DirectX11/ModLoading/PreparationPlanner.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..4e53f601be55af4a4116d23974acaf241f38ca53
+index 0000000000000000000000000000000000000000..3882aa2b2a3198d3a2d15411dd10baea5e28f9ca
 --- /dev/null
 +++ b/DirectX11/ModLoading/PreparationPlanner.h
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,158 @@
 +#pragma once
 +#include "DeviceResourceCache.h"
 +#include "MemoryBudgetController.h"
@@ -2660,22 +2946,71 @@ index 0000000000000000000000000000000000000000..4e53f601be55af4a4116d23974acaf24
 +#include <d3d11.h>
 +#include <deque>
 +#include <string>
++#include <set>
 +#include <thread>
 +namespace ModLoading {
-+enum class GpuPreparationKind { Buffer, Texture2D, EncodedDDS, EncodedWIC, VertexShader, PixelShader, GeometryShader, HullShader, DomainShader, ComputeShader };
++enum class GpuPreparationKind { Buffer, Texture2D, EncodedDDS, EncodedWIC, VertexShader, PixelShader, GeometryShader, HullShader, DomainShader, ComputeShader, ShaderBundle };
 +enum class GpuQueueResult { Queued, AlreadyReady, CompatibilityOnly, Full, WrongDevice, WrongThread, BudgetBlocked };
 +struct PreparedSubresource {
 +    uint64_t offset = 0, bytes = 0;
 +    UINT rowPitch = 0, slicePitch = 0;
++};
++// A retained compiled blob is an immutable byte view for the duration of a
++// request. No shader-bytecode payload copy and no raw blob lifetime borrowing.
++class SharedShaderBytecode {
++public:
++    static SharedShaderBytecode Retain(ID3DBlob* blob, const SourceDigest& digest,
++                                       uint64_t maximumRetainedBytes = 64ull * 1024 * 1024);
++    static uint64_t LiveRetainedBytes();
++    const uint8_t* Data() const { return data_; }
++    size_t Size() const { return size_; }
++    const SourceDigest& Digest() const { return digest_; }
++    explicit operator bool() const { return owner_ && data_ && size_; }
++private:
++    std::shared_ptr<ID3DBlob> owner_;
++    const uint8_t* data_ = nullptr;
++    size_t size_ = 0;
++    SourceDigest digest_{};
++};
++struct ShaderBundleInput {
++    // Legacy stage order: VS, HS, DS, GS, PS, CS. Mask bit with no bytecode
++    // means an explicit null override, never an unresolved/failed compilation.
++    std::array<SharedShaderBytecode, 6> stages;
++    uint32_t stageOverrideMask = 0;
++    bool createBlendState = false, createDepthStencilState = false;
++    bool createRasterizerState = false, createSamplerState = false;
++    D3D11_BLEND_DESC blend{};
++    D3D11_DEPTH_STENCIL_DESC depthStencil{};
++    D3D11_RASTERIZER_DESC rasterizer{};
++    D3D11_SAMPLER_DESC sampler{};
++};
++struct PreparedShaderBundle {
++    ID3D11VertexShader* vertex = nullptr;
++    ID3D11HullShader* hull = nullptr;
++    ID3D11DomainShader* domain = nullptr;
++    ID3D11GeometryShader* geometry = nullptr;
++    ID3D11PixelShader* pixel = nullptr;
++    ID3D11ComputeShader* compute = nullptr;
++    ID3D11BlendState* blend = nullptr;
++    ID3D11DepthStencilState* depthStencil = nullptr;
++    ID3D11RasterizerState* rasterizer = nullptr;
++    ID3D11SamplerState* sampler = nullptr;
++    PreparedShaderBundle() = default;
++    ~PreparedShaderBundle();
++    PreparedShaderBundle(const PreparedShaderBundle&) = delete;
++    PreparedShaderBundle& operator=(const PreparedShaderBundle&) = delete;
 +};
 +struct GpuPreparationRequest {
 +    SourceSnapshot snapshot;
 +    // Queue ownership keeps CPU cache accounting live until upload finishes.
 +    std::shared_ptr<const PreparedAsset> sourceOwner;
 +    GpuPreparationKind kind = GpuPreparationKind::Buffer;
++    SharedShaderBytecode shaderBytecode;
++    std::shared_ptr<const ShaderBundleInput> shaderBundle;
 +    D3D11_BUFFER_DESC buffer{};
 +    D3D11_TEXTURE2D_DESC texture{};
 +    bool createShaderResourceView = false;
++    bool createDefaultShaderResourceView = false;
 +    D3D11_SHADER_RESOURCE_VIEW_DESC shaderResourceView{};
 +    std::vector<PreparedSubresource> subresources;
 +    // Exact DirectXTK no-context memory-loader options. No mip autogeneration.
@@ -2697,6 +3032,7 @@ index 0000000000000000000000000000000000000000..4e53f601be55af4a4116d23974acaf24
 +    ID3D11Resource* resource = nullptr;
 +    ID3D11ShaderResourceView* shaderResourceView = nullptr;
 +    ID3D11DeviceChild* shader = nullptr;
++    std::shared_ptr<PreparedShaderBundle> bundle;
 +    // One estimate per creation, also attached to the actual D3D child so
 +    // pipeline/view COM owners retain it after cache/active leases disappear.
 +    std::shared_ptr<const LiveGpuAllocationLedger::Lease> allocationEstimate;
@@ -2717,7 +3053,8 @@ index 0000000000000000000000000000000000000000..4e53f601be55af4a4116d23974acaf24
 +// authorization. No immediate/deferred-context calls occur here.
 +class PreparationPlanner {
 +public:
-+    explicit PreparationPlanner(uint64_t cacheBytes = 256ull * 1024 * 1024, size_t maxQueued = 32);
++    explicit PreparationPlanner(uint64_t cacheBytes = 256ull * 1024 * 1024, size_t maxQueued = 32,
++                                uint64_t maxRetainedShaderBytecodeBytes = 64ull * 1024 * 1024);
 +    ~PreparationPlanner();
 +    // Borrowed real rendering device; owner MUST RetireDevice before teardown.
 +    // Epoch must come from AllocateDeviceEpoch per real wrapper lifetime.
@@ -2725,6 +3062,9 @@ index 0000000000000000000000000000000000000000..4e53f601be55af4a4116d23974acaf24
 +    void RetireDevice();
 +    DeviceEpoch Epoch() const { return cache_.Epoch(); }
 +    GpuQueueResult Enqueue(const GpuPreparationRequest& request, DeviceResourceKey* key = nullptr);
++    // Computes immutable identity only, with no queue/cache/driver mutation.
++    bool ComputeKey(const GpuPreparationRequest& request, DeviceResourceKey& key) const;
++    uint64_t QueuedShaderBytecodeBytes() const { return queuedShaderBytecodeBytes_; }
 +    // Caller holds legacy LockResourceCreationMode across Pump. Creation can
 +    // stall inside the driver; adaptive budgets cannot preempt one driver call.
 +    // Default strict gate executes zero driver calls outside loading windows.
@@ -2749,7 +3089,9 @@ index 0000000000000000000000000000000000000000..4e53f601be55af4a4116d23974acaf24
 +    MemoryBudgetController budget_;
 +    std::deque<QueuedRequest> queue_;
 +    std::map<DeviceResourceKey, DeviceResourceKey> resolvedKeys_;
++    std::set<DeviceResourceKey> failedKeys_;
 +    size_t maxQueued_;
++    uint64_t maxShaderBytecodeBytes_, queuedShaderBytecodeBytes_ = 0;
 +    uint64_t queuedBytes_ = 0, safetyHeadroom_ = 128ull * 1024 * 1024;
 +    bool singleThreaded_ = false, concurrentCreates_ = false, enabled_ = true;
 +};
@@ -2757,10 +3099,10 @@ index 0000000000000000000000000000000000000000..4e53f601be55af4a4116d23974acaf24
 +#endif
 diff --git a/DirectX11/ModLoading/PreparationScheduler.cpp b/DirectX11/ModLoading/PreparationScheduler.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..43c357f0221a97330762c49b3992602cc94aa91e
+index 0000000000000000000000000000000000000000..2dfa81ce6c9957ab669288f8fbefabe7c64780a0
 --- /dev/null
 +++ b/DirectX11/ModLoading/PreparationScheduler.cpp
-@@ -0,0 +1,62 @@
+@@ -0,0 +1,70 @@
 +#include "PreparationScheduler.h"
 +#include "SnapshotIO.h"
 +#include <algorithm>
@@ -2782,23 +3124,26 @@ index 0000000000000000000000000000000000000000..43c357f0221a97330762c49b3992602c
 + if(path.empty()||path.size()>32767)return false;
 + std::lock_guard<std::mutex> lock(mutex_);if(stopping_||!limits_.cpuBytes||generation<minimum_)return false;
 + auto key=std::make_pair(path,generation);
++ if(compatibility_.count(key))return false;
 + if(cache_.Find(path,generation)||pending_.count(key))return true;
 + if(pending_.size()>=limits_.maxQueued||!cache_.Reserve(reservation_))return false;
 + try {pending_.insert(key);queue_.push_back(Job{path,generation,priority,++order_,limits_.maxAssetBytes,reservation_});}catch(...){pending_.erase(key);cache_.ReleaseReservation(reservation_);return false;}
 + wake_.notify_one();return true;
 +}
 +std::shared_ptr<const PreparedAsset> PreparationScheduler::TryGet(const std::wstring& path,Generation generation){std::lock_guard<std::mutex> lock(mutex_);if(stopping_||!limits_.cpuBytes||generation<minimum_)return {};return cache_.Find(path,generation);}
++std::string PreparationScheduler::CompatibilityReason(const std::wstring& path,Generation generation){std::lock_guard<std::mutex> lock(mutex_);auto it=compatibility_.find({path,generation});return it==compatibility_.end() ? std::string() : it->second;}
 +void PreparationScheduler::CancelQueued(){
 + for(const auto& job:queue_){pending_.erase({job.path,job.generation});cache_.ReleaseReservation(job.reservation);}queue_.clear();
 +}
 +bool PreparationScheduler::Reconfigure(const PreparationLimits& limits,Generation minimum){
 + if(!limits.Valid())return false;
 + {std::lock_guard<std::mutex> lock(mutex_);if(stopping_)return false;
-+ minimum_=std::max(minimum_,minimum);CancelQueued();limits_=limits;reservation_=Reservation(limits);cache_.SetCapacity(limits.cpuBytes);}
++ minimum_=(std::max)(minimum_,minimum);CancelQueued();compatibility_.clear();limits_=limits;reservation_=Reservation(limits);cache_.SetCapacity(limits.cpuBytes);}
 + wake_.notify_all();return true;
 +}
 +void PreparationScheduler::CancelBefore(Generation generation){
-+ std::lock_guard<std::mutex> lock(mutex_);minimum_=std::max(minimum_,generation);
++ std::lock_guard<std::mutex> lock(mutex_);minimum_=(std::max)(minimum_,generation);
++ for(auto it=compatibility_.begin();it!=compatibility_.end();)if(it->first.second<minimum_)it=compatibility_.erase(it);else ++it;
 + for(auto it=queue_.begin();it!=queue_.end();)if(it->generation<minimum_){pending_.erase({it->path,it->generation});cache_.ReleaseReservation(it->reservation);it=queue_.erase(it);}else ++it;
 +}
 +void PreparationScheduler::Stop(){
@@ -2814,8 +3159,13 @@ index 0000000000000000000000000000000000000000..43c357f0221a97330762c49b3992602c
 +  {std::unique_lock<std::mutex> lock(mutex_);wake_.wait(lock,[this]{return stopping_||(!queue_.empty()&&active_<limits_.workers&&limits_.cpuBytes);});if(stopping_)break;
 +   auto best=std::max_element(queue_.begin(),queue_.end(),[](const Job&a,const Job&b){return a.priority<b.priority||(a.priority==b.priority&&a.order>b.order);});job=std::move(*best);queue_.erase(best);++active_;}
 +  std::shared_ptr<PreparedAsset> asset;
-+  try {asset=std::make_shared<PreparedAsset>();std::string error;if(!reader_(job.path,job.maxBytes,asset->snapshot,error)||!asset->snapshot.bytes||asset->snapshot.bytes->size()>job.maxBytes)asset.reset();else {asset->generation=job.generation;if(DecodeSnapshot(asset->snapshot,job.reservation-asset->snapshot.bytes->size(),asset->decoded,error))asset->state=PreparationState::DecodedReady;}}catch(...){asset.reset();}
-+  {std::lock_guard<std::mutex> lock(mutex_);pending_.erase({job.path,job.generation});--active_;if(asset&&!stopping_&&limits_.cpuBytes&&job.generation>=minimum_)cache_.Publish(std::move(asset),job.reservation);else cache_.ReleaseReservation(job.reservation);}
++  try {asset=std::make_shared<PreparedAsset>();std::string error;if(!reader_(job.path,job.maxBytes,asset->snapshot,error)||!asset->snapshot.bytes||asset->snapshot.bytes->size()>job.maxBytes)asset.reset();else {asset->generation=job.generation;if(asset->snapshot.watchable&&DecodeSnapshot(asset->snapshot,job.reservation-asset->snapshot.bytes->size(),asset->decoded,error))asset->state=PreparationState::DecodedReady;}}catch(...){asset.reset();}
++  {std::lock_guard<std::mutex> lock(mutex_);pending_.erase({job.path,job.generation});--active_;
++   if(asset&&!asset->snapshot.watchable){
++    if(!stopping_&&job.generation>=minimum_){try {if(compatibility_.size()>=limits_.maxQueued)compatibility_.erase(compatibility_.begin());compatibility_[{job.path,job.generation}]=asset->snapshot.compatibilityReason.empty() ? "source alias dependencies require legacy loading" : asset->snapshot.compatibilityReason;}catch(const std::bad_alloc&) {}}
++    asset.reset();
++   }
++   if(asset&&!stopping_&&limits_.cpuBytes&&job.generation>=minimum_)cache_.Publish(std::move(asset),job.reservation);else cache_.ReleaseReservation(job.reservation);}
 +  wake_.notify_all();
 + }
 +#ifdef _WIN32
@@ -2825,10 +3175,10 @@ index 0000000000000000000000000000000000000000..43c357f0221a97330762c49b3992602c
 +}
 diff --git a/DirectX11/ModLoading/PreparationScheduler.h b/DirectX11/ModLoading/PreparationScheduler.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..b83106168ea54f985751a64589a69b6f9eb06c81
+index 0000000000000000000000000000000000000000..a9bd3235bf946c542d9503ee85dff8e2e3356dea
 --- /dev/null
 +++ b/DirectX11/ModLoading/PreparationScheduler.h
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,36 @@
 +#pragma once
 +#include "CpuAssetCache.h"
 +#include <condition_variable>
@@ -2846,6 +3196,8 @@ index 0000000000000000000000000000000000000000..b83106168ea54f985751a64589a69b6f
 + // True includes duplicate or already-ready work. False is a bounded admission miss.
 + bool Enqueue(const std::wstring& path, Generation generation, int priority=0);
 + std::shared_ptr<const PreparedAsset> TryGet(const std::wstring& path, Generation generation);
++ // Empty means no recorded compatibility exclusion; performs no file I/O.
++ std::string CompatibilityReason(const std::wstring& path, Generation generation);
 + // Never joins or waits for worker I/O. Existing reservations remain accounted on shrink.
 + bool Reconfigure(const PreparationLimits& limits, Generation minimum);
 + void CancelBefore(Generation generation);
@@ -2859,15 +3211,254 @@ index 0000000000000000000000000000000000000000..b83106168ea54f985751a64589a69b6f
 + PreparationLimits limits_; CpuAssetCache cache_; size_t reservation_; SnapshotReader reader_; size_t active_=0;
 + std::mutex mutex_; std::condition_variable wake_; std::vector<std::thread> workers_;
 + std::vector<Job> queue_;std::set<std::pair<std::wstring,Generation>> pending_;
++ std::map<std::pair<std::wstring,Generation>,std::string> compatibility_;
 + Generation minimum_=0;uint64_t order_=0;bool stopping_=false;
 +};
 +}
+diff --git a/DirectX11/ModLoading/PreparationStatus.cpp b/DirectX11/ModLoading/PreparationStatus.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..e0de9353c1414c3a3b7008e4f8d27b1fae1195c7
+--- /dev/null
++++ b/DirectX11/ModLoading/PreparationStatus.cpp
+@@ -0,0 +1,177 @@
++#include "PreparationStatus.h"
++#include <algorithm>
++#include <atomic>
++#include <chrono>
++#include <cstring>
++#include <mutex>
++#ifdef _WIN32
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#include <Windows.h>
++#include "SnapshotIO.h"
++#endif
++namespace ModLoading {
++namespace {
++const char* Mode(PreparationMode mode) {
++    switch (mode) { case PreparationMode::Off: return "off"; case PreparationMode::Adaptive: return "adaptive";
++    case PreparationMode::PreparedProfile: return "prepared_profile"; } return nullptr;
++}
++const char* State(PreparationStatusState state) {
++    switch (state) { case PreparationStatusState::Off: return "off"; case PreparationStatusState::Preparing: return "preparing";
++    case PreparationStatusState::Ready: return "ready"; case PreparationStatusState::Compatibility: return "compatibility";
++    case PreparationStatusState::Failed: return "failed"; } return nullptr;
++}
++std::string EscapeReason(const std::string& reason) {
++    static const char* hex = "0123456789abcdef";
++    std::string result; result.reserve(256 * 6);
++    for (size_t i = 0; i < std::min(size_t(256), reason.size()); ++i) {
++        const unsigned char c = static_cast<unsigned char>(reason[i]);
++        if (c == '"' || c == '\\') { result += '\\'; result += static_cast<char>(c); }
++        else if (c < 32) { result += "\\u00"; result += hex[c >> 4]; result += hex[c & 15]; }
++        else result += c < 127 ? static_cast<char>(c) : '?';
++    }
++    return result;
++}
++struct FixedStatus {
++    PreparationMode mode = PreparationMode::Off;
++    PreparationStatusState state = PreparationStatusState::Off;
++    uint64_t total = 0, cpu = 0, gpu = 0, compatibility = 0, ticket = 0;
++    char reason[257] = "initializing";
++    size_t reasonLength = 12;
++};
++struct Publisher {
++    std::mutex mutex;
++    FixedStatus latest;
++#ifdef _WIN32
++    std::wstring source, output;
++#endif
++};
++std::atomic<Publisher*> publisher{nullptr};
++PreparationStatusFence publicationFence;
++#ifdef _WIN32
++std::mutex initialization;
++uint64_t UnixMs() {
++    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
++        std::chrono::system_clock::now().time_since_epoch()).count());
++}
++bool WriteAtomic(const std::wstring& directory, const std::string& json) {
++    if (json.empty() || json.size() > 8192) return false;
++    if (!CreateDirectoryW(directory.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS) return false;
++    const std::wstring target = directory + L"\\status.json";
++    const std::wstring temporary = target + L".tmp" + std::to_wstring(GetCurrentProcessId());
++    HANDLE file = CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
++    if (file == INVALID_HANDLE_VALUE) return false;
++    DWORD written = 0;
++    const bool ok = WriteFile(file, json.data(), static_cast<DWORD>(json.size()), &written, nullptr) != FALSE &&
++        written == json.size() && FlushFileBuffers(file) != FALSE;
++    CloseHandle(file);
++    if (ok && MoveFileExW(temporary.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return true;
++    DeleteFileW(temporary.c_str()); return false;
++}
++DWORD WINAPI Writer(void* parameter) {
++    try {
++        auto* service = static_cast<Publisher*>(parameter);
++        SourceSnapshot image; std::string error;
++        if (!ReadVerifiedSnapshot(service->source, size_t(64) * 1024 * 1024, image, error)) return 0;
++        std::string digest; digest.reserve(64); const char* hex = "0123456789abcdef";
++        for (const auto byte : image.digest) { digest += hex[byte >> 4]; digest += hex[byte & 15]; }
++        image = SourceSnapshot(); // DLL bytes are not retained by process-life service.
++        for (;;) {
++            FixedStatus fixed;
++            { std::lock_guard<std::mutex> lock(service->mutex); fixed = service->latest; }
++            PreparationStatus status; status.mode = fixed.mode; status.state = fixed.state;
++            status.totalAssets = fixed.total; status.cpuReady = fixed.cpu; status.gpuReady = fixed.gpu;
++            status.compatibilityAssets = fixed.compatibility; status.reason.assign(fixed.reason, fixed.reasonLength);
++            // Invalidation is nondroppable even if no renderer/update runs again.
++            // A file already being written can lag until the next heartbeat;
++            // this diagnostic snapshot never authorizes resource activation.
++            if (!publicationFence.Accepts(fixed.ticket) && status.mode != PreparationMode::Off) {
++                status.state = PreparationStatusState::Preparing;
++                status.cpuReady = 0; status.gpuReady = 0;
++                status.reason = "preparation status invalidated";
++            }
++            WriteAtomic(service->output, SerializePreparationStatus(status, GetCurrentProcessId(), digest, UnixMs()));
++            Sleep(1000);
++        }
++    } catch (...) { return 0; } // Status failure must never terminate the host.
++}
++bool Initialize(const void* address, const std::wstring* outputOverride) {
++    std::lock_guard<std::mutex> lock(initialization);
++    if (publisher.load(std::memory_order_acquire)) return true;
++    if (!address) return false;
++    HMODULE module = nullptr, containing = nullptr;
++    // The caller-supplied identity must belong to this publisher's actual DLL.
++    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
++        reinterpret_cast<LPCWSTR>(address), &module) ||
++        !GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
++        reinterpret_cast<LPCWSTR>(&InitializePreparationStatus), &containing) || module != containing) return false;
++    wchar_t path[32768] = {};
++    const DWORD length = GetModuleFileNameW(module, path, static_cast<DWORD>(sizeof(path) / sizeof(path[0])));
++    if (!length || length >= sizeof(path) / sizeof(path[0])) return false;
++    std::wstring source(path, length);
++    const size_t separator = source.find_last_of(L"\\/");
++    if (separator == std::wstring::npos) return false;
++    if (outputOverride && (outputOverride->empty() || outputOverride->size() > 32000)) return false;
++    std::unique_ptr<Publisher> service(new Publisher);
++    service->source = source;
++    service->output = outputOverride ? *outputOverride : source.substr(0, separator) + L"\\.xxmi-preparation";
++    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
++        reinterpret_cast<LPCWSTR>(&InitializePreparationStatus), &containing)) return false;
++    HANDLE thread = CreateThread(nullptr, 0, Writer, service.get(), 0, nullptr);
++    if (!thread) return false;
++    CloseHandle(thread);
++    publisher.store(service.release(), std::memory_order_release);
++    return true;
++}
++#endif
++}
++std::string SerializePreparationStatus(const PreparationStatus& status, uint32_t pid,
++    const std::string& digest, uint64_t updated) noexcept {
++    try {
++        const char* mode = Mode(status.mode); const char* state = State(status.state);
++        if (!mode || !state || !pid || digest.size() != 64 || !updated) return {};
++        for (const char c : digest) if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return {};
++        std::string json = "{\"schema_version\":1,\"process_id\":" + std::to_string(pid) +
++            ",\"dll_sha256\":\"" + digest + "\",\"updated_unix_ms\":" + std::to_string(updated) +
++            ",\"mode\":\"" + mode + "\",\"state\":\"" + state + "\",\"total_assets\":" + std::to_string(status.totalAssets) +
++            ",\"cpu_ready\":" + std::to_string(status.cpuReady) + ",\"gpu_ready\":" + std::to_string(status.gpuReady) +
++            ",\"compatibility_assets\":" + std::to_string(status.compatibilityAssets) +
++            ",\"reason\":\"" + EscapeReason(status.reason) + "\"}\n";
++        return json.size() <= 8192 ? json : std::string();
++    } catch (...) { return {}; }
++}
++bool InitializePreparationStatus(const void* address) noexcept {
++#ifdef _WIN32
++    try { return Initialize(address, nullptr); } catch (...) { return false; }
++#else
++    (void)address; return false;
++#endif
++}
++bool InitializePreparationStatusForTesting(const void* address, const std::wstring& output) noexcept {
++#ifdef _WIN32
++    try { return Initialize(address, &output); } catch (...) { return false; }
++#else
++    (void)address; (void)output; return false;
++#endif
++}
++uint64_t ReservePreparationStatusTicket() noexcept { return publicationFence.Reserve(); }
++void InvalidatePreparationStatus() noexcept { publicationFence.Invalidate(); }
++void UpdatePreparationStatus(const PreparationStatus& status, uint64_t ticket) noexcept {
++    try {
++        auto* service = publisher.load(std::memory_order_acquire);
++        if (!service || !publicationFence.Accepts(ticket) || !service->mutex.try_lock()) return;
++        // Fixed-size stores only under lock; no allocation or source traversal.
++        FixedStatus& fixed = service->latest;
++        if (!publicationFence.Accepts(ticket) || ticket < fixed.ticket) { service->mutex.unlock(); return; }
++        fixed.ticket = ticket;
++        fixed.mode = status.mode; fixed.state = status.state;
++        fixed.total = status.totalAssets; fixed.cpu = status.cpuReady; fixed.gpu = status.gpuReady;
++        fixed.compatibility = status.compatibilityAssets;
++        fixed.reasonLength = std::min(size_t(256), status.reason.size());
++        std::memcpy(fixed.reason, status.reason.data(), fixed.reasonLength);
++        fixed.reason[fixed.reasonLength] = 0;
++        service->mutex.unlock();
++    } catch (...) {}
++}
++}
+diff --git a/DirectX11/ModLoading/PreparationStatus.h b/DirectX11/ModLoading/PreparationStatus.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..dbb9c3c76c8e4d95f104fcd8d56c08d1ab081b3b
+--- /dev/null
++++ b/DirectX11/ModLoading/PreparationStatus.h
+@@ -0,0 +1,49 @@
++#pragma once
++#include "PreparedTypes.h"
++#include <string>
++#include <atomic>
++
++namespace ModLoading {
++enum class PreparationStatusState { Off, Preparing, Ready, Compatibility, Failed };
++struct PreparationStatus {
++    PreparationMode mode = PreparationMode::Off;
++    PreparationStatusState state = PreparationStatusState::Off;
++    uint64_t totalAssets = 0, cpuReady = 0, gpuReady = 0, compatibilityAssets = 0;
++    std::string reason;
++};
++// Opt-in loading boundary only, never DllMain. Pins the containing module and
++// starts one process-lifetime writer. Hashing and file I/O run on that worker.
++bool InitializePreparationStatus(const void* moduleAddress) noexcept;
++// Pure lock-free version fence, also used by portable ordering tests. Tickets
++// must be reserved before any source/currentness/count/readiness computation.
++class PreparationStatusFence {
++public:
++    uint64_t Reserve() noexcept { return sequence_.fetch_add(1, std::memory_order_acq_rel) + 1; }
++    void Invalidate() noexcept {
++        const uint64_t next = Reserve();
++        uint64_t floor = floor_.load(std::memory_order_relaxed);
++        while (floor < next && !floor_.compare_exchange_weak(floor, next,
++            std::memory_order_release, std::memory_order_relaxed)) {}
++    }
++    bool Accepts(uint64_t ticket) const noexcept {
++        return ticket && ticket >= floor_.load(std::memory_order_acquire) &&
++            ticket <= sequence_.load(std::memory_order_acquire);
++    }
++private:
++    std::atomic<uint64_t> sequence_{0}, floor_{0};
++};
++// Global process-lifetime fence, never reset across configuration reloads.
++uint64_t ReservePreparationStatusTicket() noexcept;
++void InvalidatePreparationStatus() noexcept;
++// Latest immutable snapshot only: bounded copy, nonblocking try_lock, no I/O.
++// A contended update may be dropped; Runtime must provide authoritative state.
++void UpdatePreparationStatus(const PreparationStatus& status, uint64_t ticket) noexcept;
++// Portable protocol serializer. Invalid enum/hash input returns empty; reason
++// is bounded to 256 bytes and non-ASCII bytes are replaced with '?'. No paths.
++std::string SerializePreparationStatus(const PreparationStatus& status, uint32_t processId,
++    const std::string& dllSha256, uint64_t updatedUnixMs) noexcept;
++// Actual Windows fixture injection: directory must be an owned temporary path.
++// Same singleton/hash/pinning/writer behavior as production; never call in game.
++bool InitializePreparationStatusForTesting(const void* moduleAddress,
++    const std::wstring& outputDirectory) noexcept;
++}
 diff --git a/DirectX11/ModLoading/PreparedTypes.h b/DirectX11/ModLoading/PreparedTypes.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..4908becc89600da317496ea7ab397f6cb1e58101
+index 0000000000000000000000000000000000000000..4173163e36ae639249ebb6399028ebce3eb9203c
 --- /dev/null
 +++ b/DirectX11/ModLoading/PreparedTypes.h
-@@ -0,0 +1,46 @@
+@@ -0,0 +1,49 @@
 +#pragma once
 +#include <array>
 +#include <cstddef>
@@ -2889,6 +3480,9 @@ index 0000000000000000000000000000000000000000..4908becc89600da317496ea7ab397f6c
 +    std::wstring path;
 +    SourceDigest digest{};
 +    FileIdentity identity;
++    // Lexical parent watches cannot observe writes through these aliases.
++    bool watchable = true;
++    std::string compatibilityReason;
 +    std::shared_ptr<const std::vector<uint8_t>> bytes;
 +};
 +// Source format is retained verbatim. This key is NOT a decoded-image identity.
@@ -2916,10 +3510,10 @@ index 0000000000000000000000000000000000000000..4908becc89600da317496ea7ab397f6c
 +}
 diff --git a/DirectX11/ModLoading/Runtime.cpp b/DirectX11/ModLoading/Runtime.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..8e4d3b1c12620f354145f6e65ae00b1ed3b15865
+index 0000000000000000000000000000000000000000..1ca37cbc6b28e81a1fd6d48eacb3169a3b044f19
 --- /dev/null
 +++ b/DirectX11/ModLoading/Runtime.cpp
-@@ -0,0 +1,506 @@
+@@ -0,0 +1,996 @@
 +// Resource creation mode uses global NVAPI state; keep every preparation call
 +// on the Present owner under the same lock as the compatibility resource path.
 +#include "../lock.h"
@@ -2929,34 +3523,51 @@ index 0000000000000000000000000000000000000000..8e4d3b1c12620f354145f6e65ae00b1e
 +#include "../IniHandler.h"
 +#include "../globals.h"
 +#include "PreparationScheduler.h"
++#include "SnapshotIO.h"
 +#include "PreparationPlanner.h"
 +#include "ChangeMonitor.h"
 +#include "ConfigCompiler.h"
 +#include "IncrementalConfigCache.h"
 +#include "GenerationManager.h"
++#include "PreparationStatus.h"
 +#include "LoadTrace.h"
 +#include <algorithm>
 +#include <atomic>
 +#include <limits>
++#include <map>
 +#include <mutex>
 +#include <set>
 +
 +namespace ModLoading {
 +namespace {
 +constexpr uint64_t MiB = 1024ull * 1024;
++struct ProfileEntry {
++    bool staticCompatibility = false, compatibility = false, cpuReady = false;
++    Generation generation = 0;
++    DeviceEpoch epoch = 0;
++    std::shared_ptr<const PreparedAsset> source;
++    std::weak_ptr<PreparedGpuObject> pinnedGpu;
++    std::weak_ptr<PreparedGpuObject> observedGpu;
++    DeviceResourceKey key;
++    std::string reason;
++};
 +struct RuntimeState {
 +    PreparationMode mode = PreparationMode::Off;
 +    std::atomic<bool> enabled{false};
 +    std::atomic<Generation> generation{0};
 +    PreparationLimits cpuLimits;
 +    GpuPumpLimits gpuLimits;
-+    uint64_t gpuBytes = 256 * MiB;
++    uint64_t gpuBytes = 256 * MiB, shaderBytes = 0;
++    uint64_t totalAssets = 0, baseCompatibility = 0;
++    std::map<const void*, ProfileEntry> profile;
 +    bool loadingWindow = false;
 +    std::shared_ptr<PreparationScheduler> scheduler;
 +    std::unique_ptr<ChangeMonitor> monitor;
 +    std::vector<std::wstring> files;
 +    std::vector<CustomResource*> resources;
 +    size_t resourceCursor = 0;
++    std::vector<CustomShader*> shaders;
++    size_t shaderCursor = 0;
 +    std::mutex pendingMutex;
 +    ReconcileRequest pending;
 +    bool hasPending = false;
@@ -2981,6 +3592,11 @@ index 0000000000000000000000000000000000000000..8e4d3b1c12620f354145f6e65ae00b1e
 +    IncrementalConfigCache configCache;
 +    std::recursive_mutex plannerMutex;
 +    std::atomic<bool> retirementRequested{false};
++    std::map<ID3D11Resource*, std::weak_ptr<PreparedGpuObject>> activeResources;
++    // Strong speculative profile leases share the planner's retirement lock.
++    // Config/profile entries hold weak references, so device teardown drops all
++    // unconsumed GPU owners without touching the raw configuration graph.
++    std::map<const void*, std::shared_ptr<PreparedGpuObject>> profileGpuPins;
 +};
 +RuntimeServices& Services() { static auto* s = new RuntimeServices; return *s; }
 +std::shared_ptr<RuntimeState> Current() { return std::atomic_load(&Services().state); }
@@ -2998,8 +3614,11 @@ index 0000000000000000000000000000000000000000..8e4d3b1c12620f354145f6e65ae00b1e
 +        runtimeBusy = false;
 +        auto& service = Services();
 +        if (service.retirementRequested.exchange(false)) {
++            InvalidatePreparationStatus();
 +            // Resource destructors may call wrapped device Release recursively.
 +            retiringDevice = true;
++            service.activeResources.clear();
++            service.profileGpuPins.clear();
 +            auto retired = std::move(service.planner);
 +            service.device = nullptr; service.epoch = 0; service.plannerGeneration = 0;
 +            retired.reset();
@@ -3111,14 +3730,238 @@ index 0000000000000000000000000000000000000000..8e4d3b1c12620f354145f6e65ae00b1e
 +        resource.bind_flags : static_cast<UINT>(resource.override_bind_flags);
 +    request.loaderMiscFlags = resource.override_misc_flags == ResourceMiscFlags::INVALID ?
 +        resource.misc_flags : static_cast<UINT>(resource.override_misc_flags);
++    request.createDefaultShaderResourceView = resource.preparation_known_srv &&
++        request.loaderBindFlags == D3D11_BIND_SHADER_RESOURCE && !request.loaderMiscFlags;
 +    request.forceSRGB = resource.override_color_space == CustomColorSpace::SRGB;
 +    request.wicLoaderFlags = PreparedWICFlags(*asset.snapshot.bytes,
 +        resource.override_color_space, G->gForceDetectColorSpace);
 +    const bool dds = IsDDS(resource.filename);
-+    if (!dds && UseDecoded(asset, device, resource, request)) return true;
++    if (!dds && UseDecoded(asset, device, resource, request)) {
++        if (request.createDefaultShaderResourceView) request.estimatedBytes += 64 * 1024;
++        return true;
++    }
 +    request.kind = dds ? GpuPreparationKind::EncodedDDS : GpuPreparationKind::EncodedWIC;
 +    request.estimatedBytes = EstimateEncodedTextureBytes(asset.snapshot, request.kind);
++    if (!request.estimatedBytes) return false;
++    if (request.createDefaultShaderResourceView) request.estimatedBytes += 64 * 1024;
++    return true;
++}
++std::shared_ptr<const ShaderBundleInput> CaptureShaderBundle(CustomShader& shader, size_t maxBytes, uint64_t shaderBudget) {
++    if (shader.substantiated || shader.preparation_compile_failed ||
++        shader.blend_override < 0 || shader.blend_override > 1 ||
++        shader.depth_stencil_override < 0 || shader.depth_stencil_override > 1 ||
++        shader.rs_override < 0 || shader.rs_override > 1 ||
++        shader.sampler_override < 0 || shader.sampler_override > 1) return {};
++    auto input = std::make_shared<ShaderBundleInput>();
++    const bool overrideStage[] = {shader.vs_override, shader.hs_override, shader.ds_override,
++        shader.gs_override, shader.ps_override, shader.cs_override};
++    ID3DBlob* bytecode[] = {shader.vs_bytecode, shader.hs_bytecode, shader.ds_bytecode,
++        shader.gs_bytecode, shader.ps_bytecode, shader.cs_bytecode};
++    size_t bytes = 0;
++    bool createsObject = false;
++    for (size_t stage = 0; stage < 6; ++stage) {
++        if (overrideStage[stage]) input->stageOverrideMask |= 1u << stage;
++        if (!bytecode[stage]) continue; // A configured null stage is intentional.
++        if (!overrideStage[stage] || bytecode[stage]->GetBufferSize() > maxBytes - bytes) return {};
++        bytes += bytecode[stage]->GetBufferSize();
++        const auto retained = SharedShaderBytecode::LiveRetainedBytes();
++        if (retained > shaderBudget || bytecode[stage]->GetBufferSize() > shaderBudget - retained) return {};
++        const auto digest = HashBytes(static_cast<const uint8_t*>(bytecode[stage]->GetBufferPointer()),
++            bytecode[stage]->GetBufferSize());
++        input->stages[stage] = SharedShaderBytecode::Retain(bytecode[stage], digest, shaderBudget);
++        if (!input->stages[stage]) return {};
++        createsObject = true;
++    }
++    input->createBlendState = shader.blend_override == 1;
++    input->createDepthStencilState = shader.depth_stencil_override == 1;
++    input->createRasterizerState = shader.rs_override == 1;
++    input->createSamplerState = shader.sampler_override == 1;
++    if (input->createBlendState) input->blend = shader.blend_desc;
++    if (input->createDepthStencilState) input->depthStencil = shader.depth_stencil_desc;
++    if (input->createRasterizerState) input->rasterizer = shader.rs_desc;
++    if (input->createSamplerState) input->sampler = shader.sampler_desc;
++    return createsObject || input->createBlendState || input->createDepthStencilState ||
++        input->createRasterizerState || input->createSamplerState ? input : nullptr;
++}
++bool ShaderRequestFor(CustomShader& shader, GpuPreparationRequest& request) {
++    if (!shader.preparation_bundle || shader.substantiated || shader.preparation_compile_failed)
++        return false;
++    request.kind = GpuPreparationKind::ShaderBundle;
++    request.shaderBundle = shader.preparation_bundle;
++    request.dependencyReadOnly = true; // Compiled shaders and fixed states are immutable.
++    request.creationOptions = {RuntimeFeatureVersion, 1, uint32_t(shader.compile_flags)};
++    uint64_t bytes = 0, objects = 0;
++    for (const auto& stage : shader.preparation_bundle->stages) {
++        bytes += stage.Size();
++        if (stage) ++objects;
++    }
++    const auto& input = *shader.preparation_bundle;
++    objects += input.createBlendState + input.createDepthStencilState +
++        input.createRasterizerState + input.createSamplerState;
++    request.estimatedBytes = bytes * 2 + objects * 64 * 1024;
 +    return request.estimatedBytes != 0;
++}
++bool KnownPreparationCopy(const ResourceCopyOperation& operation) {
++    const auto& destination = operation.dst;
++    const bool inputSlot = destination.type == ResourceCopyTargetType::SHADER_RESOURCE ||
++        destination.type == ResourceCopyTargetType::VERTEX_BUFFER ||
++        destination.type == ResourceCopyTargetType::INDEX_BUFFER ||
++        destination.type == ResourceCopyTargetType::CONSTANT_BUFFER;
++    if (!inputSlot || destination.slot_expression || destination.range_start || destination.range_end ||
++        destination.custom_resource_pool || destination.pool_dynamic_index_expression ||
++        destination.evaluation_mode != ResourceCopyTargetEvaluationMode::RESOURCE ||
++        operation.src.slot_expression || operation.src.range_start || operation.src.range_end ||
++        operation.src.custom_resource_pool || operation.src.pool_dynamic_index_expression ||
++        operation.src.evaluation_mode != ResourceCopyTargetEvaluationMode::RESOURCE) return false;
++    const uint32_t allowedOptions = uint32_t(ResourceCopyOptions::REFERENCE) |
++        uint32_t(ResourceCopyOptions::UNLESS_NULL) | uint32_t(ResourceCopyOptions::SET_VIEWPORT);
++    if (uint32_t(operation.options) & ~allowedOptions) return false;
++    if (operation.src.type == ResourceCopyTargetType::EMPTY) return true;
++    if (operation.src.type != ResourceCopyTargetType::CUSTOM_RESOURCE ||
++        !(operation.options & ResourceCopyOptions::REFERENCE) ||
++        (uint32_t(operation.options) & ~allowedOptions) ||
++        operation.src.evaluation_mode != ResourceCopyTargetEvaluationMode::RESOURCE ||
++        destination.evaluation_mode != ResourceCopyTargetEvaluationMode::RESOURCE) return false;
++    // GetCustomResource has a legacy non-const API; this is a static target
++    // lookup only, and pool/dynamic sources are explicitly rejected.
++    auto& source = const_cast<ResourceCopyTarget&>(operation.src);
++    if (source.custom_resource_pool) return false;
++    auto* resource = source.GetCustomResource(nullptr, true);
++    return resource && resource->PreparationReadOnly() && !resource->filename.empty();
++}
++bool KnownPreparationCommand(const CommandListCommand& command) {
++    if (const auto* operation = dynamic_cast<const ResourceCopyOperation*>(&command))
++        return KnownPreparationCopy(*operation);
++    if (const auto* batch = dynamic_cast<const ShaderResourceBindBatch*>(&command)) {
++        for (const auto& operation : batch->operations)
++            if (!operation || !KnownPreparationCopy(*operation)) return false;
++        return true;
++    }
++    if (const auto* shader = dynamic_cast<const RunCustomShaderCommand*>(&command)) return shader->custom_shader != nullptr;
++    if (const auto* draw = dynamic_cast<const DrawCommand*>(&command)) {
++        size_t arguments = 0;
++        switch (draw->type) {
++        case DrawCommandType::DRAW: arguments = 2; break;
++        case DrawCommandType::DRAW_INDEXED: case DrawCommandType::DISPATCH: arguments = 3; break;
++        case DrawCommandType::DRAW_INSTANCED: arguments = 4; break;
++        case DrawCommandType::DRAW_INDEXED_INSTANCED: arguments = 5; break;
++        default: return false;
++        }
++        // Resource/hash expressions can create staging resources while being
++        // evaluated. Only the parser's side-effect-free constant evaluation is
++        // admitted by this initial whole-profile command proof.
++        for (size_t argument = 0; argument < arguments; ++argument) {
++            float value = 0;
++            if (!const_cast<CommandListExpression&>(draw->args[argument]).static_evaluate(&value)) return false;
++        }
++        return true;
++    }
++    return dynamic_cast<const RunExplicitCommandList*>(&command) ||
++        dynamic_cast<const RunLinkedCommandList*>(&command) ||
++        dynamic_cast<const SkipCommand*>(&command) || dynamic_cast<const AbortCommand*>(&command);
++}
++bool KnownPreparationCommandClosure() {
++    if (registered_command_lists.size() > 65536) return false;
++    std::vector<CommandList*> pending(registered_command_lists.begin(), registered_command_lists.end());
++    std::set<CommandList*> visited;
++    size_t commands = 0;
++    while (!pending.empty()) {
++        auto* list = pending.back(); pending.pop_back();
++        if (!list || list->runtime_populated) return false;
++        if (!visited.insert(list).second) continue;
++        if (visited.size() > 65536) return false;
++        for (const auto& command : list->commands) {
++            if (++commands > 65536 || !command || !KnownPreparationCommand(*command)) return false;
++            if (const auto* shader = dynamic_cast<const RunCustomShaderCommand*>(command.get())) {
++                pending.push_back(&shader->custom_shader->command_list);
++                pending.push_back(&shader->custom_shader->post_command_list);
++            } else if (const auto* explicitList = dynamic_cast<const RunExplicitCommandList*>(command.get())) {
++                if (!explicitList->command_list_section) return false;
++                pending.push_back(&explicitList->command_list_section->command_list);
++                pending.push_back(&explicitList->command_list_section->post_command_list);
++            } else if (const auto* linked = dynamic_cast<const RunLinkedCommandList*>(command.get())) {
++                pending.push_back(linked->link);
++            }
++        }
++    }
++    return true;
++}
++
++void PublishProgress(const std::shared_ptr<RuntimeState>& state, DeviceEpoch epoch,
++    const char* forcedReason = nullptr) {
++    PreparationStatus status;
++    const auto statusTicket = ReservePreparationStatusTicket();
++    status.mode = state ? state->mode : PreparationMode::Off;
++    if (!state || state->mode == PreparationMode::Off) {
++        status.state = PreparationStatusState::Off;
++        UpdatePreparationStatus(status, statusTicket); return;
++    }
++    status.totalAssets = state->totalAssets;
++    status.compatibilityAssets = state->baseCompatibility;
++    for (const auto& item : state->profile) {
++        const auto& entry = item.second;
++        if (entry.compatibility) ++status.compatibilityAssets;
++        if (entry.generation != state->generation) continue;
++        if (entry.cpuReady) ++status.cpuReady;
++        auto gpu = entry.pinnedGpu.lock();
++        if (!gpu) gpu = entry.observedGpu.lock();
++        if (entry.cpuReady && gpu && entry.epoch == epoch) ++status.gpuReady;
++    }
++    // Serialize the final source fence and publication with the monitor's
++    // invalidation callback. A snapshot gathered before that callback cannot
++    // clear its newer atomic writer invalidation with a stale Ready update.
++    std::unique_lock<std::mutex> publishLock(state->pendingMutex, std::try_to_lock);
++    if (!publishLock.owns_lock()) return;
++    const bool current = state->enabled.load() && state->monitor &&
++        state->monitor->IsCurrent(state->sourceToken.load());
++    if (forcedReason || Services().retirementRequested.load() || !current || !state->gpuBytes || !state->cpuLimits.cpuBytes) {
++        status.state = PreparationStatusState::Compatibility;
++        status.compatibilityAssets = status.totalAssets;
++        status.gpuReady = 0;
++        if (!current) status.cpuReady = 0;
++        status.reason = forcedReason ? forcedReason : "preparation disabled or source/configuration needs compatible reload";
++    } else if (status.compatibilityAssets) {
++        status.state = PreparationStatusState::Compatibility;
++        status.reason = "profile includes unsupported, mutable, unknown-view, or legacy shader entries";
++        for (const auto& item : state->profile)
++            if (item.second.compatibility && !item.second.reason.empty()) {
++                status.reason = item.second.reason; break;
++            }
++    } else if (state->mode == PreparationMode::PreparedProfile && status.totalAssets &&
++        status.cpuReady == status.totalAssets && status.gpuReady == status.totalAssets) {
++        status.state = PreparationStatusState::Ready;
++        status.reason = "complete current profile pinned; preparation readiness is not activation or visual validation";
++    } else {
++        status.state = PreparationStatusState::Preparing;
++        status.reason = "waiting for verified sources, complete GPU objects, loading window, or available budget";
++    }
++    UpdatePreparationStatus(status, statusTicket);
++}
++void ResetProfileEntry(ProfileEntry& entry, Generation generation, DeviceEpoch epoch) {
++    if (entry.generation == generation && entry.epoch == epoch) return;
++    entry.source.reset(); entry.pinnedGpu.reset(); entry.observedGpu.reset();
++    entry.cpuReady = false; entry.compatibility = entry.staticCompatibility; entry.reason.clear();
++    entry.generation = generation; entry.epoch = epoch; entry.key = DeviceResourceKey();
++}
++bool SameKey(const DeviceResourceKey& a, const DeviceResourceKey& b) {
++    return !(a < b) && !(b < a);
++}
++bool QualifiedResource(CustomResource& resource, const std::shared_ptr<PreparedGpuObject>& prepared) {
++    if (!prepared || !prepared->resource) return false;
++    if (!resource.preparation_known_srv) return true;
++    if (!prepared->shaderResourceView || IsBuffer(resource)) return false;
++    D3D11_RESOURCE_DIMENSION dimension;
++    prepared->resource->GetType(&dimension);
++    if (dimension != D3D11_RESOURCE_DIMENSION_TEXTURE2D) return false;
++    D3D11_TEXTURE2D_DESC texture{};
++    static_cast<ID3D11Texture2D*>(prepared->resource)->GetDesc(&texture);
++    D3D11_SHADER_RESOURCE_VIEW_DESC view{};
++    prepared->shaderResourceView->GetDesc(&view);
++    return texture.ArraySize == 1 && texture.SampleDesc.Count == 1 && !texture.SampleDesc.Quality &&
++        !(texture.MiscFlags & D3D11_RESOURCE_MISC_TEXTURECUBE) &&
++        view.ViewDimension == D3D11_SRV_DIMENSION_TEXTURE2D &&
++        FullTexture2DViewMatches(uint32_t(texture.Format), texture.MipLevels,
++            0, 0, UINT32_MAX, uint32_t(view.Format), view.Texture2D.MostDetailedMip, view.Texture2D.MipLevels);
 +}
 +bool SourcesCurrent(const std::shared_ptr<RuntimeState>& state) {
 +    return state && state->enabled.load() && state->scheduler && state->monitor &&
@@ -3138,6 +3981,7 @@ index 0000000000000000000000000000000000000000..8e4d3b1c12620f354145f6e65ae00b1e
 +    auto state = Current();
 +    if (!state) return;
 +    state->enabled.store(false);
++    InvalidatePreparationStatus();
 +    const auto generation = ++Services().nextGeneration;
 +    if (state->scheduler) state->scheduler->CancelBefore(generation);
 +    state->generations.CancelPrepared();
@@ -3163,6 +4007,8 @@ index 0000000000000000000000000000000000000000..8e4d3b1c12620f354145f6e65ae00b1e
 +    if (state->mode != PreparationMode::Off) {
 +        const int cpuMB = Setting(L"cpu_cache_mb",512,0,4096);
 +        state->cpuLimits.cpuBytes = size_t(cpuMB ? (std::max)(16, cpuMB) : 0) * MiB;
++        state->shaderBytes = (std::min)(uint64_t(state->cpuLimits.cpuBytes / 4), 64 * MiB);
++        state->cpuLimits.cpuBytes -= size_t(state->shaderBytes);
 +        state->cpuLimits.maxAssetBytes = size_t(Setting(L"max_asset_mb",64,1,1024)) * size_t(MiB);
 +        if (state->cpuLimits.cpuBytes)
 +            state->cpuLimits.maxAssetBytes = (std::min)(state->cpuLimits.cpuBytes, state->cpuLimits.maxAssetBytes);
@@ -3176,6 +4022,9 @@ index 0000000000000000000000000000000000000000..8e4d3b1c12620f354145f6e65ae00b1e
 +        state->loadingWindow = GetIniBool(L"ModLoading", L"preparation_loading_window", false, nullptr);
 +        if (GetIniBool(L"ModLoading", L"auto_activate", false, nullptr))
 +            LogOverlayW(LOG_WARNING, L"ModLoading auto_activate is unsupported; use explicit compatible reload\n");
++        static int statusModuleAnchor;
++        InitializePreparationStatus(&statusModuleAnchor);
++        state->totalAssets = customResources.size() + customShaders.size();
 +        const auto manifest = CaptureLoadedConfigSources();
 +        ConfigCompiler compiler(Services().configCache);
 +        auto previous = Current();
@@ -3191,13 +4040,38 @@ index 0000000000000000000000000000000000000000..8e4d3b1c12620f354145f6e65ae00b1e
 +                entry.second.filename = std::move(canonical);
 +                files.insert(entry.second.filename);
 +                state->resources.push_back(&entry.second);
++                if (state->profile.size() < 4096) {
++                    ProfileEntry profile;
++                    profile.staticCompatibility = !entry.second.PreparationReadOnly() ||
++                        (IsBuffer(entry.second) && entry.second.preparation_known_srv);
++                    profile.compatibility = profile.staticCompatibility;
++                    state->profile.emplace(&entry.second, std::move(profile));
++                }
 +                auto root = Parent(entry.second.filename);
 +                if (!root.empty()) roots.insert(root);
++            }
++        }
++        size_t shaderCount = 0;
++        for (auto& entry : customShaders) {
++            if (++shaderCount > 4096) break;
++            entry.second.preparation_bundle = state->shaderBytes ? CaptureShaderBundle(entry.second,
++                state->cpuLimits.maxAssetBytes, state->shaderBytes) : nullptr;
++            if (entry.second.preparation_bundle) {
++                state->shaders.push_back(&entry.second);
++                if (state->profile.size() < 4096) state->profile.emplace(&entry.second, ProfileEntry());
 +            }
 +        }
 +        for (const auto& source : manifest.sources) {
 +            auto root = Parent(Canonical(source.snapshot.path));
 +            if (!root.empty()) roots.insert(root);
++        }
++        state->baseCompatibility = state->totalAssets - state->profile.size();
++        // A copied runtime/game resource, staging/readback command, dynamic
++        // view, or unclassified command may create objects outside declarations.
++        // Such a closure is an explicit compatibility entry, never whole-profile
++        // Ready merely because its file-backed subset happens to be prepared.
++        if (!KnownPreparationCommandClosure()) {
++            ++state->totalAssets; ++state->baseCompatibility;
 +        }
 +        state->files.assign(files.begin(), files.end());
 +        auto& service = Services();
@@ -3231,6 +4105,14 @@ index 0000000000000000000000000000000000000000..8e4d3b1c12620f354145f6e65ae00b1e
 +                std::lock_guard<std::mutex> lock(owned->pendingMutex);
 +                owned->pending = request;
 +                owned->hasPending = true;
++                InvalidatePreparationStatus();
++                PreparationStatus status;
++                const auto statusTicket = ReservePreparationStatusTicket();
++                status.mode = owned->mode;
++                status.state = PreparationStatusState::Preparing;
++                status.totalAssets = owned->totalAssets;
++                status.reason = "source notification invalidated the prepared profile";
++                UpdatePreparationStatus(status, statusTicket);
 +            });
 +        state->enabled.store(monitoring && state->scheduler != nullptr && state->cpuLimits.cpuBytes != 0);
 +        if (!monitoring)
@@ -3252,6 +4134,7 @@ index 0000000000000000000000000000000000000000..8e4d3b1c12620f354145f6e65ae00b1e
 +        if (previousState->monitor) previousState->monitor->Stop();
 +    }
 +    std::atomic_store(&Services().state, state);
++    PublishProgress(state, 0);
 +}
 +
 +std::shared_ptr<const PreparedAsset> TryGetPreparedAsset(const std::wstring& path) {
@@ -3283,7 +4166,7 @@ index 0000000000000000000000000000000000000000..8e4d3b1c12620f354145f6e65ae00b1e
 +        state->generation = ++Services().nextGeneration;
 +        state->scheduler->CancelBefore(state->generation);
 +        state->sourceToken.store(request.token);
-+        state->cursor = state->resourceCursor = 0;
++        state->cursor = state->resourceCursor = state->shaderCursor = 0;
 +        state->generations.CancelPrepared();
 +        // INI edits only invalidate preparation; never execute or auto-reload
 +        // changed commands. Existing live configuration stays on its old path.
@@ -3292,7 +4175,11 @@ index 0000000000000000000000000000000000000000..8e4d3b1c12620f354145f6e65ae00b1e
 +            LogInfo("ModLoading: configuration/closure change requires explicit compatible reload\n");
 +        }
 +    }
-+    if (!SourcesCurrent(state)) return;
++    if (!SourcesCurrent(state)) { PublishProgress(state, epoch); return; }
++    if (FAILED(device->GetDeviceRemovedReason())) {
++        PublishProgress(state, epoch, "rendering device was removed; compatibility reload/device recreation required");
++        return;
++    }
 +    // A single-threaded device offers no safe foreign-thread teardown path
 +    // once prepared children retain its COM lifetime. Keep this device class
 +    // on the CPU snapshot + legacy GPU path until explicit owner teardown is
@@ -3300,11 +4187,33 @@ index 0000000000000000000000000000000000000000..8e4d3b1c12620f354145f6e65ae00b1e
 +    if (!state->gpuBytes || (device->GetCreationFlags() & D3D11_CREATE_DEVICE_SINGLETHREADED)) {
 +        for (size_t work = 0; work < 8 && !state->files.empty(); ++work)
 +            state->scheduler->Enqueue(state->files[state->cursor++ % state->files.size()], state->generation);
++        for (size_t work = 0; work < 8 && !state->resources.empty(); ++work) {
++            auto* resource = state->resources[state->resourceCursor++ % state->resources.size()];
++            const auto tracked = state->profile.find(resource);
++            if (tracked == state->profile.end()) continue;
++            auto& progress = tracked->second;
++            ResetProfileEntry(progress, state->generation, epoch);
++            if (auto asset = state->scheduler->TryGet(resource->filename, state->generation)) {
++                progress.cpuReady = true;
++                if (state->mode == PreparationMode::PreparedProfile) progress.source = asset;
++            }
++        }
++        for (size_t work = 0; work < 2 && !state->shaders.empty(); ++work) {
++            auto* shader = state->shaders[state->shaderCursor++ % state->shaders.size()];
++            const auto tracked = state->profile.find(shader);
++            if (tracked == state->profile.end()) continue;
++            ResetProfileEntry(tracked->second, state->generation, epoch);
++            tracked->second.cpuReady = shader->preparation_bundle != nullptr;
++        }
++        PublishProgress(state, epoch, !state->gpuBytes ? "GPU preparation disabled" :
++            "single-threaded device uses CPU snapshots and legacy GPU creation");
 +        return;
 +    }
 +    if (!service.planner || service.device != device || service.epoch != epoch ||
 +        service.plannerGeneration != state->generation) {
-+        service.planner.reset(new PreparationPlanner(state->gpuBytes));
++        service.activeResources.clear();
++        service.profileGpuPins.clear();
++        service.planner.reset(new PreparationPlanner(state->gpuBytes, 32, state->shaderBytes));
 +        service.device = device; service.epoch = epoch;
 +        service.owner = std::this_thread::get_id();
 +        service.plannerGeneration = state->generation;
@@ -3322,14 +4231,67 @@ index 0000000000000000000000000000000000000000..8e4d3b1c12620f354145f6e65ae00b1e
 +    batch->config = state->config;
 +    for (size_t work = 0; work < 8 && !state->resources.empty(); ++work) {
 +        auto& resource = *state->resources[state->resourceCursor++ % state->resources.size()];
-+        if (resource.filename.empty() || !resource.PreparationReadOnly()) continue;
-+        auto asset = state->scheduler->TryGet(resource.filename, state->generation);
-+        if (!asset) continue;
++        const auto tracked = state->profile.find(&resource);
++        if (tracked == state->profile.end()) continue;
++        auto& progress = tracked->second;
++        ResetProfileEntry(progress, state->generation, epoch);
++        auto asset = progress.source ? progress.source : state->scheduler->TryGet(resource.filename, state->generation);
++        if (!asset) {
++            const auto reason = state->scheduler->CompatibilityReason(resource.filename, state->generation);
++            if (!reason.empty()) { progress.compatibility = true; progress.reason = reason; }
++            continue;
++        }
++        progress.cpuReady = true;
++        if (state->mode == PreparationMode::PreparedProfile) progress.source = asset;
 +        batch->dependencies.push_back(asset);
++        if (progress.staticCompatibility) continue;
++        progress.compatibility = false;
 +        GpuPreparationRequest prepared;
-+        if (RequestFor(resource, *asset, device, prepared)) {
-+            prepared.sourceOwner = asset;
-+            service.planner->Enqueue(prepared);
++        if (!RequestFor(resource, *asset, device, prepared)) { progress.compatibility = true; continue; }
++        prepared.sourceOwner = asset;
++        DeviceResourceKey key;
++        if (!service.planner->ComputeKey(prepared, key)) {
++            progress.compatibility = true; service.profileGpuPins.erase(&resource);
++            progress.pinnedGpu.reset(); progress.observedGpu.reset(); continue;
++        }
++        auto pin = progress.pinnedGpu.lock();
++        if (pin && !SameKey(progress.key, key)) {
++            service.profileGpuPins.erase(&resource); progress.pinnedGpu.reset(); pin.reset();
++        }
++        if (!pin) {
++            const auto queued = service.planner->Enqueue(prepared, &key);
++            if (queued == GpuQueueResult::CompatibilityOnly) { progress.compatibility = true; continue; }
++        }
++        auto object = pin ? pin : service.planner->TryAcquire(key);
++        if (object && QualifiedResource(resource, object)) {
++            progress.key = key; progress.observedGpu = object;
++            if (state->mode == PreparationMode::PreparedProfile) {
++                service.profileGpuPins[&resource] = object; progress.pinnedGpu = object;
++            }
++        } else if (object) progress.compatibility = true;
++    }
++    for (size_t work = 0; work < 2 && !state->shaders.empty(); ++work) {
++        auto& shader = *state->shaders[state->shaderCursor++ % state->shaders.size()];
++        const auto tracked = state->profile.find(&shader);
++        if (tracked == state->profile.end()) continue;
++        auto& progress = tracked->second;
++        ResetProfileEntry(progress, state->generation, epoch);
++        if (progress.pinnedGpu.lock()) continue;
++        GpuPreparationRequest prepared;
++        if (!ShaderRequestFor(shader, prepared)) {
++            if (!progress.observedGpu.lock()) progress.compatibility = true;
++            continue;
++        }
++        progress.cpuReady = true;
++        DeviceResourceKey key;
++        const auto queued = service.planner->Enqueue(prepared, &key);
++        if (queued == GpuQueueResult::CompatibilityOnly) { progress.compatibility = true; continue; }
++        auto object = service.planner->TryAcquire(key);
++        if (object && object->bundle) {
++            progress.key = key; progress.observedGpu = object;
++            if (state->mode == PreparationMode::PreparedProfile) {
++                service.profileGpuPins[&shader] = object; progress.pinnedGpu = object;
++            }
 +        }
 +    }
 +    if (!SourcesCurrent(state)) return;
@@ -3343,12 +4305,20 @@ index 0000000000000000000000000000000000000000..8e4d3b1c12620f354145f6e65ae00b1e
 +    } creationMode;
 +    const auto result = service.planner->Pump(state->loadingWindow, state->gpuLimits);
 +    if (result.deviceRemoved) RetireRuntimeDevice(device);
++    PublishProgress(state, epoch, result.deviceRemoved ? "rendering device removed during preparation" : nullptr);
 +}
 +bool InRuntimePreparation() { return runtimeBusy || retiringDevice; }
 +void RetireRuntimeDevice(ID3D11Device* device) {
 +    auto& service = Services();
 +    if (retiringDevice) return;
 +    service.retirementRequested.store(true);
++    InvalidatePreparationStatus();
++    PreparationStatus invalid;
++    const auto invalidTicket = ReservePreparationStatusTicket();
++    if (auto state = Current()) { invalid.mode = state->mode; invalid.totalAssets = state->totalAssets; }
++    invalid.state = invalid.mode == PreparationMode::Off ? PreparationStatusState::Off : PreparationStatusState::Preparing;
++    invalid.reason = "GPU cache retirement requires profile revalidation";
++    UpdatePreparationStatus(invalid, invalidTicket);
 +    // Device Release can reenter through resource/cache destruction or run on
 +    // another game thread. Defer without blocking/resetting an executing Pump.
 +    if (runtimeBusy) return;
@@ -3363,6 +4333,8 @@ index 0000000000000000000000000000000000000000..8e4d3b1c12620f354145f6e65ae00b1e
 +    // For supported devices COM release is thread-safe, and this lock excludes
 +    // all render-owned preparation calls while draining the cache.
 +    retiringDevice = true;
++    service.activeResources.clear();
++    service.profileGpuPins.clear();
 +    auto retired = std::move(service.planner);
 +    service.device = nullptr; service.epoch = 0; service.plannerGeneration = 0;
 +    retired.reset();
@@ -3380,17 +4352,25 @@ index 0000000000000000000000000000000000000000..8e4d3b1c12620f354145f6e65ae00b1e
 +    RuntimeOwnerScope ownerScope(lock);
 +    if (!SourcesCurrent(state) || !service.planner || service.device != device ||
 +        service.plannerGeneration != state->generation) return false;
-+    auto asset = state->scheduler->TryGet(target.filename, state->generation);
++    const auto tracked = state->profile.find(&target);
++    ProfileEntry* progress = tracked != state->profile.end() ? &tracked->second : nullptr;
++    const bool currentPin = progress && progress->generation == state->generation && progress->epoch == service.epoch;
++    auto asset = currentPin && progress->source ? progress->source :
++        state->scheduler->TryGet(target.filename, state->generation);
 +    if (!asset) return false;
 +    GpuPreparationRequest request;
 +    if (!RequestFor(target, *asset, device, request)) return false;
 +    request.sourceOwner = asset;
 +    DeviceResourceKey key;
-+    // Enqueue computes the same fully specified key; it creates no GPU object.
-+    const auto admission = service.planner->Enqueue(request, &key);
-+    if (admission != GpuQueueResult::AlreadyReady || !SourcesCurrent(state)) return false;
-+    auto prepared = service.planner->TryAcquire(key);
++    if (!service.planner->ComputeKey(request, key)) return false;
++    auto prepared = currentPin && SameKey(progress->key, key) ? progress->pinnedGpu.lock() : nullptr;
++    if (!prepared) {
++        if (service.planner->Enqueue(request, &key) != GpuQueueResult::AlreadyReady || !SourcesCurrent(state)) return false;
++        prepared = service.planner->TryAcquire(key);
++    }
 +    if (!prepared || !prepared->resource || !SourcesCurrent(state)) return false;
++    if (prepared->shaderResourceView && service.activeResources.size() < 4096)
++        service.activeResources[prepared->resource] = prepared;
 +    prepared->resource->AddRef();
 +    target.preparation_pin = prepared;
 +    target.resource = prepared->resource;
@@ -3406,6 +4386,110 @@ index 0000000000000000000000000000000000000000..8e4d3b1c12620f354145f6e65ae00b1e
 +        reinterpret_cast<uintptr_t>(&target), request.estimatedBytes, 0);
 +    return true;
 +}
++static bool TryUsePreparedShaderBundleImpl(CustomShader& target, ID3D11Device* device) {
++    auto state = Current();
++    auto& service = Services();
++    if (runtimeBusy || service.retirementRequested.load()) return false;
++    TryGlobalConfigGuard configGuard;
++    if (!configGuard.acquired) return false;
++    std::unique_lock<std::recursive_mutex> lock(service.plannerMutex, std::try_to_lock);
++    if (!lock.owns_lock() || service.owner != std::this_thread::get_id()) return false;
++    RuntimeOwnerScope ownerScope(lock);
++    if (!SourcesCurrent(state) || !service.planner || service.device != device ||
++        service.plannerGeneration != state->generation || target.vs || target.hs || target.ds ||
++        target.gs || target.ps || target.cs || target.blend_state || target.depth_stencil_state ||
++        target.rs_state || target.sampler_state) return false;
++    GpuPreparationRequest request;
++    if (!ShaderRequestFor(target, request)) return false;
++    DeviceResourceKey key;
++    if (!service.planner->ComputeKey(request, key)) return false;
++    const auto tracked = state->profile.find(&target);
++    const bool currentPin = tracked != state->profile.end() && tracked->second.generation == state->generation &&
++        tracked->second.epoch == service.epoch && SameKey(tracked->second.key, key);
++    auto prepared = currentPin ? tracked->second.pinnedGpu.lock() : nullptr;
++    if (!prepared) {
++        if (service.planner->Enqueue(request, &key) != GpuQueueResult::AlreadyReady) return false;
++        prepared = service.planner->TryAcquire(key);
++    }
++    if (!prepared || !prepared->bundle || !SourcesCurrent(state)) return false;
++    const auto& bundle = *prepared->bundle;
++    const auto& input = *request.shaderBundle;
++    // Every requested object must exist before any target pointer changes.
++    // An intentional null override has an empty input and an empty output.
++    const bool output[] = {bundle.vertex != nullptr, bundle.hull != nullptr,
++        bundle.domain != nullptr, bundle.geometry != nullptr, bundle.pixel != nullptr,
++        bundle.compute != nullptr};
++    for (size_t stage = 0; stage < 6; ++stage)
++        if (bool(input.stages[stage]) != output[stage]) return false;
++    if (input.createBlendState != (bundle.blend != nullptr) ||
++        input.createDepthStencilState != (bundle.depthStencil != nullptr) ||
++        input.createRasterizerState != (bundle.rasterizer != nullptr) ||
++        input.createSamplerState != (bundle.sampler != nullptr)) return false;
++    if (bundle.vertex) bundle.vertex->AddRef();
++    if (bundle.hull) bundle.hull->AddRef();
++    if (bundle.domain) bundle.domain->AddRef();
++    if (bundle.geometry) bundle.geometry->AddRef();
++    if (bundle.pixel) bundle.pixel->AddRef();
++    if (bundle.compute) bundle.compute->AddRef();
++    if (bundle.blend) bundle.blend->AddRef();
++    if (bundle.depthStencil) bundle.depthStencil->AddRef();
++    if (bundle.rasterizer) bundle.rasterizer->AddRef();
++    if (bundle.sampler) bundle.sampler->AddRef();
++    target.vs = bundle.vertex; target.hs = bundle.hull; target.ds = bundle.domain;
++    target.gs = bundle.geometry; target.ps = bundle.pixel; target.cs = bundle.compute;
++    target.blend_state = bundle.blend; target.depth_stencil_state = bundle.depthStencil;
++    target.rs_state = bundle.rasterizer; target.sampler_state = bundle.sampler;
++    target.preparation_pin = prepared;
++    LoadTrace::Get().RecordInstant(LoadStage::ReadinessWait,
++        reinterpret_cast<uintptr_t>(&target), request.estimatedBytes, 0);
++    return true;
++}
++static ID3D11ShaderResourceView* TryGetPreparedShaderResourceViewImpl(ID3D11Resource* resource,
++    ID3D11Device* device, const D3D11_SHADER_RESOURCE_VIEW_DESC* requested) {
++    if (!resource || !requested || requested->ViewDimension != D3D11_SRV_DIMENSION_TEXTURE2D)
++        return nullptr;
++    auto state = Current();
++    auto& service = Services();
++    if (runtimeBusy || service.retirementRequested.load()) return nullptr;
++    TryGlobalConfigGuard configGuard;
++    if (!configGuard.acquired) return nullptr;
++    std::unique_lock<std::recursive_mutex> lock(service.plannerMutex, std::try_to_lock);
++    if (!lock.owns_lock() || service.owner != std::this_thread::get_id()) return nullptr;
++    RuntimeOwnerScope ownerScope(lock);
++    if (!SourcesCurrent(state) || !service.planner || service.device != device ||
++        service.plannerGeneration != state->generation) return nullptr;
++    const auto entry = service.activeResources.find(resource);
++    if (entry == service.activeResources.end()) return nullptr;
++    auto prepared = entry->second.lock();
++    if (!prepared || prepared->resource != resource || !prepared->shaderResourceView) return nullptr;
++    D3D11_RESOURCE_DIMENSION dimension;
++    resource->GetType(&dimension);
++    if (dimension != D3D11_RESOURCE_DIMENSION_TEXTURE2D) return nullptr;
++    D3D11_TEXTURE2D_DESC texture{};
++    static_cast<ID3D11Texture2D*>(resource)->GetDesc(&texture);
++    if (texture.ArraySize != 1 || texture.SampleDesc.Count != 1 || texture.SampleDesc.Quality ||
++        (texture.MiscFlags & D3D11_RESOURCE_MISC_TEXTURECUBE)) return nullptr;
++    D3D11_SHADER_RESOURCE_VIEW_DESC actual{};
++    prepared->shaderResourceView->GetDesc(&actual);
++    if (actual.ViewDimension != D3D11_SRV_DIMENSION_TEXTURE2D ||
++        !FullTexture2DViewMatches(uint32_t(texture.Format), texture.MipLevels,
++            uint32_t(requested->Format), requested->Texture2D.MostDetailedMip, requested->Texture2D.MipLevels,
++            uint32_t(actual.Format), actual.Texture2D.MostDetailedMip, actual.Texture2D.MipLevels) ||
++        !SourcesCurrent(state)) return nullptr;
++    prepared->shaderResourceView->AddRef();
++    LoadTrace::Get().RecordInstant(LoadStage::ViewCreation, reinterpret_cast<uintptr_t>(resource), 0, 0);
++    return prepared->shaderResourceView;
++}
++bool TryUsePreparedShaderBundle(CustomShader& target, ID3D11Device* device) {
++    try { return TryUsePreparedShaderBundleImpl(target, device); }
++    catch (...) { return false; }
++}
++ID3D11ShaderResourceView* TryGetPreparedShaderResourceView(ID3D11Resource* resource,
++    ID3D11Device* device, const D3D11_SHADER_RESOURCE_VIEW_DESC* requested) {
++    try { return TryGetPreparedShaderResourceViewImpl(resource, device, requested); }
++    catch (...) { return nullptr; }
++}
++
 +void ConfigureRuntime() {
 +    try { ConfigureRuntimeImpl(); }
 +    catch (...) {
@@ -3428,16 +4512,20 @@ index 0000000000000000000000000000000000000000..8e4d3b1c12620f354145f6e65ae00b1e
 +}
 diff --git a/DirectX11/ModLoading/Runtime.h b/DirectX11/ModLoading/Runtime.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..9aec02bbc007326bda8524f9bdfd995c572ebf32
+index 0000000000000000000000000000000000000000..96c47389732111f08af4960dacffefba6f466a33
 --- /dev/null
 +++ b/DirectX11/ModLoading/Runtime.h
-@@ -0,0 +1,26 @@
+@@ -0,0 +1,34 @@
 +#pragma once
 +#include "PreparedTypes.h"
 +#include <vector>
 +
 +struct ID3D11Device;
 +class CustomResource;
++class CustomShader;
++struct ID3D11Resource;
++struct ID3D11ShaderResourceView;
++struct D3D11_SHADER_RESOURCE_VIEW_DESC;
 +enum class CustomColorSpace;
 +
 +namespace ModLoading {
@@ -3455,15 +4543,19 @@ index 0000000000000000000000000000000000000000..9aec02bbc007326bda8524f9bdfd995c
 +// Acquires an actual prepared GPU resource only after descriptor/proof matching.
 +// False always preserves the legacy creation path.
 +bool TryUsePreparedResource(CustomResource& target, ID3D11Device* realDevice);
++bool TryUsePreparedShaderBundle(CustomShader& target, ID3D11Device* realDevice);
++// Returns an AddRef-owned exact compatible SRV, or nullptr for the legacy path.
++ID3D11ShaderResourceView* TryGetPreparedShaderResourceView(ID3D11Resource* resource,
++    ID3D11Device* realDevice, const D3D11_SHADER_RESOURCE_VIEW_DESC* requested);
 +unsigned PreparedWICFlags(const std::vector<uint8_t>& bytes,
 +    CustomColorSpace colorSpace, bool detectPngSRGB);
 +}
 diff --git a/DirectX11/ModLoading/RuntimePolicy.h b/DirectX11/ModLoading/RuntimePolicy.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..e959280a07b66a6710b57196084c70313ded7bd7
+index 0000000000000000000000000000000000000000..d475f45559458cac78e526e8c5a65d4459510e83
 --- /dev/null
 +++ b/DirectX11/ModLoading/RuntimePolicy.h
-@@ -0,0 +1,22 @@
+@@ -0,0 +1,37 @@
 +#pragma once
 +#include <cstdint>
 +#include <cstring>
@@ -3485,13 +4577,28 @@ index 0000000000000000000000000000000000000000..e959280a07b66a6710b57196084c7031
 +    }
 +    return false;
 +}
++// Conservative target-view reuse: only a full, typed, non-array Texture2D
++// view is admitted. Zero format inherits the typed resource format; UINT_MAX
++// mip count means every available mip, as in the legacy descriptor builder.
++inline bool FullTexture2DViewMatches(uint32_t resourceFormat, uint32_t resourceMips,
++    uint32_t requestedFormat, uint32_t requestedFirst, uint32_t requestedMips,
++    uint32_t preparedFormat, uint32_t preparedFirst, uint32_t preparedMips) {
++    if (!resourceFormat || !resourceMips || requestedFirst || preparedFirst) return false;
++    if (!requestedFormat) requestedFormat = resourceFormat;
++    if (!preparedFormat) preparedFormat = resourceFormat;
++    if (requestedMips == UINT32_MAX) requestedMips = resourceMips;
++    if (preparedMips == UINT32_MAX) preparedMips = resourceMips;
++    return requestedFormat == preparedFormat && requestedMips == resourceMips &&
++        preparedMips == resourceMips;
++}
++
 +}
 diff --git a/DirectX11/ModLoading/SnapshotIO.cpp b/DirectX11/ModLoading/SnapshotIO.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..f4e2ea65b61b73500a47f1fd8f03b8ebe147b616
+index 0000000000000000000000000000000000000000..b8e07e659d702941ebb52cfd23e72feb593b2020
 --- /dev/null
 +++ b/DirectX11/ModLoading/SnapshotIO.cpp
-@@ -0,0 +1,122 @@
+@@ -0,0 +1,159 @@
 +#include "SnapshotIO.h"
 +#include <algorithm>
 +#include <cstring>
@@ -3539,6 +4646,7 @@ index 0000000000000000000000000000000000000000..f4e2ea65b61b73500a47f1fd8f03b8eb
 + ~Handle() { if(value!=INVALID_HANDLE_VALUE) CloseHandle(value); }
 + bool Open(const std::wstring& path) { value=CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,FILE_FLAG_SEQUENTIAL_SCAN,nullptr);return value!=INVALID_HANDLE_VALUE; }
 + bool Identity(FileIdentity& out) { BY_HANDLE_FILE_INFORMATION s{};if(!GetFileInformationByHandle(value,&s)||(s.dwFileAttributes&FILE_ATTRIBUTE_DIRECTORY))return false;out.volume=s.dwVolumeSerialNumber;out.file=(uint64_t(s.nFileIndexHigh)<<32)|s.nFileIndexLow;out.size=(uint64_t(s.nFileSizeHigh)<<32)|s.nFileSizeLow;out.modified=(uint64_t(s.ftLastWriteTime.dwHighDateTime)<<32)|s.ftLastWriteTime.dwLowDateTime;return true; }
++ bool SingleLink() {BY_HANDLE_FILE_INFORMATION s{};return GetFileInformationByHandle(value,&s)&&s.nNumberOfLinks==1;}
 + bool Read(uint8_t* p,size_t n,size_t& got) { DWORD count=0;bool ok=ReadFile(value,p,DWORD(n),&count,nullptr)!=FALSE;got=count;return ok; }
 + bool Rewind() { LARGE_INTEGER zero{};return SetFilePointerEx(value,zero,nullptr,FILE_BEGIN)!=FALSE; }
 +};
@@ -3547,10 +4655,45 @@ index 0000000000000000000000000000000000000000..f4e2ea65b61b73500a47f1fd8f03b8eb
 + int value=-1; ~Handle(){if(value>=0)close(value);}
 + bool Open(const std::wstring& path) { try {value=open(std::wstring_convert<std::codecvt_utf8<wchar_t>>().to_bytes(path).c_str(),O_RDONLY);}catch(...){return false;}return value>=0; }
 + bool Identity(FileIdentity& out) {struct stat s{};if(fstat(value,&s)||!S_ISREG(s.st_mode)||s.st_size<0)return false;out.volume=uint64_t(s.st_dev);out.file=uint64_t(s.st_ino);out.size=uint64_t(s.st_size);out.modified=uint64_t(s.st_mtim.tv_sec)*1000000000+uint64_t(s.st_mtim.tv_nsec);return true;}
++ bool SingleLink() {struct stat s{};return fstat(value,&s)==0&&s.st_nlink==1;}
 + bool Read(uint8_t* p,size_t n,size_t& got){ssize_t r=read(value,p,n);if(r<0)return false;got=size_t(r);return true;}
 + bool Rewind(){return lseek(value,0,SEEK_SET)==0;}
 +};
 +#endif
++// Inspect every lexical component, including ancestors. Do not resolve symlinks:
++// their target may live outside the directory-notification closure.
++bool WatchablePath(const std::wstring& path) {
++#ifdef _WIN32
++ std::vector<wchar_t> buffer(32768);DWORD count=GetFullPathNameW(path.c_str(),DWORD(buffer.size()),buffer.data(),nullptr);
++ if(!count||count>=buffer.size())return false;
++ std::wstring full(buffer.data(),count);
++ // Directory notifications do not provide the stream-qualified identity used
++ // by a path-keyed cache. Only the drive separator may contain a colon.
++ if(full.find(L':',2)!=std::wstring::npos)return false;
++ // Notifications use long names; reject 8.3 aliases until their notification
++ // identity is tracked explicitly. Case differences alone are equivalent.
++ DWORD longCount=GetLongPathNameW(full.c_str(),buffer.data(),DWORD(buffer.size()));
++ if(!longCount||longCount>=buffer.size()||CompareStringOrdinal(full.c_str(),int(full.size()),buffer.data(),int(longCount),TRUE)!=CSTR_EQUAL)return false;
++ for(size_t i=0;i<=full.size();++i){
++  if(i!=full.size()&&full[i]!=L'\\'&&full[i]!=L'/')continue;
++  if(i==0||(i==2&&full[1]==L':'))continue;
++  // Extended and UNC namespace roots are conservatively unsupported.
++  if(i==1)return false;
++  DWORD attributes=GetFileAttributesW(full.substr(0,i).c_str());
++  if(attributes==INVALID_FILE_ATTRIBUTES||(attributes&FILE_ATTRIBUTE_REPARSE_POINT))return false;
++ }
++#else
++ std::string full;
++ try {full=std::wstring_convert<std::codecvt_utf8<wchar_t>>().to_bytes(path);}catch(...){return false;}
++ if(full.empty())return false;
++ if(full[0]!='/'){char current[32768];if(!getcwd(current,sizeof(current)))return false;full=std::string(current)+"/"+full;}
++ for(size_t i=1;i<=full.size();++i){
++  if(i!=full.size()&&full[i]!='/')continue;
++  struct stat s{};if(lstat(full.substr(0,i).c_str(),&s)||S_ISLNK(s.st_mode))return false;
++ }
++#endif
++ return true;
++}
 +}
 +SourceDigest HashBytes(const uint8_t* bytes,size_t size){Sha s;s.Add(bytes,size);return s.End();}
 +bool ReadVerifiedSnapshot(const std::wstring& path,size_t maxBytes,SourceSnapshot& result,std::string& error) {
@@ -3558,6 +4701,7 @@ index 0000000000000000000000000000000000000000..f4e2ea65b61b73500a47f1fd8f03b8eb
 + if(!h.Open(path)||!h.Identity(before)){error="source unavailable";return false;}
 + if(before.size>maxBytes||before.size>std::numeric_limits<size_t>::max()||before.size>std::vector<uint8_t>().max_size()){error="source exceeds budget";return false;}
 + try {
++ const bool watchableBefore=h.SingleLink()&&WatchablePath(path);
 + auto bytes=std::make_shared<std::vector<uint8_t>>(size_t(before.size));size_t offset=0;
 + while(offset<bytes->size()){size_t count=0;if(!h.Read(bytes->data()+offset,std::min(size_t(65536),bytes->size()-offset),count)||!count){error="incomplete source";return false;}offset+=count;}
 + if(!h.Identity(after)||!(before==after)){error="source changed";return false;}
@@ -3566,7 +4710,7 @@ index 0000000000000000000000000000000000000000..f4e2ea65b61b73500a47f1fd8f03b8eb
 + if(!h.Rewind()){error="source seek failed";return false;}Sha check;uint8_t block[65536];offset=0;
 + while(offset<bytes->size()){size_t count=0;if(!h.Read(block,std::min(sizeof(block),bytes->size()-offset),count)||!count){error="source changed";return false;}check.Add(block,count);offset+=count;}
 + if(check.End()!=digest||!h.Identity(after)||!(before==after)){error="source changed";return false;}
-+ SourceSnapshot candidate;candidate.path=path;candidate.identity=before;candidate.digest=digest;candidate.bytes=bytes;result=std::move(candidate);error.clear();return true;
++ SourceSnapshot candidate;candidate.watchable=watchableBefore&&h.SingleLink()&&WatchablePath(path);if(!candidate.watchable)candidate.compatibilityReason="source alias dependencies are outside lexical watches";candidate.path=path;candidate.identity=before;candidate.digest=digest;candidate.bytes=bytes;result=std::move(candidate);error.clear();return true;
 + } catch(const std::bad_alloc&) {error="source allocation failed";return false;}
 +}
 +}
@@ -3813,10 +4957,10 @@ index 0000000000000000000000000000000000000000..601e6941f5b1984921bc02caeb391503
 +**Exit gate remains blocked** until the Windows build and real game data above exist. This report provides audit leads and a repeatable collection procedure only; it contains no measured baseline, no verified artifact, and no gate verdict.
 diff --git a/docs/mod-loading/prepared-loading.md b/docs/mod-loading/prepared-loading.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..7cc73b67e8fa2ba9cf096504c64558f3c82b2d0b
+index 0000000000000000000000000000000000000000..3bf3d90a4d3ddc40a9f71ccd0587d54e7d3943be
 --- /dev/null
 +++ b/docs/mod-loading/prepared-loading.md
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,109 @@
 +# Experimental prepared resource loading
 +
 +This branch implements an opt-in native preparation path on the pinned source
@@ -3834,6 +4978,9 @@ index 0000000000000000000000000000000000000000..7cc73b67e8fa2ba9cf096504c64558f3
 +* Qualified read-only resources can be prepared on the actual render device
 +  during an explicitly declared loading window. GPU identity includes device
 +  epoch, source content and effective creation descriptors/options.
++* Production custom shaders use complete six-stage shader/fixed-state bundles;
++  supported full Texture2D SRVs are warmed and reused by exact descriptor and
++  resource identity. Unsupported merge/dynamic state stays on the legacy path.
 +* Adapter budget admission, old/new live-object estimates, inactive eviction,
 +  active leases, bounded queues and generation fences. Estimates do not prove
 +  physical residency or driver memory retirement.
@@ -3860,10 +5007,21 @@ index 0000000000000000000000000000000000000000..7cc73b67e8fa2ba9cf096504c64558f3
 +    preparation_loading_window = 0
 +    auto_activate = 0
 +
-+Modes are off, adaptive and prepared_profile. The current profile policy changes
-+preparation priority; it does not establish a strict complete working-set
-+readiness gate. There is no live Ready telemetry. CPU cache zero disables CPU
-+and dependent GPU preparation; GPU cache zero keeps CPU preparation.
++Modes are off, adaptive and prepared_profile. Prepared profile conservatively
++requires every declared resource/shader and an audited command closure to be
++supported, CPU/GPU ready, current and pinned before reporting Ready. Unknown
++operations count as compatibility; a useful prepared hit does not imply that
++the complete profile is ready. Adaptive never reports Ready. CPU cache zero
++disables CPU and dependent GPU preparation; GPU cache zero keeps CPU preparation.
++
++An opt-in background publisher writes bounded scalar diagnostics to
++`.xxmi-preparation/status.json` beside the actual DLL. It includes actual module
++SHA256, PID, timestamp, mode, state and counts. Invalidation tickets prevent old
++readiness updates from replacing newer source/device events. A report can lag
++one writer interval; it is diagnostic and never authorizes activation. Launcher
++reads require authenticated capability metadata, matching DLL hash, fresh data,
++consistent counts and a live reported PID. Status is sampled when settings open
++or Diagnostics is clicked; it is not a continuously refreshed progress display.
 +
 +GPU creation is admitted only when preparation_loading_window is explicitly
 +enabled. Present is not automatically considered a loading screen. Driver calls
@@ -3875,8 +5033,11 @@ index 0000000000000000000000000000000000000000..7cc73b67e8fa2ba9cf096504c64558f3
 +Unsupported or unproven resource dependencies, mutable outputs, aliases and
 +pools retain legacy behavior. Source-only image snapshots may still need decode;
 +oversized assets, unknown layouts and device creation failures remain misses.
-+The native shader/view planner is exercised by fixtures, but production custom
-+shader warming and target-specific view warming are not yet integrated.
++Aliased files, reparse points, multiply linked files and unwatchable path forms
++cannot enter readiness; lexical directory watches cannot prove them current.
++Shader creation supports all six stages, but current Windows fixture coverage
++is pixel shader plus an explicit null vertex stage and all four fixed-state
++types. Other nonnull stages require additional qualification.
 +
 +Current file-change preparation does not publish live resource replacements or
 +promote a complete prepared candidate across F10. F10 retains upstream parsing,
@@ -3887,6 +5048,9 @@ index 0000000000000000000000000000000000000000..7cc73b67e8fa2ba9cf096504c64558f3
 +commands, variables, pools, resources and overrides. Those readers must gain
 +generation ownership before live publication is safe. Phase 6 currently checks
 +lexical IR equivalence, not full semantic incremental rebuild equivalence.
++CPU and shader caches are bounded in-memory caches. Persistent on-disk derived
++cache reuse is not implemented. Shader compilation remains part of legacy
++configuration parsing; it is not a detached semantic compiler.
 +
 +Periodic config-closure reconciliation is disabled until an exact closure
 +verifier is integrated. Real notifications, overflow recovery and explicit reload
@@ -5016,10 +6180,10 @@ index 0000000000000000000000000000000000000000..88f21c64ee9f8a66a9ec6cd4efa37875
 +print("preparation_changes: portable state and worker checks passed")
 diff --git a/tests/preparation_cpu/main.cpp b/tests/preparation_cpu/main.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..e7b1b245636ec4674b54f4fda831b39fc82cde0b
+index 0000000000000000000000000000000000000000..a3a14701a5fa453e5a2e3da4075b15e204bbf6f8
 --- /dev/null
 +++ b/tests/preparation_cpu/main.cpp
-@@ -0,0 +1,75 @@
+@@ -0,0 +1,125 @@
 +#include "AssetCatalog.h"
 +#include "PreparationScheduler.h"
 +#include "SnapshotIO.h"
@@ -5037,11 +6201,21 @@ index 0000000000000000000000000000000000000000..e7b1b245636ec4674b54f4fda831b39f
 +#ifndef _WIN32
 +#include <sys/stat.h>
 +#include <fcntl.h>
++#include <unistd.h>
 +#endif
 +using namespace ModLoading;
 +static std::string Hex(const SourceDigest& d){const char* digits="0123456789abcdef";std::string out;for(auto b:d){out+=digits[b>>4];out+=digits[b&15];}return out;}
 +static void Write(const char* p,const char* content){std::ofstream f(p,std::ios::binary);f<<content;assert(f.good());}
 +static std::shared_ptr<const PreparedAsset> Asset(const wchar_t* p,Generation g,size_t n){auto a=std::make_shared<PreparedAsset>();a->generation=g;a->snapshot.path=p;a->snapshot.bytes=std::make_shared<const std::vector<uint8_t>>(n,uint8_t(42));return a;}
++// Linked snapshots remain readable for config validation, but never become ready assets.
++static void CheckAlias(const wchar_t* alias,const char* target){
++ SourceSnapshot before,after;std::string error;assert(ReadVerifiedSnapshot(alias,4,before,error));assert(!before.watchable);assert(!before.compatibilityReason.empty());
++ CpuAssetCache direct(4);auto unsupported=std::make_shared<PreparedAsset>();unsupported->snapshot=before;assert(direct.Reserve(4));assert(!direct.Publish(unsupported,4));assert(direct.ReservedBytes()==0&&direct.ResidentBytes()==0);
++ PreparationLimits limits;limits.cpuBytes=16;limits.maxAssetBytes=4;limits.workers=1;limits.maxQueued=2;PreparationScheduler scheduler(limits);assert(scheduler.Enqueue(alias,1));
++ auto until=std::chrono::steady_clock::now()+std::chrono::seconds(5);while(scheduler.CompatibilityReason(alias,1).empty()&&std::chrono::steady_clock::now()<until){std::this_thread::yield();}
++ assert(!scheduler.CompatibilityReason(alias,1).empty());assert(!scheduler.TryGet(alias,1));assert(scheduler.ReservedBytes()==0);assert(scheduler.ResidentBytes()==0);
++ Write(target,"efgh");assert(ReadVerifiedSnapshot(alias,4,after,error));assert(before.digest!=after.digest);assert(!after.watchable);assert(!scheduler.TryGet(alias,1));assert(!scheduler.Enqueue(alias,1));scheduler.Stop();
++}
 +int main(){
 + assert(Hex(HashBytes(nullptr,0))=="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
 + const char* abc="abc";assert(Hex(HashBytes(reinterpret_cast<const uint8_t*>(abc),3))=="ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
@@ -5067,6 +6241,46 @@ index 0000000000000000000000000000000000000000..e7b1b245636ec4674b54f4fda831b39f
 +#endif
 + SourceSnapshot changed;assert(ReadVerifiedSnapshot(wide,4,changed,error));assert(changed.digest!=first.digest);assert((*first.bytes)[0]=='a');
 + assert(!ReadVerifiedSnapshot(L"missing.bin",4,changed,error));
++ // A hard-link write through an unwatched sibling cannot return stale prepared bytes.
++ Write("alias-target.bin","abcd");
++#ifdef _WIN32
++ assert(CreateHardLinkW(L"alias-hard.bin",L"alias-target.bin",nullptr));
++#else
++ assert(link("alias-target.bin","alias-hard.bin")==0);
++#endif
++ CheckAlias(L"alias-hard.bin","alias-target.bin");std::remove("alias-hard.bin");
++ Write("alias-target.bin","abcd");
++#ifdef _WIN32
++ bool fileSymlink=CreateSymbolicLinkW(L"alias-symbolic.bin",L"alias-target.bin",2)!=FALSE;
++ if(!fileSymlink&&GetLastError()==ERROR_INVALID_PARAMETER)fileSymlink=CreateSymbolicLinkW(L"alias-symbolic.bin",L"alias-target.bin",0)!=FALSE;
++ if(fileSymlink){CheckAlias(L"alias-symbolic.bin","alias-target.bin");assert(DeleteFileW(L"alias-symbolic.bin"));}else std::cout<<"File symlink fixture skipped: privilege unavailable\n";
++ assert(CreateDirectoryW(L"alias-real-directory",nullptr));
++#else
++ assert(symlink("alias-target.bin","alias-symbolic.bin")==0);CheckAlias(L"alias-symbolic.bin","alias-target.bin");assert(unlink("alias-symbolic.bin")==0);
++ assert(mkdir("alias-real-directory",0700)==0);
++#endif
++ Write("alias-real-directory/asset.bin","abcd");
++#ifdef _WIN32
++ bool directorySymlink=CreateSymbolicLinkW(L"alias-directory",L"alias-real-directory",3)!=FALSE;
++ if(!directorySymlink&&GetLastError()==ERROR_INVALID_PARAMETER)directorySymlink=CreateSymbolicLinkW(L"alias-directory",L"alias-real-directory",1)!=FALSE;
++ if(directorySymlink){CheckAlias(L"alias-directory/asset.bin","alias-real-directory/asset.bin");assert(RemoveDirectoryW(L"alias-directory"));}else std::cout<<"Directory symlink fixture skipped: privilege unavailable\n";
++ std::remove("alias-real-directory/asset.bin");assert(RemoveDirectoryW(L"alias-real-directory"));
++#else
++ assert(symlink("alias-real-directory","alias-directory")==0);CheckAlias(L"alias-directory/asset.bin","alias-real-directory/asset.bin");assert(unlink("alias-directory")==0);std::remove("alias-real-directory/asset.bin");assert(rmdir("alias-real-directory")==0);
++#endif
++ std::remove("alias-target.bin");
++#ifdef _WIN32
++ Write("alias-stream-base.bin","base");
++ HANDLE ads=CreateFileW(L"alias-stream-base.bin:watch-stream",GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
++ if(ads!=INVALID_HANDLE_VALUE){DWORD written=0;assert(WriteFile(ads,"abcd",4,&written,nullptr)&&written==4);assert(CloseHandle(ads));CheckAlias(L"alias-stream-base.bin:watch-stream","alias-stream-base.bin:watch-stream");}
++ else std::cout<<"Alternate-stream fixture skipped: volume does not support creation\n";
++ assert(DeleteFileW(L"alias-stream-base.bin"));
++ const wchar_t* longName=L"alias-long-file-name-for-short-path.bin";Write("alias-long-file-name-for-short-path.bin","abcd");
++ wchar_t shortName[32768]{};DWORD shortCount=GetShortPathNameW(longName,shortName,DWORD(sizeof(shortName)/sizeof(shortName[0])));
++ if(shortCount&&shortCount<sizeof(shortName)/sizeof(shortName[0])&&CompareStringOrdinal(longName,-1,shortName,-1,TRUE)!=CSTR_EQUAL)CheckAlias(shortName,"alias-long-file-name-for-short-path.bin");
++ else std::cout<<"8.3 alias fixture skipped: short names unavailable\n";
++ assert(DeleteFileW(longName));
++#endif
 + CpuAssetCache cache(8);assert(cache.Reserve(4));assert(cache.Publish(Asset(L"a",1,4),4));auto pinned=cache.Find(L"a",1);assert(cache.Reserve(4));assert(cache.Publish(Asset(L"b",1,4),4));auto alsoPinned=cache.Find(L"b",1);assert(!cache.Reserve(1));assert(cache.ResidentBytes()==8);alsoPinned.reset();assert(cache.Reserve(4));assert(!cache.Find(L"b",1));cache.ReleaseReservation(4);assert(cache.Find(L"a",1)==pinned);
 + CpuAssetCache combined(8);auto withPixels=std::make_shared<PreparedAsset>();withPixels->snapshot.path=L"decoded";withPixels->snapshot.bytes=std::make_shared<const std::vector<uint8_t>>(4,uint8_t(0));auto imagePixels=std::make_shared<DecodedImage>();imagePixels->pixels=std::make_shared<const std::vector<uint8_t>>(4,uint8_t(0));withPixels->decoded=imagePixels;assert(combined.Reserve(8));assert(combined.Publish(withPixels,8));assert(combined.ResidentBytes()==8);assert(!combined.Reserve(1));
 + AssetCatalog catalog(2);auto a=catalog.Register(L"a",1);assert(a);assert(!catalog.Register(L"bad",1,{999}));assert(catalog.Register(L"b",1,{a}));assert(!catalog.Register(L"c",1));assert(catalog.Register(L"a",2)==a);
@@ -5313,10 +6527,10 @@ index 0000000000000000000000000000000000000000..b45911e21704f40247acaa919d98e683
 +"$build/test"
 diff --git a/tests/preparation_gpu/test_gpu_device.cpp b/tests/preparation_gpu/test_gpu_device.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..49909dea6868b910022a112f39e11228f8a0e1ed
+index 0000000000000000000000000000000000000000..d7050d70d53ccda6d4b12ea7c1c9283473eb84ea
 --- /dev/null
 +++ b/tests/preparation_gpu/test_gpu_device.cpp
-@@ -0,0 +1,159 @@
+@@ -0,0 +1,238 @@
 +// Standalone Windows regression host. WARP is this fixture's real rendering
 +// device, never a device used to prepare resources for another game device.
 +#include "PreparationPlanner.h"
@@ -5355,6 +6569,28 @@ index 0000000000000000000000000000000000000000..49909dea6868b910022a112f39e11228
 +}
 +int main() {
 +    Apartment apartment;
++    // Unique compiled-blob ownership is bounded across queue/profile/generation
++    // aliases; retaining the same blob twice never charges its payload twice.
++    assert(SharedShaderBytecode::LiveRetainedBytes() == 0);
++    {
++        ComPtr<ID3DBlob> first, second;
++        assert(SUCCEEDED(D3DCreateBlob(32, first.GetAddressOf())) && SUCCEEDED(D3DCreateBlob(16, second.GetAddressOf())));
++        std::memset(first->GetBufferPointer(), 1, 32); std::memset(second->GetBufferPointer(), 2, 16);
++        const auto firstDigest = HashBytes(static_cast<const uint8_t*>(first->GetBufferPointer()), 32);
++        const auto secondDigest = HashBytes(static_cast<const uint8_t*>(second->GetBufferPointer()), 16);
++        auto oldGeneration = SharedShaderBytecode::Retain(first.Get(), firstDigest, 32);
++        auto alias = SharedShaderBytecode::Retain(first.Get(), firstDigest, 32);
++        assert(oldGeneration && alias && SharedShaderBytecode::LiveRetainedBytes() == 32);
++        assert(!SharedShaderBytecode::Retain(second.Get(), secondDigest, 32));
++        first.Reset(); oldGeneration = {}; assert(SharedShaderBytecode::LiveRetainedBytes() == 32);
++        alias = {}; assert(SharedShaderBytecode::LiveRetainedBytes() == 0);
++        auto nextGeneration = SharedShaderBytecode::Retain(second.Get(), secondDigest, 32);
++        assert(nextGeneration && SharedShaderBytecode::LiveRetainedBytes() == 16);
++        assert(!SharedShaderBytecode::Retain(second.Get(), secondDigest, 0));
++        auto changedDigest = secondDigest; changedDigest[0] ^= 1;
++        assert(!SharedShaderBytecode::Retain(second.Get(), changedDigest, 32));
++    }
++    assert(SharedShaderBytecode::LiveRetainedBytes() == 0);
 +    ComPtr<ID3D11DeviceContext> context;
 +    auto device = Device(D3D11_CREATE_DEVICE_SINGLETHREADED, context);
 +    assert(ProcessGpuAllocationLedger().Bytes() == 0);
@@ -5434,7 +6670,7 @@ index 0000000000000000000000000000000000000000..49909dea6868b910022a112f39e11228
 +    put(76, 32); put(80, 4); put(84, 0x31545844); put(108, 0x401008);
 +    GpuPreparationRequest encoded;
 +    encoded.kind = GpuPreparationKind::EncodedDDS; encoded.snapshot = Snapshot(dds);
-+    encoded.forceSRGB = true; encoded.dependencyReadOnly = true;
++    encoded.forceSRGB = true; encoded.dependencyReadOnly = true; encoded.createDefaultShaderResourceView = true;
 +    encoded.estimatedBytes = EstimateEncodedTextureBytes(encoded.snapshot, encoded.kind);
 +    assert(encoded.estimatedBytes == 65568);
 +    DeviceResourceKey encodedKey;
@@ -5442,6 +6678,9 @@ index 0000000000000000000000000000000000000000..49909dea6868b910022a112f39e11228
 +    auto encodedObject = planner.TryAcquire(encodedKey); assert(encodedObject);
 +    static_cast<ID3D11Texture2D*>(encodedObject->resource)->GetDesc(&actual);
 +    assert(actual.Format == DXGI_FORMAT_BC1_UNORM_SRGB && actual.MipLevels == 2);
++    assert(encodedObject->shaderResourceView);
++    D3D11_SHADER_RESOURCE_VIEW_DESC encodedView{}; encodedObject->shaderResourceView->GetDesc(&encodedView);
++    assert(encodedView.Format == DXGI_FORMAT_BC1_UNORM_SRGB && encodedView.Texture2D.MipLevels == 2);
 +    assert(planner.Enqueue(encoded) == GpuQueueResult::AlreadyReady);
 +    auto writable = texture; writable.texture.BindFlags |= D3D11_BIND_UNORDERED_ACCESS;
 +    assert(planner.Enqueue(writable) == GpuQueueResult::CompatibilityOnly);
@@ -5455,24 +6694,78 @@ index 0000000000000000000000000000000000000000..49909dea6868b910022a112f39e11228
 +    const auto* shaderBytes = static_cast<const uint8_t*>(blob->GetBufferPointer());
 +    GpuPreparationRequest shader;
 +    shader.kind = GpuPreparationKind::PixelShader;
-+    shader.snapshot = Snapshot(std::vector<uint8_t>(shaderBytes, shaderBytes + blob->GetBufferSize()));
++    shader.shaderBytecode = SharedShaderBytecode::Retain(blob.Get(), HashBytes(shaderBytes, blob->GetBufferSize()));
++    assert(shader.shaderBytecode.Data() == shaderBytes && shader.shaderBytecode.Size() == blob->GetBufferSize());
 +    shader.dependencyReadOnly = true; shader.estimatedBytes = blob->GetBufferSize() + 65536;
-+    DeviceResourceKey shaderKey; assert(planner.Enqueue(shader, &shaderKey) == GpuQueueResult::Queued); Created(planner);
-+    assert(planner.TryAcquire(shaderKey)->shader);
++    DeviceResourceKey computedKey;
++    const auto queuedBeforeIdentity = planner.Queued();
++    assert(planner.ComputeKey(shader, computedKey) && planner.Queued() == queuedBeforeIdentity);
++    PreparationPlanner shaderLimit(256ull * 1024 * 1024, 32, blob->GetBufferSize() - 1);
++    assert(shaderLimit.BeginDevice(device.Get(), epoch));
++    assert(shaderLimit.Enqueue(shader) == GpuQueueResult::BudgetBlocked && shaderLimit.QueuedShaderBytecodeBytes() == 0);
++    DeviceResourceKey shaderKey; assert(planner.Enqueue(shader, &shaderKey) == GpuQueueResult::Queued);
++    assert(!(computedKey < shaderKey) && !(shaderKey < computedKey));
++    assert(planner.QueuedShaderBytecodeBytes() == blob->GetBufferSize());
++    blob.Reset(); shader.shaderBytecode = {}; // queued owner alone retains the compiled bytes
++    Created(planner); assert(planner.TryAcquire(shaderKey)->shader);
++    assert(planner.QueuedShaderBytecodeBytes() == 0 && SharedShaderBytecode::LiveRetainedBytes() == 0);
++    shaderLimit.RetireDevice();
++    // A complete independent state bundle publishes atomically, including an
++    // explicit null vertex-stage override. Failed partial creation stays a miss.
++    assert(SUCCEEDED(D3DCompile(hlsl, sizeof(hlsl) - 1, nullptr, nullptr, nullptr, "main", "ps_5_0", 0, 0, blob.GetAddressOf(), nullptr)));
++    auto input = std::make_shared<ShaderBundleInput>();
++    shaderBytes = static_cast<const uint8_t*>(blob->GetBufferPointer());
++    input->stages[4] = SharedShaderBytecode::Retain(blob.Get(), HashBytes(shaderBytes, blob->GetBufferSize()));
++    input->stageOverrideMask = (1u << 0) | (1u << 4);
++    input->createBlendState = input->createDepthStencilState = input->createRasterizerState = input->createSamplerState = true;
++    for (auto& target : input->blend.RenderTarget) {
++        target.SrcBlend = target.SrcBlendAlpha = D3D11_BLEND_ONE;
++        target.DestBlend = target.DestBlendAlpha = D3D11_BLEND_ZERO;
++        target.BlendOp = target.BlendOpAlpha = D3D11_BLEND_OP_ADD;
++        target.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
++    }
++    input->depthStencil.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO; input->depthStencil.DepthFunc = D3D11_COMPARISON_ALWAYS;
++    input->depthStencil.StencilReadMask = input->depthStencil.StencilWriteMask = 255;
++    auto& face = input->depthStencil.FrontFace;
++    face.StencilFailOp = face.StencilDepthFailOp = face.StencilPassOp = D3D11_STENCIL_OP_KEEP;
++    face.StencilFunc = D3D11_COMPARISON_ALWAYS; input->depthStencil.BackFace = face;
++    input->rasterizer.FillMode = D3D11_FILL_SOLID; input->rasterizer.CullMode = D3D11_CULL_NONE; input->rasterizer.DepthClipEnable = TRUE;
++    input->sampler.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
++    input->sampler.AddressU = input->sampler.AddressV = input->sampler.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
++    input->sampler.MaxAnisotropy = 1; input->sampler.ComparisonFunc = D3D11_COMPARISON_NEVER; input->sampler.MaxLOD = D3D11_FLOAT32_MAX;
++    GpuPreparationRequest bundle; bundle.kind = GpuPreparationKind::ShaderBundle; bundle.shaderBundle = input;
++    bundle.dependencyReadOnly = true; bundle.estimatedBytes = blob->GetBufferSize() + 5 * 65536;
++    DeviceResourceKey bundleKey; assert(planner.Enqueue(bundle, &bundleKey) == GpuQueueResult::Queued); Created(planner);
++    auto bundleObject = planner.TryAcquire(bundleKey); assert(bundleObject && bundleObject->bundle);
++    assert(!bundleObject->bundle->vertex && bundleObject->bundle->pixel && bundleObject->bundle->blend &&
++        bundleObject->bundle->depthStencil && bundleObject->bundle->rasterizer && bundleObject->bundle->sampler);
++    auto badInput = std::make_shared<ShaderBundleInput>(*input);
++    badInput->blend.RenderTarget[0].BlendEnable = TRUE;
++    badInput->blend.RenderTarget[0].SrcBlend = static_cast<D3D11_BLEND>(999);
++    auto badBundle = bundle; badBundle.shaderBundle = badInput;
++    DeviceResourceKey badKey; assert(planner.Enqueue(badBundle, &badKey) == GpuQueueResult::Queued);
++    GpuPumpLimits failureLimits; failureLimits.bytes = 16 * 1024 * 1024; failureLimits.milliseconds = 1000;
++    const auto failed = planner.Pump(true, failureLimits);
++    assert(failed.failed == 1 && failed.created == 0 && !planner.TryAcquire(badKey));
++    assert(planner.Enqueue(badBundle) == GpuQueueResult::CompatibilityOnly && planner.Queued() == 0);
 +    ComPtr<ID3D11DeviceContext> secondContext; auto second = Device(0, secondContext);
 +    assert(planner.BeginDevice(second.Get(), AllocateDeviceEpoch()));
++    assert(planner.Enqueue(badBundle) == GpuQueueResult::Queued); // failure memo retired with the previous epoch
++    planner.RetireDevice(); assert(planner.BeginDevice(second.Get(), AllocateDeviceEpoch()));
 +    assert(!planner.TryAcquire(bufferKey) && !planner.TryAcquire(textureKey) && !planner.TryAcquire(shaderKey));
-+    assert(ProcessGpuAllocationLedger().Bytes() == buffer.estimatedBytes + texture.estimatedBytes + encoded.estimatedBytes);
++    assert(ProcessGpuAllocationLedger().Bytes() == buffer.estimatedBytes + texture.estimatedBytes + encoded.estimatedBytes + bundle.estimatedBytes);
 +    PreparationPlanner disabled(0);
 +    assert(disabled.BeginDevice(second.Get(), AllocateDeviceEpoch()));
 +    assert(disabled.Enqueue(buffer) == GpuQueueResult::CompatibilityOnly && disabled.Pump(true).created == 0);
 +    planner.RetireDevice(); disabled.RetireDevice();
 +    // Drop every preparation/cache lease while the original context still owns
 +    // its bound SRV. The token attached to the actual resource must survive.
-+    bound.Reset(); prepared.reset(); textureObject.reset(); encodedObject.reset();
++    bound.Reset(); prepared.reset(); textureObject.reset(); encodedObject.reset(); bundleObject.reset();
 +    assert(ProcessGpuAllocationLedger().Bytes() >= buffer.estimatedBytes);
 +    context->ClearState(); context->Flush();
 +    secondContext->ClearState(); secondContext->Flush();
++    // Drivers may intern fixed state COM objects until device teardown.
++    staging.Reset(); context.Reset(); secondContext.Reset(); device.Reset(); second.Reset();
 +    assert(ProcessGpuAllocationLedger().Bytes() == 0);
 +    std::cout << "gpu device: WARP creation, views, shaders, ownership, context, epoch checks passed\n";
 +}
@@ -5579,19 +6872,19 @@ index 0000000000000000000000000000000000000000..a0d56f208dcc6f6574ea4383fabab661
 +int main() { TestBudget(); TestLiveAllocationLedger(); TestOwnershipAndIdentity(); TestInactiveLRU(); std::cout << "gpu policy: 4 groups passed\n"; }
 diff --git a/tests/preparation_runtime/README.md b/tests/preparation_runtime/README.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..169d7822874caf2ce761d3312cc9bfbb9e300512
+index 0000000000000000000000000000000000000000..135e361092d320be574b509d9f968a9539e2f02a
 --- /dev/null
 +++ b/tests/preparation_runtime/README.md
 @@ -0,0 +1,3 @@
-+Run `bash tests/preparation_runtime/run.sh` to check the immutable-memory PNG color-space policy, including truncated and oversized chunks, end-of-image handling, and unrelated chunks.
++Run `bash tests/preparation_runtime/run.sh` to check the immutable-memory PNG color-space policy, including truncated and oversized chunks, end-of-image handling, and unrelated chunks, plus exact full Texture2D SRV format/mip matching and incompatible-view rejection.
 +
 +These portable checks do not exercise D3D11 creation, real Present integration, command parsing, or visible rendering. Windows build/WARP and representative game qualification remain separate required evidence.
 diff --git a/tests/preparation_runtime/main.cpp b/tests/preparation_runtime/main.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..c3152789374498f9ea87b14bb915ba93f5c22890
+index 0000000000000000000000000000000000000000..1523d96f98fcf38dd3e0ed05612e9aa7ba348233
 --- /dev/null
 +++ b/tests/preparation_runtime/main.cpp
-@@ -0,0 +1,27 @@
+@@ -0,0 +1,35 @@
 +#include "RuntimePolicy.h"
 +#include <cassert>
 +#include <iostream>
@@ -5617,7 +6910,15 @@ index 0000000000000000000000000000000000000000..c3152789374498f9ea87b14bb915ba93
 +    assert(!HasPngSRGBChunk(signature));
 +    auto invalid = png; invalid[0] = 0;
 +    assert(!HasPngSRGBChunk(invalid));
-+    std::cout << "runtime PNG memory policy: 8 cases passed\n";
++    assert(FullTexture2DViewMatches(28, 1, 0, 0, UINT32_MAX, 28, 0, 1));
++    assert(FullTexture2DViewMatches(29, 5, 29, 0, 5, 29, 0, UINT32_MAX));
++    assert(!FullTexture2DViewMatches(28, 1, 29, 0, 1, 28, 0, 1));
++    assert(!FullTexture2DViewMatches(28, 5, 28, 1, 4, 28, 0, 5));
++    assert(!FullTexture2DViewMatches(28, 5, 28, 0, 4, 28, 0, 5));
++    assert(!FullTexture2DViewMatches(28, 5, 28, 0, 5, 28, 1, 4));
++    assert(!FullTexture2DViewMatches(0, 1, 0, 0, 1, 0, 0, 1));
++    assert(!FullTexture2DViewMatches(28, 0, 28, 0, UINT32_MAX, 28, 0, UINT32_MAX));
++    std::cout << "runtime memory and exact SRV policy: 16 cases passed\n";
 +}
 diff --git a/tests/preparation_runtime/run.sh b/tests/preparation_runtime/run.sh
 new file mode 100644
@@ -5633,3 +6934,274 @@ index 0000000000000000000000000000000000000000..5be7cb731804fb8ad4d8359f32631e43
 +c++ -std=c++14 -Wall -Wextra -Werror -I "$root/DirectX11/ModLoading" \
 + "$root/tests/preparation_runtime/main.cpp" -o "$build/test"
 +"$build/test"
+diff --git a/tests/preparation_status/README.md b/tests/preparation_status/README.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..d862662d49e9bfad156264eee9bcd15dbb7c7c8b
+--- /dev/null
++++ b/tests/preparation_status/README.md
+@@ -0,0 +1,53 @@
++Run portable serialization checks with:
++
++```sh
++python3 tests/preparation_status/run_tests.py
++```
++
++Windows SDK developer command prompt, from repository root:
++
++```bat
++cl /nologo /std:c++14 /EHsc /W4 /WX /I DirectX11\ModLoading DirectX11\ModLoading\PreparationStatus.cpp DirectX11\ModLoading\SnapshotIO.cpp tests\preparation_status\status_publisher_windows_test.cpp /Fe:status_publisher_windows_test.exe /link ole32.lib windowscodecs.lib propsys.lib
++python tests\preparation_status\run_windows_fixture.py status_publisher_windows_test.exe
++```
++
++The runner owns a temporary output directory until the fixture process exits,
++then validates the bounded JSON, actual executable SHA256, supplied counters,
++explicit Off state, heartbeat age, and absence of leftover temporary files.
++The fixture checks no output before opt-in initialization, Preparing/Ready/Off
++transitions, heartbeat refresh without an update, and invalidation of cached Ready followed
++by a delayed obsolete Ready update with no subsequent authoritative update. It links the publisher
++into its own executable, so module identity/pinning and hashing operate on that
++fixture binary. Eight-second waits and a 35-second child-process timeout bound
++failures. It does not initialize or modify any game directory. Windows execution
++requires CI; portable serialization checks do not qualify Windows file IO.
++
++Production initialization must happen only after explicit feature opt-in and
++outside DllMain. It accepts an address in the publisher's actual module, pins
++that module for process life, and hashes its file once on the background writer
++with SnapshotIO's 64 MiB bound. A heap-owned process service intentionally has
++no shutdown/join path. The worker publishes at approximately 1 Hz through
++status.json.tmp<PID> followed by replacement of status.json. The status object
++contains only Runtime-provided scalar counts/enums and a generic reason; it
++never traverses CustomResource or infers readiness. Update copies at most 256
++reason bytes under a nonblocking try_lock, so a contended update can be dropped;
++Runtime should submit fresh snapshots regularly. Reasons must contain no source
++paths. Serializer escapes controls, bounds reason length, and replaces non-ASCII
++bytes with '?'. Invalid status/digest or file failures yield no fresh status;
++readers must treat absent or stale output as Unknown/offline. IO stalls remain
++on the background thread and never cause an F10/renderer join. Process pinning
++is intentional and must be coordinated with the module initialization contract.
++
++Status publication uses one global ticket counter across F10/runtime rebuilds.
++Runtime must reserve `ReservePreparationStatusTicket()` **before** checking
++source currentness or calculating readiness/counts, then pass that same ticket
++to `UpdatePreparationStatus(status, ticket)`. Source changes and retirement call
++`InvalidatePreparationStatus()`, which atomically raises an invalidation floor
++without acquiring the snapshot mutex. Older updates are rejected, and the
++writer downgrades cached pre-floor non-Off snapshots to Preparing with zero CPU
++and GPU counts even when no subsequent Present/update runs. A later valid
++snapshot can recover with a fresh ticket. The portable pure-fence regression
++holds a simulated snapshot mutex across invalidation and rejects an in-flight
++old Ready ticket after releasing it. Published diagnostics can lag an event by
++one writer interval; they never authorize activation or promise current-frame
++readiness.
+diff --git a/tests/preparation_status/run_tests.py b/tests/preparation_status/run_tests.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..b2c07b1a7ebd5ef3aa34e3994e745f9a2e985a18
+--- /dev/null
++++ b/tests/preparation_status/run_tests.py
+@@ -0,0 +1,27 @@
++#!/usr/bin/env python3
++"""Portable JSON serialization contract; actual publisher needs Windows SDK."""
++import json
++import os
++from pathlib import Path
++import subprocess
++import tempfile
++ROOT = Path(__file__).resolve().parents[2]
++with tempfile.TemporaryDirectory(prefix="xxmi-status-") as build:
++    executable = Path(build) / "status-test"
++    subprocess.run([os.environ.get("CXX", "c++"), "-std=c++14", "-pthread", "-Wall", "-Wextra", "-Werror",
++                    "-I" + str(ROOT / "DirectX11/ModLoading"),
++                    str(ROOT / "DirectX11/ModLoading/PreparationStatus.cpp"),
++                    str(Path(__file__).with_name("status_serialization_test.cpp")), "-o", str(executable)], check=True)
++    result = subprocess.run([str(executable)], check=True, text=True, capture_output=True)
++    rows = [json.loads(line) for line in result.stdout.splitlines()]
++    assert len(rows) == 2
++    for row in rows:
++        assert row["schema_version"] == 1 and row["process_id"] == 123
++        assert row["dll_sha256"] == "a" * 64
++        assert row["mode"] == "adaptive" and row["state"] == "preparing"
++        assert len(row["reason"]) <= 256
++    assert '\"' in rows[0]["reason"] and "\\" in rows[0]["reason"] and "\n" in rows[0]["reason"]
++    assert "\0" in rows[0]["reason"] and "\t" in rows[0]["reason"]
++    assert rows[1]["reason"] == "\0" * 256
++    assert rows[1]["total_assets"] == 2**64 - 1
++print("preparation_status: portable JSON contract passed")
+diff --git a/tests/preparation_status/run_windows_fixture.py b/tests/preparation_status/run_windows_fixture.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..462c742af009af9ab9fe53de441d46c714f8c605
+--- /dev/null
++++ b/tests/preparation_status/run_windows_fixture.py
+@@ -0,0 +1,25 @@
++#!/usr/bin/env python3
++"""Own fixture output until its process-life writer exits, then check protocol."""
++import hashlib
++import json
++from pathlib import Path
++import subprocess
++import sys
++import tempfile
++import time
++executable = Path(sys.argv[1]).resolve()
++with tempfile.TemporaryDirectory(prefix="xxmi-publisher-fixture-") as temporary:
++    output = Path(temporary) / "status"
++    subprocess.run([str(executable), str(output)], check=True, timeout=35)
++    raw = (output / "status.json").read_bytes()
++    assert len(raw) <= 8192
++    status = json.loads(raw)
++    assert status["schema_version"] == 1
++    assert status["process_id"] > 0
++    assert status["dll_sha256"] == hashlib.sha256(executable.read_bytes()).hexdigest()
++    assert 0 <= time.time() * 1000 - status["updated_unix_ms"] < 5000
++    assert status["mode"] == "off" and status["state"] == "off"
++    assert status["total_assets"] == status["cpu_ready"] == status["gpu_ready"] == 3
++    assert status["compatibility_assets"] == 0 and status["reason"] == "fixture off"
++    assert sorted(path.name for path in output.iterdir()) == ["status.json"]
++print("preparation_status: actual SHA256, JSON counts/state, heartbeat and atomic output verified")
+diff --git a/tests/preparation_status/status_publisher_windows_test.cpp b/tests/preparation_status/status_publisher_windows_test.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..81d8ce7c229e49bc512ba14b610ded9316fe275f
+--- /dev/null
++++ b/tests/preparation_status/status_publisher_windows_test.cpp
+@@ -0,0 +1,78 @@
++#ifndef _WIN32
++#error Windows SDK fixture only
++#endif
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#include <Windows.h>
++#include "PreparationStatus.h"
++#include <chrono>
++#include <iostream>
++#include <stdexcept>
++#include <string>
++using namespace ModLoading;
++namespace {
++void Require(bool ok, const char* message) { if (!ok) throw std::runtime_error(message); }
++std::string Read(const std::wstring& path) {
++    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
++        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
++    if (file == INVALID_HANDLE_VALUE) return {};
++    LARGE_INTEGER size = {};
++    if (!GetFileSizeEx(file, &size) || size.QuadPart < 1 || size.QuadPart > 8192) {
++        CloseHandle(file); throw std::runtime_error("unbounded or empty published status");
++    }
++    std::string bytes(static_cast<size_t>(size.QuadPart), '\0'); DWORD count = 0;
++    const bool ok = ReadFile(file, &bytes[0], static_cast<DWORD>(bytes.size()), &count, nullptr) != FALSE && count == bytes.size();
++    CloseHandle(file); Require(ok, "status read failed");
++    Require(bytes.front() == '{' && bytes.size() > 2 && bytes.substr(bytes.size() - 2) == "}\n", "partial JSON observed");
++    Require(bytes.find("\"schema_version\":1,") != std::string::npos, "wrong protocol");
++    return bytes;
++}
++std::string Wait(const std::wstring& path, const char* state, const PreparationStatus* status) {
++    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
++    do {
++        if (status) UpdatePreparationStatus(*status, ReservePreparationStatusTicket()); // try_lock may drop.
++        auto json = Read(path);
++        if (json.find(std::string("\"state\":\"") + state + "\"") != std::string::npos) return json;
++        Sleep(40);
++    } while (std::chrono::steady_clock::now() < deadline);
++    throw std::runtime_error(std::string("publisher timeout waiting for ") + state);
++}
++}
++// Python fixture runner owns the supplied temporary directory and removes it
++// after this process exits; the process-lifetime writer never needs a stop hook.
++int wmain(int argc, wchar_t** argv) {
++    try {
++        Require(argc == 2, "expected owned temporary output directory argument");
++        const std::wstring output = argv[1], path = output + L"\\status.json";
++        PreparationStatus status; status.mode = PreparationMode::Adaptive;
++        status.state = PreparationStatusState::Preparing; status.totalAssets = 3;
++        status.cpuReady = 2; status.gpuReady = 1; status.reason = "fixture preparing";
++        UpdatePreparationStatus(status, ReservePreparationStatusTicket());
++        Require(GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES, "Update before Initialize wrote a file");
++        Require(InitializePreparationStatusForTesting(reinterpret_cast<const void*>(&InitializePreparationStatus), output), "initialize publisher");
++        UpdatePreparationStatus(status, ReservePreparationStatusTicket());
++        const auto first = Wait(path, "preparing", &status);
++        Require(first.find("\"total_assets\":3,") != std::string::npos && first.find("\"cpu_ready\":2,") != std::string::npos &&
++            first.find("\"gpu_ready\":1,") != std::string::npos, "real supplied counts not published");
++        // A heartbeat must refresh even when no new Runtime snapshot arrives.
++        Sleep(1300); const auto heartbeat = Read(path);
++        Require(!heartbeat.empty() && heartbeat != first, "heartbeat did not advance");
++        status.state = PreparationStatusState::Ready; status.cpuReady = 3; status.gpuReady = 3;
++        status.reason = "fixture ready"; UpdatePreparationStatus(status, ReservePreparationStatusTicket()); Wait(path, "ready", &status);
++        const auto obsolete = ReservePreparationStatusTicket();
++        InvalidatePreparationStatus();
++        UpdatePreparationStatus(status, obsolete); // Delayed Ready must be rejected.
++        const auto invalidated = Wait(path, "preparing", nullptr); // No future authoritative updates.
++        Require(invalidated.find("preparation status invalidated") != std::string::npos &&
++            invalidated.find("\"gpu_ready\":0,") != std::string::npos &&
++            invalidated.find("\"cpu_ready\":0,") != std::string::npos, "invalidation left fresh cached Ready");
++        // Off is a supplied state, with counters deliberately retained. Writer
++        // must not infer Ready simply because all resource counts happen to match.
++        status.mode = PreparationMode::Off; status.state = PreparationStatusState::Off;
++        status.reason = "fixture off"; UpdatePreparationStatus(status, ReservePreparationStatusTicket()); Wait(path, "off", &status);
++        std::cout << "preparation_status: Windows publisher fixture passed\n"; return 0;
++    } catch (const std::exception& error) {
++        std::cerr << "publisher fixture failed: " << error.what() << " Win32=" << GetLastError() << '\n'; return 1;
++    }
++}
+diff --git a/tests/preparation_status/status_serialization_test.cpp b/tests/preparation_status/status_serialization_test.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..b2aa5191656759b34300de8d086c9cf0cd64fd20
+--- /dev/null
++++ b/tests/preparation_status/status_serialization_test.cpp
+@@ -0,0 +1,58 @@
++#include "PreparationStatus.h"
++#include <iostream>
++#include <limits>
++#include <stdexcept>
++#include <future>
++#include <thread>
++#include <mutex>
++#include <atomic>
++#include <chrono>
++using namespace ModLoading;
++void Check(bool value) { if (!value) throw std::runtime_error("status serializer contract"); }
++int main() {
++    PreparationStatus status;
++    status.mode = PreparationMode::Adaptive; status.state = PreparationStatusState::Preparing;
++    status.totalAssets = 4; status.cpuReady = 4; status.gpuReady = 4; status.compatibilityAssets = 0;
++    status.reason = std::string("quote\" slash\\ newline\n tab\t nul", 30) + std::string(1, '\0') + "end";
++    const std::string hash(64, 'a');
++    auto json = SerializePreparationStatus(status, 123, hash, 1000);
++    Check(!json.empty() && json.size() < 8192);
++    std::cout << json;
++    status.reason.assign(100000, '\0'); status.totalAssets = std::numeric_limits<uint64_t>::max();
++    json = SerializePreparationStatus(status, 123, hash, 1001);
++    Check(!json.empty() && json.size() < 8192); std::cout << json;
++    Check(SerializePreparationStatus(status, 0, hash, 1).empty());
++    Check(SerializePreparationStatus(status, 1, "bad", 1).empty());
++    Check(SerializePreparationStatus(status, 1, std::string(64, 'G'), 1).empty());
++    Check(SerializePreparationStatus(status, 1, hash, 0).empty());
++    status.state = static_cast<PreparationStatusState>(100);
++    Check(SerializePreparationStatus(status, 1, hash, 1).empty());
++    status.state = PreparationStatusState::Failed; status.mode = static_cast<PreparationMode>(100);
++    Check(SerializePreparationStatus(status, 1, hash, 1).empty());
++    // Before opt-in initialization, updates cannot start a worker or write files.
++    UpdatePreparationStatus(status, ReservePreparationStatusTicket());
++    PreparationStatusFence fence;
++    const auto oldReady = fence.Reserve(); Check(fence.Accepts(oldReady));
++    fence.Invalidate(); Check(!fence.Accepts(oldReady));
++    // A dropped/contended Update does not erase the atomic invalidation floor;
++    // a delayed pre-invalidation Ready remains rejected without another update.
++    Check(!fence.Accepts(oldReady));
++    const auto fresh = fence.Reserve(); Check(fence.Accepts(fresh));
++    fence.Invalidate(); Check(!fence.Accepts(fresh) && !fence.Accepts(oldReady));
++    const auto afterReload = fence.Reserve(); Check(afterReload > fresh && fence.Accepts(afterReload));
++    Check(!fence.Accepts(0) && !fence.Accepts(afterReload + 1));
++    std::mutex simulatedSnapshotMutex;
++    std::unique_lock<std::mutex> occupied(simulatedSnapshotMutex);
++    std::promise<uint64_t> reserved; auto waiting = reserved.get_future();
++    std::atomic<bool> accepted{true};
++    std::thread delayed([&] {
++        const auto ticket = fence.Reserve(); reserved.set_value(ticket);
++        std::lock_guard<std::mutex> held(simulatedSnapshotMutex);
++        accepted.store(fence.Accepts(ticket));
++    });
++    Check(waiting.wait_for(std::chrono::seconds(2)) == std::future_status::ready);
++    const auto inFlightReady = waiting.get();
++    fence.Invalidate(); // Must work while the snapshot mutex is occupied.
++    Check(!fence.Accepts(inFlightReady));
++    occupied.unlock(); delayed.join(); Check(!accepted.load());
++}

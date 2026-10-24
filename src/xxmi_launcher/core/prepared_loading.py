@@ -2,12 +2,14 @@
 
 import hashlib
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
 
 CAPABILITY_FILE = 'PreparationCapabilities.json'
+STATUS_FILE = Path('.xxmi-preparation') / 'status.json'
 MODES = {'off': 'Off', 'adaptive': 'Adaptive', 'prepared_profile': 'Prepared profile'}
 LIMITS = {
     'cpu_cache_mb': (0, 4096), 'gpu_cache_mb': (0, 4096),
@@ -39,10 +41,99 @@ class PreparationCapability:
 
     @property
     def diagnostics(self) -> str:
+        return self.format_diagnostics()
+
+    def format_diagnostics(self, status: 'PreparationStatus | None' = None) -> str:
+        status = status or PreparationStatus(False, reason='Runtime report unavailable.')
         return (f'Compatibility: {self.reason}\n'
-                'Preparation status: Unknown / offline (runtime telemetry unavailable).\n'
-                'Preparing and Ready require live native telemetry. This is separate from mod enabled status.\n'
+                f'Preparation status: {status.label}\n{status.diagnostics}\n'
+                'Preparation is separate from mod enabled status.\n'
                 f'Deployed DLL SHA256: {self.dll_sha256 or "unavailable"}')
+
+
+@dataclass(frozen=True)
+class PreparationStatus:
+    available: bool
+    state: str = 'unknown'
+    reason: str = ''
+    process_id: int = 0
+    mode: str = 'off'
+    total_assets: int = 0
+    cpu_ready: int = 0
+    gpu_ready: int = 0
+    compatibility_assets: int = 0
+    process_verified: bool = False
+    updated_unix_ms: int = 0
+
+    @property
+    def label(self) -> str:
+        return f'{self.state.capitalize()} (reported)' if self.available else 'Unknown / offline'
+
+    @property
+    def diagnostics(self) -> str:
+        if not self.available:
+            return self.reason
+        liveness = 'live process' if self.process_verified else 'liveness unverified'
+        return (f'Source: reported PID {self.process_id} ({liveness}); diagnostic report only, '
+                'not authentication or authorization.\n'
+                f'Mode: {self.mode}; assets: {self.total_assets}; CPU ready: {self.cpu_ready}; '
+                f'GPU ready: {self.gpu_ready}; compatibility: {self.compatibility_assets}.\n'
+                f'Report timestamp (Unix ms): {self.updated_unix_ms}; freshness checked when read.\n'
+                f'Reason: {self.reason or "none reported"}')
+
+
+def read_preparation_status(path: Path, capability: PreparationCapability, *,
+                            now_ms: int | None = None,
+                            process_is_alive: Callable[[int], bool] | None = None) -> PreparationStatus:
+    """Read bounded, fresh diagnostic telemetry only after package authentication.
+
+    The report itself is not signed. Matching a signed DLL capability and a live
+    reported PID does not authenticate its writer, so no action uses this data.
+    """
+    if not capability.supported:
+        return PreparationStatus(False, reason='An authenticated compatible package is required for runtime reports.')
+    try:
+        with path.open('rb') as report:
+            data = report.read(8193)
+        if len(data) > 8192:
+            raise ValueError('runtime report exceeds 8 KiB')
+        value = json.loads(data)
+        if type(value.get('schema_version')) is not int or value['schema_version'] != 1:
+            raise ValueError('unsupported runtime report schema')
+        if value.get('dll_sha256') != capability.dll_sha256 or not capability.dll_sha256:
+            raise ValueError('runtime report DLL identity does not match the authenticated capability')
+        integer_keys = ('process_id', 'updated_unix_ms', 'total_assets', 'cpu_ready', 'gpu_ready', 'compatibility_assets')
+        if any(type(value.get(key)) is not int or not 0 <= value[key] <= 2**63 - 1 for key in integer_keys):
+            raise ValueError('invalid runtime report integer fields')
+        if value['process_id'] == 0 or value['process_id'] > 2**32 - 1:
+            raise ValueError('invalid runtime report process ID')
+        age = (int(time.time() * 1000) if now_ms is None else now_ms) - value['updated_unix_ms']
+        if age > 3000 or age < -1000:
+            raise ValueError('runtime report is stale or its timestamp is in the future')
+        mode, state = value.get('mode'), value.get('state')
+        if mode not in capability.modes or state not in ('off', 'preparing', 'ready', 'compatibility', 'failed'):
+            raise ValueError('invalid runtime report mode or state')
+        if (mode == 'off') != (state == 'off'):
+            raise ValueError('runtime report mode and state disagree')
+        total, cpu, gpu, compatibility = (value[key] for key in ('total_assets', 'cpu_ready', 'gpu_ready', 'compatibility_assets'))
+        if cpu > total or gpu > cpu or compatibility > total:
+            raise ValueError('runtime report asset counts are inconsistent')
+        if state == 'ready' and (mode != 'prepared_profile' or total == 0 or cpu != total or gpu != total or compatibility != 0):
+            raise ValueError('runtime report Ready requires a prepared profile, all assets CPU/GPU ready and zero compatibility assets')
+        reason = value.get('reason')
+        if not isinstance(reason, str) or len(reason.encode('utf-8')) > 256 or any(ord(char) < 32 for char in reason):
+            raise ValueError('invalid runtime report reason')
+        if process_is_alive is not None:
+            try:
+                alive = process_is_alive(value['process_id'])
+            except Exception:
+                return PreparationStatus(False, reason='Runtime report process liveness could not be verified.')
+            if not alive:
+                raise ValueError('runtime report process is no longer running')
+        return PreparationStatus(True, state, reason, value['process_id'], mode, total, cpu, gpu,
+                                 compatibility, process_is_alive is not None, value['updated_unix_ms'])
+    except (OSError, ValueError, TypeError, AttributeError, KeyError, RecursionError) as error:
+        return PreparationStatus(False, reason=f'Runtime report unavailable: {error}')
 
 
 def inspect_capability(dll_path: Path, marker_path: Path,

@@ -1,6 +1,7 @@
 import subprocess
 import webbrowser
 import re
+import psutil
 
 from dataclasses import dataclass
 from customtkinter import filedialog
@@ -17,7 +18,7 @@ from core.locale_manager import L, Locale
 
 from core.config.enums import InjectMode, InputDisableMode, LogLevel
 from core.packages.migoto_package import MigotoFork
-from core.prepared_loading import MODES, LIMITS, PreparationCapability, validate_limit
+from core.prepared_loading import MODES, LIMITS, STATUS_FILE, PreparationCapability, validate_limit, read_preparation_status
 
 from gui.windows.settings.settings_content_frame import SettingsContentFrame, SettingsSection, SettingsOption, OptionWidget, Condition
 
@@ -25,6 +26,7 @@ from gui.windows.settings.settings_content_frame import SettingsContentFrame, Se
 class ModelImporterSettingsFrame(SettingsContentFrame):
     def __init__(self, master):
         self._preparation_capability = self.get_preparation_capability()
+        self._preparation_status = self.get_preparation_status(self._preparation_capability)
         if Vars.Active.Migoto.preparation_mode.get() not in MODES:
             Vars.Active.Migoto.preparation_mode.set('off')
         super().__init__(
@@ -135,7 +137,7 @@ class ModelImporterSettingsFrame(SettingsContentFrame):
                             widget=OptionWidget.DROPDOWN,
                             value_variable='Vars.Active.Migoto.preparation_mode',
                             dropdown_values=MODES,
-                            tooltip=lambda: self._preparation_capability.diagnostics + '\n\n'
+                            tooltip=lambda: self._preparation_capability.format_diagnostics(self._preparation_status) + '\n\n'
                                 'Off disables preparation. Adaptive prepares observed assets. Prepared profile uses '
                                 'the native prepared working set. Options require an authenticated compatible package. '
                                 'Automatic generation activation is disabled.',
@@ -171,13 +173,13 @@ class ModelImporterSettingsFrame(SettingsContentFrame):
                             enabled_if=Condition(variables=('Vars.Active.Migoto.manage_xxmi_dll_config',), predicate=self.can_prepare),
                         ),
                         SettingsOption(
-                            label_text='Preparation status: Unknown / offline',
+                            label_text=f'Preparation snapshot: {self._preparation_status.label}',
                             widget=OptionWidget.BUTTON,
                             value_variable='',
                             button_text='Diagnostics',
                             button_command=self.show_preparation_diagnostics,
-                            tooltip='Runtime progress telemetry is unavailable. Preparing and Ready are '
-                                'separate from mod enabled status and cannot be inferred from settings.',
+                            tooltip='Status is sampled when settings open. Diagnostics refreshes the native report. '
+                                'Preparing and Ready are separate from mod enabled status.',
                         ),
                     ),
                 ),
@@ -343,6 +345,11 @@ class ModelImporterSettingsFrame(SettingsContentFrame):
     def can_prepare(self):
         return self._preparation_capability.supported and self.manage_xxmi_dll_config()
 
+    @staticmethod
+    def get_preparation_status(capability):
+        return read_preparation_status(Config.Active.Importer.importer_path / STATUS_FILE,
+                                       capability, process_is_alive=psutil.pid_exists)
+
     def validate_preparation_mode(self):
         if Vars.Active.Migoto.preparation_mode.get() not in self._preparation_capability.modes:
             return 'This package does not support the selected mode; preparation will remain off.'
@@ -364,9 +371,10 @@ class ModelImporterSettingsFrame(SettingsContentFrame):
 
     def show_preparation_diagnostics(self):
         capability = self.get_preparation_capability()
+        status = self.get_preparation_status(capability)
         Events.Call(Events.Application.ShowInfo(
             title='Experimental mod preparation',
-            message=capability.diagnostics,
+            message=capability.format_diagnostics(status),
             confirm_text='Close',
             modal=True,
         ))

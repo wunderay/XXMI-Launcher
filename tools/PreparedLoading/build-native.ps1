@@ -13,7 +13,7 @@ $mod = Join-Path $native 'DirectX11\ModLoading'
 $script:TestFailures = @()
 
 function Run-NativeTest {
-    param([string]$Name, [string[]]$Sources, [string[]]$Libraries = @())
+    param([string]$Name, [string[]]$Sources, [string[]]$Libraries = @(), [string]$PythonRunner = '')
     $dir = Join-Path $tests $Name
     New-Item -ItemType Directory -Force $dir | Out-Null
     Push-Location $dir
@@ -27,7 +27,11 @@ function Run-NativeTest {
         if ($Libraries.Count) { $arguments += '/link'; $arguments += $Libraries }
         & cl @arguments 2>&1 | Tee-Object -FilePath build.log
         if ($LASTEXITCODE -ne 0) { throw "$Name compilation failed ($LASTEXITCODE)" }
-        & (Join-Path $dir "$Name.exe") 2>&1 | Tee-Object -FilePath run.log
+        if ($PythonRunner) {
+            & python (Join-Path $native $PythonRunner) (Join-Path $dir "$Name.exe") 2>&1 | Tee-Object -FilePath run.log
+        } else {
+            & (Join-Path $dir "$Name.exe") 2>&1 | Tee-Object -FilePath run.log
+        }
         if ($LASTEXITCODE -ne 0) { throw "$Name failed ($LASTEXITCODE)" }
     } catch {
         $script:TestFailures += "$Name`: $($_.Exception.Message)"
@@ -65,6 +69,17 @@ Run-NativeTest -Name 'gpu_policy' -Sources @(
     'DirectX11\ModLoading\MemoryBudgetController.cpp'
 ) -Libraries @('d3d11.lib', 'dxgi.lib')
 Run-NativeTest -Name 'runtime_policy' -Sources @('tests\preparation_runtime\main.cpp')
+Run-NativeTest -Name 'status_serialization' -Sources @(
+    'tests\preparation_status\status_serialization_test.cpp',
+    'DirectX11\ModLoading\PreparationStatus.cpp',
+    'DirectX11\ModLoading\SnapshotIO.cpp'
+) -Libraries @('ole32.lib', 'windowscodecs.lib', 'propsys.lib')
+Run-NativeTest -Name 'windows_status' -Sources @(
+    'tests\preparation_status\status_publisher_windows_test.cpp',
+    'DirectX11\ModLoading\PreparationStatus.cpp',
+    'DirectX11\ModLoading\SnapshotIO.cpp'
+) -Libraries @('ole32.lib', 'windowscodecs.lib', 'propsys.lib') `
+  -PythonRunner 'tests\preparation_status\run_windows_fixture.py'
 
 # Suppress deployment/copy events in every project configuration.
 $buildArguments = @((Join-Path $native 'StereovisionHacks.sln'), '/m', '/t:Build',
@@ -108,10 +123,14 @@ $provenance = [ordered]@{
     dll_sha256 = $digest
     launcher_source = (& git -C (Join-Path $PSScriptRoot '..\..') rev-parse HEAD)
     configuration = 'Zip Release|x64'
+    compiler = $env:VCToolsVersion
+    windows_sdk = $env:WindowsSDKVersion
     deployment_events = 'disabled'
     qualification = 'Synthetic Windows tests only; real game compatibility and performance unqualified.'
     capability_signature = 'not signed; launcher capability gate remains closed'
 }
 [IO.File]::WriteAllText((Join-Path $out 'BUILD-INFO.json'),
     ($provenance | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+& python (Join-Path $PSScriptRoot 'package-development.py') --native $native --build $out
+if ($LASTEXITCODE -ne 0) { throw 'Development packaging failed.' }
 Write-Output "PASS: native DLL and synthetic fixtures; SHA256=$digest"

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from core.prepared_loading import (
     CAPABILITY_FILE, LIMITS, MODES, PreparedLoadingSettings, PreparationCapability,
-    apply_preparation_settings, inspect_capability, validate_limit,
+    apply_preparation_settings, inspect_capability, validate_limit, read_preparation_status,
 )
 from core.utils.ini_handler import IniHandler, IniHandlerSettings
 from core.utils.security import Security
@@ -149,6 +149,114 @@ class PreparedLoadingTests(unittest.TestCase):
         self.assertEqual(ini.get_section('ModLoading').get_option('mode'), 'off')
         self.assertIn('Unknown / offline', capability.diagnostics)
         self.assertNotIn('status: Ready', capability.diagnostics)
+
+
+class PreparationStatusTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.path = Path(self.temp.name) / 'status.json'
+        self.capability = PreparationCapability(True, 'Authenticated fixture', 'a' * 64, tuple(MODES))
+        self.now = 1000000
+
+    def write(self, **overrides):
+        report = dict(schema_version=1, process_id=123, dll_sha256='a' * 64,
+                      updated_unix_ms=self.now, mode='prepared_profile', state='ready',
+                      total_assets=3, cpu_ready=3, gpu_ready=3, compatibility_assets=0, reason='Prepared working set')
+        report.update(overrides)
+        self.path.write_text(json.dumps(report), encoding='utf-8')
+
+    def read(self, capability=None, process_is_alive=None):
+        return read_preparation_status(self.path, capability or self.capability, now_ms=self.now,
+                                       process_is_alive=process_is_alive)
+
+    def test_missing_report_is_offline(self):
+        status = self.read()
+        self.assertFalse(status.available)
+        self.assertEqual(status.label, 'Unknown / offline')
+
+    def test_unsigned_capability_never_reads_or_promotes_report(self):
+        self.write()
+        status = self.read(PreparationCapability(False, 'Unsigned package'))
+        self.assertFalse(status.available)
+        self.assertIn('authenticated', status.reason)
+
+    def test_complete_prepared_profile_reports_ready_with_explicit_source(self):
+        self.write()
+        checked = []
+        status = self.read(process_is_alive=lambda pid: checked.append(pid) or True)
+        self.assertEqual(checked, [123])
+        self.assertEqual(status.state, 'ready')
+        self.assertEqual(status.label, 'Ready (reported)')
+        self.assertIn('PID 123 (live process)', status.diagnostics)
+        self.assertIn('not authentication or authorization', status.diagnostics)
+
+    def test_unverified_pid_remains_explicitly_reported(self):
+        self.write()
+        self.assertIn('liveness unverified', self.read().diagnostics)
+
+    def test_dead_process_cannot_report_ready(self):
+        self.write()
+        self.assertFalse(self.read(process_is_alive=lambda pid: False).available)
+
+    def test_process_lookup_failure_is_offline(self):
+        self.write()
+        def denied(pid):
+            raise RuntimeError('Lookup unavailable')
+        self.assertFalse(self.read(process_is_alive=denied).available)
+
+    def test_freshness_and_future_skew_boundaries(self):
+        for offset, expected in ((-3001, False), (-3000, True), (1000, True), (1001, False)):
+            with self.subTest(offset=offset):
+                self.write(updated_unix_ms=self.now + offset)
+                self.assertEqual(self.read().available, expected)
+
+    def test_hash_schema_mode_and_state_must_match_contract(self):
+        for override in ({'dll_sha256': 'b' * 64}, {'schema_version': 2}, {'schema_version': True},
+                         {'state': 'invented'}, {'mode': 'invented'}, {'mode': 'off'},
+                         {'state': 'off'}, {'process_id': 0}, {'process_id': 2**32}):
+            with self.subTest(override=override):
+                self.write(**override)
+                self.assertFalse(self.read().available)
+
+    def test_malformed_or_oversized_report_is_offline(self):
+        for data in (b'{', b'[]', b'x' * 8193, b'[' * 1100 + b']' * 1100):
+            with self.subTest(size=len(data)):
+                self.path.write_bytes(data)
+                self.assertFalse(self.read().available)
+
+    def test_count_types_ranges_and_consistency(self):
+        for override in ({'cpu_ready': True}, {'total_assets': -1}, {'gpu_ready': 4},
+                         {'cpu_ready': 4}, {'gpu_ready': 3, 'cpu_ready': 2},
+                         {'compatibility_assets': 4}, {'total_assets': 2**63}):
+            with self.subTest(override=override):
+                self.write(state='preparing', **override)
+                self.assertFalse(self.read().available)
+
+    def test_ready_requires_complete_nonempty_prepared_profile_and_zero_compatibility(self):
+        for override in ({'gpu_ready': 2}, {'cpu_ready': 2, 'gpu_ready': 2}, {'compatibility_assets': 1},
+                         {'mode': 'adaptive'}, {'total_assets': 0, 'cpu_ready': 0, 'gpu_ready': 0}):
+            with self.subTest(override=override):
+                self.write(**override)
+                self.assertFalse(self.read().available)
+
+    def test_preparing_compatibility_failed_and_off_have_distinct_diagnostics(self):
+        for state in ('preparing', 'compatibility', 'failed', 'off'):
+            with self.subTest(state=state):
+                self.write(state=state, mode='off' if state == 'off' else 'adaptive',
+                           cpu_ready=2, gpu_ready=1, compatibility_assets=1, reason='Native diagnostic reason')
+                status = self.read()
+                self.assertTrue(status.available)
+                self.assertEqual(status.state, state)
+                self.assertIn('Native diagnostic reason', status.diagnostics)
+                self.assertIn(status.label, self.capability.format_diagnostics(status))
+
+    def test_reason_is_bounded_utf8_text_without_control_characters(self):
+        for reason in ('x' * 257, '\u00e9' * 129, 'line\nbreak', None):
+            self.write(reason=reason)
+            self.assertFalse(self.read().available)
+        self.write(reason='x' * 256)
+        self.assertTrue(self.read().available)
 
 
 if __name__ == '__main__':
