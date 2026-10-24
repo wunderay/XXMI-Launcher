@@ -26,6 +26,7 @@ from core.utils.process_manager import LaunchContext
 
 from core.mod_manager import ModManager
 from core.utils.ini_handler import IniHandler, IniHandlerSettings
+from core.prepared_loading import apply_preparation_settings, PreparationCapability
 
 log = logging.getLogger(__name__)
 
@@ -505,6 +506,13 @@ class ModelImporterPackage(Package):
             ini.set_option('Input', 'input_disable_mode', Config.Active.Migoto.input_disable_mode.name.lower())
 
             ini.set_option('Logging', 'log_level', Config.Active.Migoto.log_level.name.lower())
+
+        # Use the existing authenticated package manager without changing trust or
+        # deploying any library. Recheck against the DLL present at launch time.
+        from core.game_launcher import Launcher
+        capability = (Launcher.xxmi_injector.preparation_capability() if Launcher.xxmi_injector
+                      else PreparationCapability(False, 'XXMI package is unavailable.'))
+        apply_preparation_settings(ini, Config.Active.Migoto, capability)
 
         if ini.is_modified():
             log.debug(f'Writing d3dx.ini...')

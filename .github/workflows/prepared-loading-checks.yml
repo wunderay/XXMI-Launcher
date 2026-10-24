@@ -1,0 +1,57 @@
+name: Prepared loading development checks
+on:
+  push:
+    branches: [codex/prepared-mod-launcher]
+    paths:
+      - 'tools/PreparedLoading/**'
+      - 'src/xxmi_launcher/core/prepared_loading.py'
+      - 'tests/test_prepared_loading.py'
+      - '.github/workflows/prepared-loading-checks.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-windows:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: launcher
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: SpectrumQT/XXMI-Libs-Package
+          ref: a7847eae82aaac32175c9a7d199673d5c9323bcd
+          path: native
+          persist-credentials: false
+      - name: Apply exact native candidate
+        shell: pwsh
+        run: |
+          git -C native apply --check ../launcher/tools/PreparedLoading/native.patch
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git -C native apply ../launcher/tools/PreparedLoading/native.patch
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - uses: microsoft/setup-msbuild@v2
+        with:
+          vs-version: '[17.0,18.0)'
+      - name: Build isolated DLL and run synthetic fixtures
+        shell: pwsh
+        run: |
+          & ./launcher/tools/PreparedLoading/build-native.ps1 -NativeSource ./native -OutputDirectory ./work/prepared-build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Preserve source patch
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force work/prepared-build | Out-Null
+          Copy-Item launcher/tools/PreparedLoading/native.patch work/prepared-build/native.patch
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: prepared-loading-development
+          path: work/prepared-build/
+          if-no-files-found: warn

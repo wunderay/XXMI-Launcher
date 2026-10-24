@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 from customtkinter import filedialog
 from urllib.parse import urlparse
+from tkinter import TclError
 
 import core.event_manager as Events
 import core.config_manager as Config
@@ -16,12 +17,16 @@ from core.locale_manager import L, Locale
 
 from core.config.enums import InjectMode, InputDisableMode, LogLevel
 from core.packages.migoto_package import MigotoFork
+from core.prepared_loading import MODES, LIMITS, PreparationCapability, validate_limit
 
 from gui.windows.settings.settings_content_frame import SettingsContentFrame, SettingsSection, SettingsOption, OptionWidget, Condition
 
 
 class ModelImporterSettingsFrame(SettingsContentFrame):
     def __init__(self, master):
+        self._preparation_capability = self.get_preparation_capability()
+        if Vars.Active.Migoto.preparation_mode.get() not in MODES:
+            Vars.Active.Migoto.preparation_mode.set('off')
         super().__init__(
             master,
             sections=(
@@ -119,6 +124,61 @@ class ModelImporterSettingsFrame(SettingsContentFrame):
                             ),
                         ),
 
+                    ),
+                ),
+
+                SettingsSection(
+                    label_text=L('importer_settings_preparation_section', 'Experimental mod preparation'),
+                    options=(
+                        SettingsOption(
+                            label_text=L('importer_settings_preparation_mode', 'Preparation mode'),
+                            widget=OptionWidget.DROPDOWN,
+                            value_variable='Vars.Active.Migoto.preparation_mode',
+                            dropdown_values=MODES,
+                            tooltip=lambda: self._preparation_capability.diagnostics + '\n\n'
+                                'Off disables preparation. Adaptive prepares observed assets. Prepared profile uses '
+                                'the native prepared working set. Options require an authenticated compatible package. '
+                                'Automatic generation activation is disabled.',
+                            value_validate_command=self.validate_preparation_mode,
+                            enabled_if=Condition(variables=('Vars.Active.Migoto.manage_xxmi_dll_config',), predicate=self.can_prepare),
+                        ),
+                        *tuple(SettingsOption(
+                            label_text=label,
+                            widget=OptionWidget.INPUT_INT,
+                            value_variable=f'Vars.Active.Migoto.preparation_{key}',
+                            tooltip=f'Allowed range: {LIMITS[key][0]}–{LIMITS[key][1]}. '
+                                + ('Enabled caches require at least 16 MiB. ' if key in ('cpu_cache_mb', 'gpu_cache_mb') else '')
+                                + ('Must not exceed the enabled CPU cache limit. ' if key == 'max_asset_mb' else '')
+                                + ('Zero disables CPU and dependent GPU preparation.' if key == 'cpu_cache_mb'
+                                   else 'Zero disables GPU preparation while keeping the CPU cache.' if key == 'gpu_cache_mb' else ''),
+                            value_validate_command=lambda key=key: self.validate_preparation_limit(key),
+                            enabled_if=Condition(variables=('Vars.Active.Migoto.manage_xxmi_dll_config',), predicate=self.can_prepare),
+                        ) for key, label in (
+                            ('cpu_cache_mb', 'CPU cache limit (MiB)'),
+                            ('gpu_cache_mb', 'GPU cache limit (MiB)'),
+                            ('max_asset_mb', 'Maximum asset size (MiB)'),
+                            ('worker_threads', 'Preparation workers'),
+                            ('max_pending_jobs', 'Maximum pending jobs'),
+                            ('create_budget_ms', 'Creation budget (ms)'),
+                            ('upload_budget_mb', 'Upload budget (MiB)'),
+                        )),
+                        SettingsOption(
+                            label_text='Allow GPU creation during a loading window',
+                            widget=OptionWidget.CHECKBOX,
+                            value_variable='Vars.Active.Migoto.preparation_loading_window',
+                            tooltip='Enable only during a known loading window. Disabled by default. '
+                                'GPU cache memory and creation/upload budgets still apply.',
+                            enabled_if=Condition(variables=('Vars.Active.Migoto.manage_xxmi_dll_config',), predicate=self.can_prepare),
+                        ),
+                        SettingsOption(
+                            label_text='Preparation status: Unknown / offline',
+                            widget=OptionWidget.BUTTON,
+                            value_variable='',
+                            button_text='Diagnostics',
+                            button_command=self.show_preparation_diagnostics,
+                            tooltip='Runtime progress telemetry is unavailable. Preparing and Ready are '
+                                'separate from mod enabled status and cannot be inferred from settings.',
+                        ),
                     ),
                 ),
 
@@ -273,6 +333,43 @@ class ModelImporterSettingsFrame(SettingsContentFrame):
 
             ),
         )
+
+    @staticmethod
+    def get_preparation_capability():
+        if Launcher.xxmi_injector:
+            return Launcher.xxmi_injector.preparation_capability()
+        return PreparationCapability(False, 'XXMI package is unavailable.')
+
+    def can_prepare(self):
+        return self._preparation_capability.supported and self.manage_xxmi_dll_config()
+
+    def validate_preparation_mode(self):
+        if Vars.Active.Migoto.preparation_mode.get() not in self._preparation_capability.modes:
+            return 'This package does not support the selected mode; preparation will remain off.'
+        return ''
+
+    @staticmethod
+    def validate_preparation_limit(key):
+        try:
+            error = validate_limit(key, getattr(Vars.Active.Migoto, f'preparation_{key}').get())
+            if error:
+                return error
+            if key in ('max_asset_mb', 'cpu_cache_mb'):
+                cpu_limit = Vars.Active.Migoto.preparation_cpu_cache_mb.get()
+                if cpu_limit > 0 and Vars.Active.Migoto.preparation_max_asset_mb.get() > cpu_limit:
+                    return 'Maximum asset size must not exceed the CPU cache limit.'
+            return ''
+        except (ValueError, TypeError, TclError):
+            return 'Enter an integer.'
+
+    def show_preparation_diagnostics(self):
+        capability = self.get_preparation_capability()
+        Events.Call(Events.Application.ShowInfo(
+            title='Experimental mod preparation',
+            message=capability.diagnostics,
+            confirm_text='Close',
+            modal=True,
+        ))
 
     @staticmethod
     def is_xxmi_dll(fork: MigotoFork = MigotoFork.XXMI, min_version: str | None = None) -> bool:
