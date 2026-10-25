@@ -1,79 +1,77 @@
-# Full-plan completion status — work in progress
+# Full-plan implementation and qualification status
 
-The full plan remains in progress. Source reviews and Windows fixtures found
-safety and test-harness defects; the remaining owner-thread cleanup fix and
-prepared-runtime activation proof are being completed. No new DLL has been
-deployed or signed. The earlier account-limit interruption has been resolved.
+The source implementation, independent safety review and automated Windows
+validation are complete for this development candidate. The full plan remains
+**release-unqualified** until real-game performance/visual evidence and authorized
+publisher signing are complete. No game was launched, no UAC was triggered,
+and no DLL was installed or deployed.
 
-## Written and saved
+## Exact candidate
 
-- Generation-owned native registries, reader leases spanning Present pre/post,
-  fresh-generation legacy reload, bounded migration and initializer replay.
-- Actual detached production parser/linker and current include discovery;
-  dependency-aware parsed replay and deterministic clean-build comparisons.
-- General candidate worker/preparation/publication pipeline and an isolated
-  test-only DLL host for production parser and prepared-runtime fixtures.
-- Selected working sets, observed co-use priorities and explicit rescan APIs.
-- Content-identified shader cache with verified include closure, actual compiler
-  identity, bounded ownership and standard-handler compatibility fixtures.
-- Continuous native tracing with capture-specific loss accounting and graceful
-  stopping of in-flight scopes; offline qualification tooling.
-- Authenticated development-package selection, pinning, settings and rollback UI.
+- Native commit: `626775cad8a2f3a2e1dc1056c437ffa60bd78899`.
+- Native tree: `a7320f0a76ee0be0f3153d731d81532ed49d418f`.
+- Native base: `a7847eae82aaac32175c9a7d199673d5c9323bcd`.
+- DLL SHA-256: `26ae27a7019ac6aec64c7560071e8e4d8d97738c2794c29398519353235b8fbe`.
+- Development ZIP SHA-256: `0f831c0b84475acfb6cf791dd98514ed802d29efc975dce1f36eb8f89292bc93`.
+- [Windows verification run](https://github.com/wunderay/XXMI-Launcher/actions/runs/40146131131).
+- [Archive, build record, hashes and native Git bundle](../../development-builds/prepared-loading/626775cad8a2/).
 
-## Mandatory remaining work
+## Implemented
 
-1. Complete owner-thread final cleanup for SINGLETHREADED legacy generations.
-   Device/thread guards already prevent foreign context calls, but their GPU
-   children must also be released on their recorded owner thread.
-2. Pass the exact-candidate prepared-runtime DLL fixture with the same pass-through
-   device/context used by production. Wrapped fixture Map/Unmap hooks invalidated
-   staged runtime revisions; migration and source fences remain intact.
-3. Verify the resulting source-linked archive and retain its exact hashes.
-4. Obtain paired real-game candidate evidence, independent visual/timing review,
-   and authorized publisher signing before release qualification. Never launch
-   Zenless or trigger UAC; the user launches it manually.
+| Plan area | Implemented behavior |
+| --- | --- |
+| CPU preparation | Bounded immutable snapshots, decoding, source/decoded caches, cancellation and disk cache. |
+| GPU preparation | Real-device resources, views, shader/state bundles, device epochs and process-budget admission. |
+| Working sets | Exact selected IDs/dependency closure, observed usage/co-use priorities, bounded adaptive history. |
+| Source changes | Notifications, current include discovery, stable verification, overflow recovery and explicit rescan. |
+| Detached configuration | Production parser/linker, generation-owned registries and reader leases spanning pre/post work. |
+| Publication | Complete preparation, current source/device fences, bounded persistent migration/initializers, safe retirement. |
+| Incremental/cache work | Per-file IR reuse, budget-domain identity, deterministic full semantic linking and sealed shader include caches. |
+| Launcher/recovery | Authenticated archive pinning, independent feature controls, protected staging, process checks and rollback. |
+| Evidence | Continuous loss-aware tracing, activation durations, offline evidence gate and explicit visual/timing attestation. |
 
-Latest Windows evidence: [run 40144454108](https://github.com/wunderay/XXMI-Launcher/actions/runs/40144454108).
-All 71 launcher tests passed, including real DPAPI, protected staging/recovery,
-Toolhelp and Unicode rename cases. Standalone native suites passed, including
-continuous trace DLL export, WARP resource creation, actual production parsing,
-and eight standard shader include equivalence cases. Both DLL builds passed.
-The prepared-runtime activation fixture remains failing and is not qualified.
+Unsupported mutable/pool/initialization/dynamic-expression cases retain the safe
+previous generation or use compatibility behavior. Readiness does not establish
+physical residency, rendered correctness or a hardware performance target.
+New native code follows the original repository's tab indentation and readable
+multiline control flow; formatting-only passes preserved C++ tokens.
 
-## Fixed and independently reviewed
+## Completed verification
 
-- Manifest metadata copies, assignment and destruction retain their own budget;
-  compiler/IR, pool and parameter expansion are admitted before allocation.
-  Charged IR cache reuse requires the same budget domain.
-- Full command/expression qualification includes null copies, nested shader
-  arguments, indirect draws and resource-property/readback side effects.
-- Retirement completion checks slot identity; nonblocking publication and atomic
-  snapshots avoid the legacy-writer/render-lock inversion.
-- Queued CPU reservations cover buffer padding and encoded WIC/DDS staging.
-  Codec-internal memory remains conservatively estimated.
-- Windows staging retains protected handles through rename and recovery;
-  process enumeration fails closed and includes configured game aliases.
-- Pinned packages match the exact authenticated outer archive, including Manifest.
-- New native implementation formatting follows the original tab indentation and
-  multiline control flow. Formatting-only passes preserve C++ tokens.
+- All **71 Windows launcher tests passed**, including actual DPAPI, protected
+  handle staging/recovery, Toolhelp and variable-length Unicode rename cases.
+- Native CPU, configuration, memory, notification, working-set, tracing, GPU and
+  status suites passed. Actual SDK shader checks cover DEBUG cache retention,
+  executable/reflection equivalence, exact optimized DXBC and eight standard
+  include cases. Independently compiled DEBUG PDB metadata is nondeterministic;
+  only comparison copies are stripped, while cached bytes remain exact.
+- The production parser and prepared-runtime DLL fixtures passed: include
+  discovery, clean-build equivalence, bounded numeric expansion, full worker/GPU
+  preparation, latest persistent migration, publication, first use and last-good
+  retention. SINGLETHREADED WARP checks include a real buffer, foreign-call
+  rejection, worker pin release and final destruction on its owner thread.
+- Continuous trace DLL export passed with 100,000 events and graceful stopping.
+  Test exports were checked absent from the packaged production DLL.
+- Independent Runtime, metadata and launcher reviews reproduced, fixed and
+  rechecked the ownership, source/retirement, expression, memory and package
+  provenance defects found during implementation.
+- The downloaded artifact matched every one of **2,152 tracked native source
+  files**, plus the generated version header. DLL, patch, source archive,
+  commit/tree and workflow identities matched. The native Git bundle verifies
+  against the pinned public base.
 
-The exact candidate is recorded in `native-candidate.json`; subsequent fixes
-remain separate until committed and tested. Final Windows Python gate: 71 passed.
-Portable ownership, generation and refresh regression gates passed. Independent
-Runtime and metadata reviews found and rechecked the fixes above; independent
-launcher review reproduced and rechecked archive-pin and process-alias failures.
+## Remaining release gates
 
-## Existing evidence
+1. Import the actual collector 0.1.6 raw report/source files. The forwarded local
+   paths and hashes are a reported baseline receipt, not transferred evidence.
+2. Collect paired candidate/baseline real-game scenarios, resource and memory
+   evidence, preparation cost and first-correct-frame observations across the
+   plan's validation matrix. The user launches Zenless manually; screenshots
+   remain optional supporting evidence.
+3. Obtain independent visual/timing acceptance and authorized publisher signing
+   through the existing trust path. Capability metadata stays unsigned and the
+   launcher gate stays closed until then. No importer/version is yet qualified.
 
-Compatibility preflight: https://github.com/wunderay/XXMI-Launcher/actions/runs/40129119066
-The early ownership/parser refactor built the production DLL. Selected-policy
-and previous native suites passed. New fixture failures were identified:
-constant-condition warning, unsupported macro-include test syntax, and fixture
-project configuration mapping. The next run built the DLL/parser but exposed a Runtime activation timeout and
-two strict fixture warnings. The reviewed candidate fixes the warnings and
-preserves bounded failure diagnostics; a passing revised run is still required.
-
-The previously verified development archive in `development-builds/` belongs to
-an earlier, limited implementation. It is not evidence for the new general
-pipeline. Collector 0.1.6 real-game results are recorded as a reported baseline;
-the actual local evidence/source files have not been transferred here.
+See [the evidence protocol](qualification/README.md). The older development ZIP
+in the parent directory belongs to the previous limited implementation and is
+separate from this candidate. The original Phase 0 patch remains unchanged.
