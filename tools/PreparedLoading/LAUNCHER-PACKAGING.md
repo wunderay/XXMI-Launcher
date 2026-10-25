@@ -23,7 +23,7 @@ To rebuild, use Windows x64 with Python 3.12 x64 and run from the repository roo
 ```
 
 The helper creates a private venv, installs the application requirements without
-the unused Nuitka compiler, and pins PyInstaller 6.16.0 plus hooks-contrib 2025.8.
+the unused Nuitka compiler, and pins PyInstaller 6.20.0 plus hooks-contrib 2026.5.
 PyInstaller was chosen for this development artifact because the application
 already supports it and a directory bundle avoids a full Nuitka C compilation and
 single-file extraction overhead. This is a repeatable build recipe, not a claim

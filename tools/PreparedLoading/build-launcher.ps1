@@ -20,7 +20,7 @@ $requirements = Join-Path $build 'launcher-requirements.txt'
 Get-Content -LiteralPath (Join-Path $root 'requirements.txt') |
     Where-Object { $_ -notmatch '^Nuitka==' } |
     Set-Content -LiteralPath $requirements -Encoding utf8
-& $buildPython -m pip install --disable-pip-version-check -r $requirements 'PyInstaller==6.16.0' 'pyinstaller-hooks-contrib==2025.8'
+& $buildPython -m pip install --disable-pip-version-check -r $requirements 'PyInstaller==6.20.0' 'pyinstaller-hooks-contrib==2026.5'
 if ($LASTEXITCODE -ne 0) { throw 'Pinned launcher dependency installation failed.' }
 $env:PYTHONHASHSEED = '0'
 & $buildPython -m PyInstaller --noconfirm --clean `

@@ -47,7 +47,7 @@ def main() -> None:
     manifest = {
         'format': 1,
         'version': '0.0.0',
-        'packager': 'PyInstaller 6.16.0; hooks-contrib 2025.8',
+        'packager': 'PyInstaller 6.20.0; hooks-contrib 2026.5',
         'launcher_source': subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip(),
         'source_has_local_changes': bool(subprocess.check_output(['git', '-C', str(root), 'status', '--porcelain'], text=True).strip()),
         'requirements_sha256': digest(root / 'requirements.txt'),
