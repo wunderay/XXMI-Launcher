@@ -182,13 +182,13 @@ class UIScrollableFrame(CTkScrollableFrame, UIElementBase):
         CUSTOMTKINTER BUGFIX: Unbind capture list of bindings to prevent leaking.
         Remove CTkScrollableFrame's bind_all() callbacks before destroying the widget hierarchy.
         """
-        # root = self._root()
+        # bind_all() registers commands on the root, which owns their cleanup.
+        root = self._root()
         for sequence, funcid in self._captured_bindings:
             try:
                 # bind_all() uses the special Tcl bind tag "all".
                 # tkinter has no public API for removing only one bind_all() callback, so use its internal _unbind().
-                self._unbind(("bind", "all", sequence), funcid)
-                # root.unbind(sequence, funcid)
+                root._unbind(("bind", "all", sequence), funcid)
             except TclError:
                 # The Tcl binding may already have disappeared.
                 pass

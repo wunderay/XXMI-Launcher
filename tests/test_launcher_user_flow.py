@@ -288,6 +288,31 @@ class LauncherUserFlowTests(unittest.TestCase):
         self.assertTrue(update_events[0].force)
         self.assertEqual(self.package.downloaded_asset_path, None)
 
+    @isolated_gui_case
+    def test_scrollable_frame_recreation_preserves_unrelated_global_binding(self):
+        from gui.classes.containers import UIScrollableFrame
+        sequence = '<MouseWheel>'
+        unrelated = self.gui.bind_all(sequence, lambda event: None, add='+')
+        for _ in range(2):
+            frame = UIScrollableFrame(self.host, height=300)
+            captured = tuple(frame._captured_bindings)
+            self.assertTrue(captured, 'Production scroll frame must capture its global bindings')
+            for _, command in captured:
+                self.assertTrue(self.gui.tk.call('info', 'commands', command))
+                self.assertIn(command, self.gui._tclCommands)
+            frame.destroy()
+            self.assertEqual(frame._captured_bindings, [])
+            for binding, command in captured:
+                self.assertFalse(self.gui.tk.call('info', 'commands', command))
+                self.assertNotIn(command, self.gui._tclCommands)
+                self.assertNotIn(command, self.gui.tk.call('bind', 'all', binding))
+            self.assertTrue(self.gui.tk.call('info', 'commands', unrelated))
+            self.assertIn(unrelated, self.gui.tk.call('bind', 'all', sequence))
+            self.assertIn(unrelated, self.gui._tclCommands)
+        # Root destruction must remove the remaining unrelated command cleanly.
+        # A stale command ownership record raises TclError here before the fix.
+        self.destroy_gui()
+
 
 if __name__ == '__main__':
     unittest.main()
