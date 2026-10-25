@@ -731,7 +731,7 @@ class ModelImporterPackage(Package):
             link.description = str(L('model_importer_shortcut_description',
                 'Start game with {importer} and skip launcher load'
             ).format(importer=Config.Launcher.active_importer))
-            link.working_directory = str(Paths.App.Resources / 'Bin')
+            link.working_directory = str(Path(sys.executable).parent)
             link.arguments = f'--nogui --xxmi {Config.Launcher.active_importer}'
 
             ico_file_name = f'{Config.Launcher.active_importer}.ico'
