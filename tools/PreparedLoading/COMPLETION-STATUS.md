@@ -5,10 +5,13 @@ update, settings and recovery paths. PR #2 is ready for code review, not a draft
 The native implementation and automated Windows checks pass for the exact
 candidate below.
 
-**Delivery to an installed launcher remains blocked on the maintained MSI
-build/release workflow and authorized package signing.** Those are not available
-in the public source/workspace. No normal release or deployment has occurred.
-Actual-game visual/performance qualification remains open.
+**Official updater delivery still requires the authorized publisher release
+and package-signing process.** The exact upstream MSI authoring project was not
+found, but a public Nuitka/WiX reference provides a route to recreating a fork
+build; missing upstream build files are not an absolute technical blocker. See
+[the public build research](PUBLIC-BUILD-RESEARCH.md). No replacement MSI has been
+implemented or validated, no normal release/deployment has occurred, and
+actual-game qualification remains open.
 
 ## Current normal user flow
 
@@ -95,9 +98,10 @@ acceptance bound to the complete paired evidence manifest.
 
 ## Remaining release gates
 
-1. Provide or run the maintained MSI authoring/build workflow and the authorized
-   publisher package-signing process. The public launcher source lacks that MSI
-   project; `SpectrumQT/XXMI-Installer` is deprecated. The native metadata, DLLs
+1. Obtain the upstream Advanced Installer project or implement a compatible fork
+   MSI builder using the public reference, then use the authorized publisher
+   release/package-signing process for official updater delivery. Installation
+   identity, registry and updater contracts require adaptation. The native metadata, DLLs
    and outer package must be authenticated through the existing signer before
    the launcher accepts support. No signing key or substitute trust path is
    created by this work.

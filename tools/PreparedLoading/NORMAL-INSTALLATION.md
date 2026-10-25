@@ -79,10 +79,18 @@ project, and `SpectrumQT/XXMI-Installer` is deprecated. The existing normal
 updater already selects the MSI asset for an MSI installation and authenticates
 downloads before installation.
 
-To deliver this change through that channel, the release owner must provide or
-run the maintained MSI build/signing workflow, include the normal launcher
-payload, and publish the authenticated native package described above. No
-publisher private key or signing workflow is available in this workspace.
+Further [public research](PUBLIC-BUILD-RESEARCH.md) identifies Advanced Installer
+22.5 in the official MSI and a public GPMI Nuitka/WiX build reference. The exact
+upstream `.aip` project was not found. Recreating a fork MSI is feasible, but the
+reference is not drop-in: XXMI uses different scope, registry, upgrade and
+installer-window contracts. No replacement MSI authoring has been implemented
+or validated here.
+
+Official delivery still requires the release owner to build a compatible MSI,
+include the normal launcher payload and publish the authenticated native package
+described above. Windows Authenticode and project updater ECDSA signatures are
+separate; the public build reference supplies neither the existing publisher
+private key nor authority to publish an accepted upstream update.
 
 Real-game performance, complete first-eligible-frame appearance, recovery
 observations and independent acceptance remain separate qualification gates.

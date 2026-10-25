@@ -16,8 +16,9 @@ passed at launcher `c7749bfc00e47bdebf10d0d95d045e413ea2473d` and native
 synthetic/parser/runtime/WARP suites. Downloaded source and payload artifacts
 were verified. These are automated development checks, not game acceptance.
 
-The maintained MSI project/build workflow and authorized publisher signing
-remain unavailable. No normal installed release is published, no new publisher
+The exact upstream Advanced Installer project and authorized publisher signing
+remain unavailable. Public research found a Nuitka/WiX MSI reference for an
+adapted fork build; no replacement MSI has been implemented or validated. No normal installed release is published, no new publisher
 trust is added, and unsigned metadata does not activate preparation. Original
 baseline inspection, paired actual-game scenarios, independent visual/timing
 acceptance, real recovery observations, full matrix evidence and authorized
