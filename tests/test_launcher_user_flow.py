@@ -6,8 +6,11 @@ fixture callback, not evidence of publisher acceptance or live qualification.
 """
 
 import hashlib
+import functools
 import json
+import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -17,9 +20,39 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 
+def isolated_gui_case(test):
+    @functools.wraps(test)
+    def run(self):
+        if os.environ.get('XXMI_GUI_FIXTURE_CHILD') == '1':
+            return test(self)
+        environment = os.environ.copy()
+        environment['XXMI_GUI_FIXTURE_CHILD'] = '1'
+        result = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()),
+             f'{type(self).__name__}.{test.__name__}', '-v'],
+            env=environment, capture_output=True, text=True, timeout=90,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+    return run
+
+
 @unittest.skipUnless(sys.platform == 'win32', 'Real launcher GUI requires Windows')
 class LauncherUserFlowTests(unittest.TestCase):
     def setUp(self):
+        # CustomTkinter caches fonts/images process-wide. Give every real GUI
+        # case a fresh process and Tcl interpreter, with a bounded parent wait.
+        if os.environ.get('XXMI_GUI_FIXTURE_CHILD') != '1':
+            return
+        self.temp = tempfile.TemporaryDirectory(prefix='xxmi-launcher-gui-')
+        self.addCleanup(self.temp.cleanup)
+        self.root_path = Path(self.temp.name)
+        repository = Path(__file__).resolve().parents[1]
+        shutil.copytree(repository / 'Locale', self.root_path / 'Locale')
+        # Mirror app.py bootstrap: enums retain LocaleString objects at import,
+        # so the real locale engine must exist before Config or GUI imports.
+        import core.locale_manager as Locale
+        Locale.initialize(self.root_path)
+        Locale.Locale.set_active_locale('EN', save_to_file=False)
         # Keep Windows dependencies out of Linux discovery, including transitive
         # Win32 imports from the production package and GUI modules.
         import customtkinter as ctk
@@ -33,10 +66,6 @@ class LauncherUserFlowTests(unittest.TestCase):
         from gui.classes.tooltip import UIToolTipEngine
 
         self.Config, self.Events, self.Paths, self.Vars = Config, Events, Paths, Vars
-        self.temp = tempfile.TemporaryDirectory(prefix='xxmi-launcher-gui-')
-        self.addCleanup(self.temp.cleanup)
-        self.root_path = Path(self.temp.name)
-
         def replace(obj, name, value):
             missing = object()
             previous = getattr(obj, name, missing)
@@ -119,7 +148,9 @@ class LauncherUserFlowTests(unittest.TestCase):
         if not self.gui_destroyed:
             self.gui_destroyed = True
             for callback in self.gui.tk.call('after', 'info'):
-                self.gui.after_cancel(callback)
+                # Cancel scheduling without deleting child-owned Tcl commands;
+                # production widget destruction owns command deletion.
+                self.gui.tk.call('after', 'cancel', callback)
             self.gui.destroy()
 
     @staticmethod
@@ -173,6 +204,7 @@ class LauncherUserFlowTests(unittest.TestCase):
                     rows[spec.button_text] = row
         return frame, rows
 
+    @isolated_gui_case
     def test_authenticated_package_controls_select_validate_and_apply_normal_settings(self):
         from core.prepared_loading import apply_preparation_settings
         from core.utils.ini_handler import IniHandler, IniHandlerSettings
@@ -219,6 +251,7 @@ class LauncherUserFlowTests(unittest.TestCase):
         self.gui.update()
         self.assertEqual(mode.cget('state'), 'disabled')
 
+    @isolated_gui_case
     def test_unsigned_package_disables_preparation_and_explains_why(self):
         from gui.windows.settings.settings_content_frame import OptionWidgetValueButton, OptionWidgetValueDropdown
         self.write_package(authenticated=False)
@@ -233,6 +266,7 @@ class LauncherUserFlowTests(unittest.TestCase):
         self.assertEqual(len(messages), 1)
         self.assertIn(frame._preparation_capability.reason, messages[0].message)
 
+    @isolated_gui_case
     def test_normal_update_buttons_dispatch_standard_application_events(self):
         from gui.classes.containers import UIFrame
         from gui.windows.main.launcher_frame.launcher_frame import UpdateButton
