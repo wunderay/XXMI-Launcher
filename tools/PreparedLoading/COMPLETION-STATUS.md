@@ -1,9 +1,9 @@
 # Full-plan completion status — work in progress
 
-The source implementation and independent safety reviews are complete for the
-current candidate. Windows integration and real-game release qualification remain
-required. No new DLL has been deployed or signed. The earlier account-limit
-interruption has been resolved; work resumed on the saved candidate.
+The full plan remains in progress. Source reviews and Windows fixtures found
+safety and test-harness defects; the remaining owner-thread cleanup fix and
+prepared-runtime activation proof are being completed. No new DLL has been
+deployed or signed. The earlier account-limit interruption has been resolved.
 
 ## Written and saved
 
@@ -22,13 +22,23 @@ interruption has been resolved; work resumed on the saved candidate.
 
 ## Mandatory remaining work
 
-1. Pass the exact-candidate Windows integration suite: actual parser and
-   prepared-runtime DLL fixtures, standard shader include equivalence, streaming
-   trace DLL, and real DPAPI/protected-file/process lifecycle tests.
-2. Verify the resulting source-linked archive and retain its exact hashes.
-3. Obtain paired real-game candidate evidence, independent visual/timing review,
+1. Complete owner-thread final cleanup for SINGLETHREADED legacy generations.
+   Device/thread guards already prevent foreign context calls, but their GPU
+   children must also be released on their recorded owner thread.
+2. Pass the exact-candidate prepared-runtime DLL fixture with the same pass-through
+   device/context used by production. Wrapped fixture Map/Unmap hooks invalidated
+   staged runtime revisions; migration and source fences remain intact.
+3. Verify the resulting source-linked archive and retain its exact hashes.
+4. Obtain paired real-game candidate evidence, independent visual/timing review,
    and authorized publisher signing before release qualification. Never launch
    Zenless or trigger UAC; the user launches it manually.
+
+Latest Windows evidence: [run 40144454108](https://github.com/wunderay/XXMI-Launcher/actions/runs/40144454108).
+All 71 launcher tests passed, including real DPAPI, protected staging/recovery,
+Toolhelp and Unicode rename cases. Standalone native suites passed, including
+continuous trace DLL export, WARP resource creation, actual production parsing,
+and eight standard shader include equivalence cases. Both DLL builds passed.
+The prepared-runtime activation fixture remains failing and is not qualified.
 
 ## Fixed and independently reviewed
 
@@ -47,8 +57,8 @@ interruption has been resolved; work resumed on the saved candidate.
 - New native implementation formatting follows the original tab indentation and
   multiline control flow. Formatting-only passes preserve C++ tokens.
 
-Current native source: `361da74afee5e56027ad5202a773cb63ac918191`.
-Final local Python gate: 70 tests, 66 passed, four Windows-only skipped.
+The exact candidate is recorded in `native-candidate.json`; subsequent fixes
+remain separate until committed and tested. Final Windows Python gate: 71 passed.
 Portable ownership, generation and refresh regression gates passed. Independent
 Runtime and metadata reviews found and rechecked the fixes above; independent
 launcher review reproduced and rechecked archive-pin and process-alias failures.
