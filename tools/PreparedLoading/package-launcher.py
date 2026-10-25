@@ -1,13 +1,44 @@
-'''Assemble and smoke-test the exact extracted portable launcher artifact.'''
+'''Stage and smoke-test the standard launcher installation payload for release tooling.'''
 import argparse
 import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
-from zipfile import ZIP_DEFLATED, ZipFile
+
+
+def validate_version(value: str) -> str:
+    if not re.fullmatch(r'(0|[1-9][0-9]{0,4})\.(0|[1-9][0-9]{0,4})\.(0|[1-9][0-9]{0,4})', value):
+        raise argparse.ArgumentTypeError('Version must have three numeric components, for example 1.2.3')
+    if any(int(part) > 65535 for part in value.split('.')):
+        raise argparse.ArgumentTypeError('Version components must be between 0 and 65535')
+    return value
+
+
+def version_resource(version: str) -> str:
+    version = validate_version(version)
+    numeric = tuple(int(part) for part in version.split('.')) + (0,)
+    display = version + '.0'
+    description = 'XXMI Launcher development build' if version == '0.0.0' else 'XXMI Launcher'
+    product = 'XXMI Launcher development' if version == '0.0.0' else 'XXMI Launcher'
+    flags = '0x2' if version == '0.0.0' else '0x0'
+    return f'''VSVersionInfo(
+    ffi=FixedFileInfo(
+        filevers={numeric}, prodvers={numeric},
+        mask=0x3f, flags={flags}, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)),
+    kids=[StringFileInfo([StringTable('040904B0', [
+        StringStruct('CompanyName', 'XXMI Launcher contributors'),
+        StringStruct('FileDescription', {description!r}),
+        StringStruct('FileVersion', {display!r}),
+        StringStruct('InternalName', 'XXMI Launcher'),
+        StringStruct('OriginalFilename', 'XXMI Launcher.exe'),
+        StringStruct('ProductName', {product!r}),
+        StringStruct('ProductVersion', {display!r})])]),
+        VarFileInfo([VarStruct('Translation', [1033, 1200])])])
+'''
 
 
 def digest(path: Path) -> str:
@@ -29,34 +60,49 @@ def source_status(root: Path) -> str:
     return subprocess.check_output([
         'git', '-C', str(root), 'status', '--porcelain', '--untracked-files=all',
         '--', 'src', 'Themes', 'Locale', 'requirements.txt', 'LICENSE', 'tools/PreparedLoading',
+        'tests/test_launcher_distribution.py', 'tests/test_launcher_user_flow.py',
+        '.github/workflows/prepared-loading-checks.yml',
     ], text=True).strip()
+
+
+def stage_payload(root: Path, output: Path) -> Path:
+    frozen = output / 'build/dist/XXMI Launcher'
+    if not (frozen / 'XXMI Launcher.exe').is_file():
+        raise RuntimeError('Missing frozen Windows executable')
+    bundle = output / 'install-payload'
+    # A clean stage prevents obsolete modules/assets surviving a repeated build.
+    if bundle.exists():
+        shutil.rmtree(bundle)
+    shutil.copytree(frozen, bundle / 'Resources/Bin')
+    for directory in ('Themes', 'Locale'):
+        shutil.copytree(root / directory, bundle / directory,
+                        ignore=shutil.ignore_patterns('active_locale.cfg', '__pycache__'))
+    shutil.copy2(root / 'LICENSE', bundle / 'LICENSE')
+    return bundle
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--root', type=Path, required=True)
-    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--root', type=Path)
+    parser.add_argument('--output', type=Path)
+    parser.add_argument('--version', type=validate_version, default='0.0.0')
+    parser.add_argument('--version-resource', type=Path, help='Write PE version resource only')
     args = parser.parse_args()
+    if args.version_resource is not None:
+        if args.root is not None or args.output is not None:
+            parser.error('--version-resource cannot be combined with --root or --output')
+        args.version_resource.write_text(version_resource(args.version), encoding='utf-8')
+        return
+    if args.root is None or args.output is None:
+        parser.error('--root and --output are required when staging a payload')
     root, output = args.root.resolve(), args.output.resolve()
     (output / 'LAUNCHER-PACKAGING.json').unlink(missing_ok=True)
     (output / 'LAUNCHER-SELF-TEST.json').unlink(missing_ok=True)
-    bundle = output / 'build/dist/XXMI Launcher'
-    if not (bundle / 'XXMI Launcher.exe').is_file():
-        raise RuntimeError('Missing frozen Windows executable')
-    for directory in ('Themes', 'Locale'):
-        shutil.copytree(root / directory, bundle / directory, dirs_exist_ok=True,
-                        ignore=shutil.ignore_patterns('active_locale.cfg', '__pycache__'))
-    shutil.copy2(root / 'LICENSE', bundle / 'LICENSE')
-    (bundle / 'START-HERE.txt').write_text(
-        'Extract the complete archive into a writable folder, then double-click XXMI Launcher.exe.\n'
-        'Keep Themes, Locale, and _internal beside the executable. No Python or build tools are needed.\n'
-        'Development build 0.0.0: launcher self-update is disabled by the existing version check.\n'
-        'This launcher does not contain or authorize a prepared-loading native DLL.\n'
-        'Normal launcher startup can access the network and write its configuration.\n', encoding='utf-8')
+    bundle = stage_payload(root, output)
     status = source_status(root)
     manifest = {
         'format': 1,
-        'version': '0.0.0',
+        'version': args.version,
         'packager': 'PyInstaller 6.20.0; hooks-contrib 2026.5',
         'launcher_source': subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip(),
         'source_has_local_changes': bool(status),
@@ -67,18 +113,12 @@ def main() -> None:
         'files': file_hashes(bundle),
     }
     (bundle / 'LAUNCHER-BUILD.json').write_text(json.dumps(manifest, indent=4) + '\n', encoding='utf-8')
-    archive = output / 'XXMI-Launcher-development-win-x64.zip'
-    with ZipFile(archive, 'w', ZIP_DEFLATED, compresslevel=6) as zipped:
-        for path in sorted(bundle.rglob('*')):
-            if path.is_file():
-                zipped.write(path, 'XXMI Launcher/' + path.relative_to(bundle).as_posix())
-    # Extract and launch outside both source and build directories. Remove Python
-    # and developer tools from PATH to detect accidental host dependencies.
-    with tempfile.TemporaryDirectory(prefix='XXMI portable smoke ') as temporary:
+    # Exercise the staged installation outside source/build paths. Only Windows
+    # System32 remains on PATH to detect accidental development dependencies.
+    with tempfile.TemporaryDirectory(prefix='XXMI installation smoke ') as temporary:
         smoke = Path(temporary)
-        with ZipFile(archive) as zipped:
-            zipped.extractall(smoke)
         extracted = smoke / 'XXMI Launcher'
+        shutil.copytree(bundle, extracted)
         before = file_hashes(extracted)
         environment = dict(os.environ)
         environment['PATH'] = str(Path(os.environ['SystemRoot']) / 'System32')
@@ -87,7 +127,7 @@ def main() -> None:
         result_path = smoke / 'launcher-self-test.json'
         environment['XXMI_LAUNCHER_SELF_TEST_REPORT'] = str(result_path)
         try:
-            completed = subprocess.run([str(extracted / 'XXMI Launcher.exe'), '--self-test'],
+            completed = subprocess.run([str(extracted / 'Resources/Bin/XXMI Launcher.exe'), '--self-test'],
                                        cwd=smoke, env=environment, check=False, timeout=120)
         except subprocess.TimeoutExpired as error:
             result = {'format': 1, 'passed': False, 'error': 'Frozen self-test timed out after 120 seconds'}
@@ -107,9 +147,10 @@ def main() -> None:
         if sorted(path.name for path in smoke.iterdir()) != ['XXMI Launcher', 'launcher-self-test.json']:
             raise RuntimeError('Frozen self-test created files outside the bundle')
     report = {
-        'archive': archive.name,
-        'sha256': digest(archive),
-        'smoke_test': 'passed: extracted exe; offline hidden GUI, Tcl/Tkhtml, imports, localization, image, version, file integrity; no bundle writes',
+        'payload': bundle.name,
+        'executable': 'Resources/Bin/XXMI Launcher.exe',
+        'manifest_sha256': digest(bundle / 'LAUNCHER-BUILD.json'),
+        'smoke_test': 'passed: staged installation exe; offline hidden GUI, Tcl/Tkhtml, imports, localization, image, version, file integrity; no bundle writes',
         'normal_application_started': False,
         'game_tested': False,
         'self_test_result': result,

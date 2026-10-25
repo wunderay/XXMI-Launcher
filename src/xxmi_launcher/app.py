@@ -83,10 +83,7 @@ if __name__ == '__main__':
     # Multiprocessing support for Pyinstaller
     multiprocessing.freeze_support()
 
-    if '__launcher_root__' in globals():
-        # Portable packaging supplies its top-level executable directory.
-        root_path = Path(__launcher_root__)
-    elif '__compiled__' in globals():
+    if '__compiled__' in globals():
         # Nuitka (release build): `XXMI Launcher\Resources\Bin\XXMI Launcher.exe`
         root_path = Path(sys.argv[0]).resolve().parent.parent.parent
     elif getattr(sys, 'frozen', False):

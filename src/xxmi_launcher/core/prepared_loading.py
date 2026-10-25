@@ -202,6 +202,44 @@ def validate_limit(key: str, value: int) -> str:
     return ''
 
 
+def reconcile_preparation_settings(settings: PreparedLoadingSettings,
+                                   capability: PreparationCapability) -> None:
+    """Keep compatible preferences across normal updates; discard unsupported activation."""
+    defaults = PreparedLoadingSettings()
+    if not capability.supported or settings.preparation_mode not in capability.modes:
+        settings.preparation_mode = 'off'
+    for key in FEATURE_FLAGS:
+        name = f'preparation_{key}'
+        if (not capability.supported or capability.protocol_version < 2 or key not in capability.features
+                or type(getattr(settings, name)) is not bool):
+            setattr(settings, name, False)
+    for key in LIMITS:
+        name = f'preparation_{key}'
+        if validate_limit(key, getattr(settings, name)):
+            setattr(settings, name, getattr(defaults, name))
+    if settings.preparation_cpu_cache_mb:
+        settings.preparation_max_asset_mb = min(settings.preparation_max_asset_mb, settings.preparation_cpu_cache_mb)
+    if (not capability.supported or settings.preparation_refresh_key not in REFRESH_KEYS
+            or (capability.protocol_version >= 2 and not settings.preparation_transactional_activation)):
+        settings.preparation_refresh_key = ''
+    for key in ('full_rescan_key', 'profile_members', 'profile_name'):
+        if not capability.supported or capability.protocol_version < 2 or key not in capability.features:
+            setattr(settings, f'preparation_{key}', '')
+    members = settings.preparation_profile_members
+    if (not isinstance(members, str) or len(members) > 8192 or (members and any(
+            re.fullmatch(r'(Resource|CustomShader)[A-Za-z0-9_. \\-]*', member, re.IGNORECASE) is None
+            for member in members.split('|')))):
+        settings.preparation_profile_members = ''
+    name = settings.preparation_profile_name
+    if not isinstance(name, str) or len(name) > 128 or any(ord(char) < 32 or char in ';#' for char in name):
+        settings.preparation_profile_name = ''
+    if (settings.preparation_full_rescan_key not in REFRESH_KEYS or
+            settings.preparation_full_rescan_key == settings.preparation_refresh_key):
+        settings.preparation_full_rescan_key = ''
+    if type(settings.preparation_loading_window) is not bool or not capability.supported:
+        settings.preparation_loading_window = False
+
+
 def apply_preparation_settings(ini, settings: PreparedLoadingSettings,
                                capability: PreparationCapability) -> None:
     """Apply through the launcher's existing atomic INI save; never touch mods.

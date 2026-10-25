@@ -48,6 +48,10 @@ function Run-NativeTest {
     } finally { Pop-Location }
 }
 
+& python -m unittest discover -s (Join-Path $native 'tests\preparation_capabilities') -v 2>&1 |
+    Tee-Object -FilePath (Join-Path $out 'capability-tests.log')
+if ($LASTEXITCODE -ne 0) { throw 'Native capability package tests failed.' }
+
 Run-NativeTest -Name 'cpu' -Sources @(
     'tests\preparation_cpu\main.cpp',
     'tests\preparation_cpu\disk.cpp',
@@ -209,18 +213,9 @@ if ($LASTEXITCODE -ne 0) { throw 'Production DLL export inspection failed.' }
 $exports | Set-Content -LiteralPath (Join-Path $out 'production-exports.txt')
 if ($exports -match 'XXMI_Test') { throw 'Test-only exports were found in the production DLL.' }
 $digest = (Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash.ToLowerInvariant()
-$capabilities = [ordered]@{
-    schema_version = 1
-    mod_loading_version = 2
-    dll_sha256 = $digest
-    modes = @('off', 'adaptive', 'prepared_profile')
-    features = @('cpu_cache_enabled', 'gpu_cache_enabled', 'adaptive_learning',
-        'transactional_activation', 'general_fast_refresh', 'full_rescan_key', 'profile_members', 'profile_name')
-    package_version = '0.2.0-development'
-    release_stage = 'development'
-}
-[IO.File]::WriteAllText((Join-Path $out 'PreparationCapabilities.json'),
-    ($capabilities | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+& python (Join-Path $native 'tools\preparation-capabilities.py') --dll $dll `
+    --package-version '0.2.0-development' --output (Join-Path $out 'PreparationCapabilities.json')
+if ($LASTEXITCODE -ne 0) { throw 'Native capability metadata generation failed.' }
 # Only the authorized package signer may add the exact-byte ECDSA signature.
 $provenance = [ordered]@{
     native_base = 'a7847eae82aaac32175c9a7d199673d5c9323bcd'

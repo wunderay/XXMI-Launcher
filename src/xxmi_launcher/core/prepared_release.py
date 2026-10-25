@@ -1,7 +1,7 @@
-"""Authenticated isolated development releases; never alters package trust or Mods.
+"""Authenticated installation recovery and isolated development releases.
 
 Selection stages a publisher-signed archive. Deployment remains MigotoPackage's
-normal verified pre-launch path. Rollback restores only explicitly managed files.
+normal verified pre-launch path. Recovery never changes publisher trust or Mods.
 """
 import hashlib
 import base64
@@ -12,6 +12,7 @@ import shutil
 import tempfile
 import zipfile
 import uuid
+import re
 from pathlib import Path
 
 from core.prepared_loading import CAPABILITY_FILE, inspect_capability
@@ -35,7 +36,7 @@ def _seal_snapshot(data):
     # OS protection authenticates local lifecycle metadata without creating or
     # changing any publisher signing key. No insecure non-Windows fallback.
     import win32crypt
-    return win32crypt.CryptProtectData(data, 'XXMI development lifecycle', None, None, None, 0)
+    return win32crypt.CryptProtectData(data, 'XXMI library lifecycle', None, None, None, 0)
 
 
 def _open_snapshot(data):
@@ -194,7 +195,7 @@ def assert_process_idle(names):
         if not processes or any(not name for name in processes):
             raise ValueError('Incomplete process snapshot')
     except Exception as error:
-        raise ValueError('Cannot verify process identity; development library change refused.') from error
+        raise ValueError('Cannot verify process identity; XXMI library change refused.') from error
     if {name.casefold() for name in names}.intersection(name.casefold() for name in processes):
         raise ValueError('Stop the game before changing the selected XXMI libraries.')
 
@@ -219,7 +220,13 @@ def _read_json(path):
         raise ValueError('Lifecycle metadata authentication failed') from error
 
 
-def _replace_set(importer, contents, assert_idle):
+def _replace_set(importer, contents, assert_idle, **kwargs):
+    return _replace_targets(importer, {importer / name: data for name, data in contents.items()}, assert_idle, **kwargs)
+
+
+def _replace_targets(importer, contents, assert_idle, *, recovery_record=None,
+                     installation_record=None, keep_pending=False, pending_after=None,
+                     preinstall_replay=False):
     """Prepare immutable writes and recovery files before changing any target.
 
     A failed replacement restores the complete state present before this call.
@@ -227,21 +234,29 @@ def _replace_set(importer, contents, assert_idle):
     """
     _plain_path(importer)
     journal = importer / '.xxmi-recovery-required.json'
-    if journal.exists():
+    if journal.exists() and (recovery_record is None or _read_json(journal) != recovery_record):
         raise ValueError('A prior library transaction requires recovery before launch.')
     prepared, recovery, changed = {}, {}, []
     retain_recovery = False
+    succeeded = False
     try:
-        for name, data in contents.items():
-            target = importer / name
+        targets = {str(path.relative_to(importer)) if path.parent == importer else str(path): path
+                   for path in contents}
+        for name, target in targets.items():
+            data = contents[target]
             _plain_path(target)
-            recovery[name] = _temporary(importer, target.read_bytes()) if target.exists() else None
-            prepared[name] = _temporary(importer, data) if data is not None else None
-        _write_json(journal, {'recovery': {name: str(path.path) if path else None for name, path in recovery.items()}})
+            recovery[name] = _temporary(target.parent, target.read_bytes()) if target.exists() else None
+            prepared[name] = _temporary(target.parent, data) if data is not None else None
+        _write_json(journal, {'kind': 'managed_file_transaction', 'installation': installation_record,
+            'preinstall_replay': preinstall_replay,
+            'prepared_sha256': {name: path.digest if path else None for name, path in prepared.items()},
+            'recovery': {name: str(path.path) if path else None for name, path in recovery.items()},
+            'recovery_sha256': {name: path.digest if path else None for name, path in recovery.items()},
+            'targets': {name: str(path) for name, path in targets.items()}})
         assert_idle()
         try:
             for name, temporary in prepared.items():
-                target = importer / name
+                target = targets[name]
                 _plain_path(target)
                 if temporary is None:
                     target.unlink(missing_ok=True)
@@ -250,11 +265,12 @@ def _replace_set(importer, contents, assert_idle):
                 changed.append(name)
                 if temporary is not None:
                     temporary.close()
+            succeeded = True
         except BaseException as original:
             failures = []
             for name in reversed(changed):
                 try:
-                    target = importer / name
+                    target = targets[name]
                     _plain_path(target)
                     if recovery[name] is None:
                         target.unlink(missing_ok=True)
@@ -275,7 +291,258 @@ def _replace_set(importer, contents, assert_idle):
             if path is not None:
                 path.close(retain=retain_recovery)
         if not retain_recovery:
-            journal.unlink(missing_ok=True)
+            if recovery_record is not None and (not succeeded or keep_pending):
+                _write_json(journal, pending_after if succeeded and pending_after is not None else recovery_record)
+            else:
+                journal.unlink(missing_ok=True)
+
+
+def _restore_preparation_ini(current, previous):
+    """Restore only our section while retaining later user/game configuration edits."""
+    if current is None:
+        return previous
+    previous = previous or b''
+    if b'\0' in current or b'\0' in previous:
+        raise ValueError('Cannot safely restore preparation settings in a non-UTF-8 INI')
+    section = re.compile(rb'(?im)^\[ModLoading\][^\r\n]*\r?\n.*?(?=^\[|\Z)', re.DOTALL)
+    old = section.search(previous)
+    replacement = old.group() if old else b''
+    if section.search(current):
+        return section.sub(lambda match: replacement, current, count=1)
+    if not replacement:
+        return current
+    return current + (b'\n' if current and not current.endswith(b'\n') else b'') + replacement
+
+
+class InstalledRelease:
+    """Last authenticated ordinary installation, captured before download changes its manifest."""
+    package_files = (*LIBRARIES, CAPABILITY_FILE, 'Manifest.json')
+
+    def __init__(self, root: Path, security):
+        self.root, self.security = root, security
+
+    def record_path(self, importer):
+        return self.root / (_digest(str(importer.resolve()).encode()) + '.json')
+
+    def available(self, importer):
+        return self.record_path(importer).is_file()
+
+    def validate_paths(self, package, importer):
+        for directory, names in ((package, (*self.package_files, 'TMP')),
+                                  (importer, (*SNAPSHOT_FILES, '.xxmi-recovery-required.json')),
+                                  (self.root, ())):
+            _plain_path(directory)
+            for name in names:
+                _plain_path(directory / name)
+
+    def snapshot(self, package, importer, settings):
+        # A fresh or damaged installation cannot become a last-good backup.
+        # Keep any older authenticated backup available while ordinary repair runs.
+        # Unsafe paths are a hard refusal, distinct from a missing/damaged prior
+        # installation that can still be repaired through the ordinary updater.
+        self.validate_paths(package, importer)
+        try:
+            manifest = json.loads((package / 'Manifest.json').read_bytes())
+            signatures = manifest['signatures']
+            payload = {}
+            for group, directory, names in (('package', package, self.package_files),
+                                             ('importer', importer, SNAPSHOT_FILES)):
+                for name in names:
+                    source = directory / name
+                    _plain_path(source)
+                    data = source.read_bytes() if source.exists() else None
+                    if name in LIBRARIES and data is None:
+                        raise ValueError('Incomplete prior installation')
+                    if data is not None and (name in LIBRARIES or name == CAPABILITY_FILE):
+                        if not self.security.verify(signatures.get(name), data):
+                            raise ValueError('Unauthenticated prior installation')
+                    payload[group + '/' + name] = data
+        except (OSError, ValueError, KeyError, TypeError):
+            return False
+        self.root.mkdir(parents=True, exist_ok=True)
+        _plain_path(self.root)
+        previous_generation = None
+        if self.available(importer):
+            try:
+                previous_generation = self.inspect(package, importer)['generation']
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
+        generation = uuid.uuid4().hex
+        destination = self.root / generation
+        destination.mkdir()
+        try:
+            records = {}
+            for name, data in payload.items():
+                records[name] = None if data is None else dict(sha256=_digest(data),
+                    signature=signatures.get(Path(name).name))
+                if data is not None:
+                    target = destination / name
+                    target.parent.mkdir(exist_ok=True)
+                    target.write_bytes(data)
+            _write_json(self.record_path(importer), dict(generation=generation,
+                importer=str(importer.resolve()), package=str(package.resolve()),
+                files=records, settings=settings, version=manifest.get('version', 'unknown')))
+        except BaseException:
+            shutil.rmtree(destination)
+            raise
+        if previous_generation:
+            shutil.rmtree(self.root / previous_generation, ignore_errors=True)
+        return True
+
+    def inspect(self, package, importer):
+        value = _read_json(self.record_path(importer))
+        if (value.get('importer') != str(importer.resolve()) or
+                value.get('package') != str(package.resolve())):
+            raise ValueError('Last-good installation belongs to a different package or importer')
+        generation = value.get('generation', '')
+        if len(generation) != 32 or any(char not in '0123456789abcdef' for char in generation):
+            raise ValueError('Invalid last-good generation')
+        return value
+
+    def pending_record(self, package, importer):
+        self.validate_paths(package, importer)
+        record = self.record_path(importer)
+        return dict(kind='installed_update_pending', package=str(package.resolve()),
+            importer=str(importer.resolve()), snapshot_sha256=_digest(record.read_bytes()) if record.exists() else None)
+
+    def require_recovery(self, package, importer):
+        # A failed download may already have replaced Manifest.json. Never let
+        # normal launch interpret this mixed package as an installed release.
+        journal = importer / '.xxmi-recovery-required.json'
+        if journal.exists():
+            return  # Retain a failed file transaction and its recovery paths.
+        _write_json(journal, self.pending_record(package, importer))
+
+    def validate_pending(self, package, importer):
+        value = _read_json(importer / '.xxmi-recovery-required.json')
+        if value != self.pending_record(package, importer):
+            raise ValueError('A prior library transaction requires recovery before installation.')
+        return value
+
+    def _validate_transaction(self, value, package, importer):
+        expected = {name: str(importer / name) for name in SNAPSHOT_FILES}
+        expected.update({str(package / name): str(package / name) for name in self.package_files})
+        native_only = {name: str(importer / name) for name in ('d3d11.dll', 'd3dcompiler_47.dll')}
+        targets = value.get('targets')
+        native_deployment = (isinstance(targets, dict) and bool(targets) and
+            all(name in native_only and native_only[name] == target for name, target in targets.items()))
+        if (value.get('kind') != 'managed_file_transaction' or
+                value.get('installation') != self.pending_record(package, importer) or
+                (targets != expected and not native_deployment) or
+                set(value.get('recovery', {})) != set(targets) or
+                set(value.get('recovery_sha256', {})) != set(targets) or
+                set(value.get('prepared_sha256', {})) != set(targets) or
+                type(value.get('preinstall_replay')) is not bool or
+                (value['preinstall_replay'] and (not native_deployment or
+                    value['installation']['snapshot_sha256'] is not None))):
+            raise ValueError('Invalid installation recovery transaction')
+        retained = []
+        for name, target in targets.items():
+            prepared_digest = value['prepared_sha256'][name]
+            if prepared_digest is not None and (not isinstance(prepared_digest, str) or
+                    re.fullmatch(r'[0-9a-f]{64}', prepared_digest) is None):
+                raise ValueError('Invalid prepared file identity')
+            source = value['recovery'][name]
+            digest = value['recovery_sha256'][name]
+            if source is None:
+                if digest is not None:
+                    raise ValueError('Invalid absent recovery file')
+                continue
+            source = Path(source)
+            _plain_path(source)
+            if (source.parent != Path(target).parent or
+                    re.fullmatch(r'\.xxmi-[A-Za-z0-9_-]+\.tmp', source.name) is None or
+                    source in retained or not isinstance(digest, str) or
+                    re.fullmatch(r'[0-9a-f]{64}', digest) is None):
+                raise ValueError('Invalid recovery file identity')
+            # A crash during completed-transaction cleanup can leave some
+            # recovery files absent. Restoration uses the signed snapshot;
+            # any recovery files still present must match their sealed hashes.
+            if source.exists() and _digest(source.read_bytes()) != digest:
+                raise ValueError('Recovery file authentication failed')
+            retained.append(source)
+        return retained
+
+    def resume_first_install(self, package, importer, *, assert_idle):
+        """Recover preattempt files under the barrier, then let normal repair authenticate new code."""
+        assert_idle()
+        pending = self.pending_record(package, importer)
+        if pending['snapshot_sha256'] is not None:
+            raise ValueError('Restore the previous authenticated installation before retrying this update.')
+        journal = importer / '.xxmi-recovery-required.json'
+        value = _read_json(journal)
+        if value == pending:
+            return
+        retained = self._validate_transaction(value, package, importer)
+        native_only = {name: str(importer / name) for name in ('d3d11.dll', 'd3dcompiler_47.dll')}
+        if not value['targets'] or any(native_only.get(name) != target for name, target in value['targets'].items()):
+            raise ValueError('First-install repair requires managed native deployment files')
+        contents = {}
+        for name, target in value['targets'].items():
+            target = Path(target)
+            source = value['recovery'][name]
+            if source is None:
+                contents[target] = None
+            elif Path(source).exists():
+                data = Path(source).read_bytes()
+                if _digest(data) != value['recovery_sha256'][name]:
+                    raise ValueError('Recovery file authentication failed')
+                contents[target] = data
+            else:
+                # Cleanup may have removed recovery files after a completed
+                # commit. Keep a current native file only if the publisher
+                # authenticates it against the installed package manifest.
+                _plain_path(target)
+                data = target.read_bytes()
+                manifest = json.loads((package / 'Manifest.json').read_bytes())
+                replayed_original = value['preinstall_replay'] and _digest(data) == value['prepared_sha256'][name]
+                if not replayed_original and not self.security.verify(manifest['signatures'].get(name), data):
+                    raise ValueError('Missing recovery file and current native file is not authenticated')
+                contents[target] = data
+        _replace_targets(importer, contents, assert_idle, recovery_record=value,
+            installation_record=pending, keep_pending=True, pending_after=pending, preinstall_replay=True)
+        for source in retained:
+            _plain_path(source)
+            source.unlink(missing_ok=True)
+
+    def rollback(self, package, importer, *, assert_idle):
+        assert_idle()
+        value = self.inspect(package, importer)
+        journal = importer / '.xxmi-recovery-required.json'
+        recovery_record = None
+        retained = []
+        if journal.exists():
+            recovery_record = _read_json(journal)
+            if recovery_record != self.pending_record(package, importer):
+                retained = self._validate_transaction(recovery_record, package, importer)
+        expected = {'package/' + name for name in self.package_files} | {
+            'importer/' + name for name in SNAPSHOT_FILES}
+        if set(value['files']) != expected:
+            raise ValueError('Invalid last-good file set')
+        contents = {}
+        for name, record in value['files'].items():
+            group, filename = name.split('/')
+            target = (package if group == 'package' else importer) / filename
+            if record is None:
+                contents[target] = None
+                continue
+            source = self.root / value['generation'] / name
+            _plain_path(source)
+            data = source.read_bytes()
+            if _digest(data) != record['sha256'] or ((filename in LIBRARIES or filename == CAPABILITY_FILE)
+                    and not self.security.verify(record['signature'], data)):
+                raise ValueError(f'Last-good verification failed: {name}')
+            contents[target] = data
+        ini_path = importer / 'd3dx.ini'
+        _plain_path(ini_path)
+        contents[ini_path] = _restore_preparation_ini(
+            ini_path.read_bytes() if ini_path.exists() else None, contents[ini_path])
+        _replace_targets(importer, contents, assert_idle, recovery_record=recovery_record,
+            installation_record=self.pending_record(package, importer))
+        for source in retained:
+            _plain_path(source)
+            source.unlink(missing_ok=True)
+        return value
 
 
 class DevelopmentRelease:

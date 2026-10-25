@@ -44,6 +44,7 @@ exe = EXE(
     upx=False,
     uac_admin=False,
     icon=str(root / 'Themes/Default/window-icon.ico'),
-    version=str(root / 'tools/PreparedLoading/launcher-version.txt'),
+    version=os.environ.get('XXMI_LAUNCHER_VERSION_RESOURCE',
+                           str(root / 'tools/PreparedLoading/launcher-version.txt')),
 )
 coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='XXMI Launcher')

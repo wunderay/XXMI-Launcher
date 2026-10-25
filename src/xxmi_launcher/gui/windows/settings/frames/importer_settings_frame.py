@@ -1,6 +1,4 @@
 import subprocess
-import json
-from pathlib import Path
 import webbrowser
 import re
 import psutil
@@ -222,20 +220,12 @@ class ModelImporterSettingsFrame(SettingsContentFrame):
                             enabled_if=Condition(variables=('Vars.Active.Migoto.manage_xxmi_dll_config',), predicate=self.can_prepare),
                         ),
                         SettingsOption(
-                            label_text='Isolated development package',
-                            widget=OptionWidget.BUTTON,
-                            value_variable='',
-                            button_text='Select signed package',
-                            button_command=self.select_development_package,
-                            tooltip='Select the publisher-signed ZIP and its release metadata JSON (version and archive signature). Stages a pinned isolated package for the next launch; never changes DLL trust.',
-                        ),
-                        SettingsOption(
-                            label_text='Development package pin / rollback',
+                            label_text='XXMI libraries recovery',
                             widget=OptionWidget.BUTTON,
                             value_variable='',
                             button_text='Status and rollback',
                             button_command=self.development_package_status,
-                            tooltip='Shows the selected exact version and archive hash. Explicit rollback restores the previous DLLs and managed configuration after verifying the game is stopped.',
+                            tooltip='Installation and updates use the normal launcher package flow. Rollback restores the previous authenticated libraries and managed configuration after verifying the game is stopped.',
                         ),
                         SettingsOption(
                             label_text=f'Preparation snapshot: {self._preparation_status.label}',
@@ -441,45 +431,44 @@ class ModelImporterSettingsFrame(SettingsContentFrame):
     @staticmethod
     def _development_error(error):
         Events.Call(Events.Application.ShowError(
-            title='Development package operation refused', message=str(error),
+            title='XXMI libraries operation refused', message=str(error),
             confirm_text='Close', modal=True,
         ))
-
-    def select_development_package(self):
-        archive = filedialog.askopenfilename(title='Select publisher-signed development package',
-                                             filetypes=[('Signed release archive', '*.zip')])
-        if not archive:
-            return
-        metadata = filedialog.askopenfilename(title='Select publisher release metadata (version and signature)',
-                                              filetypes=[('Release metadata', '*.json')])
-        if not metadata:
-            return
-        try:
-            path = Path(metadata)
-            if path.stat().st_size > 65536:
-                raise ValueError('Release metadata exceeds 64 KiB.')
-            value = json.loads(path.read_text(encoding='utf-8'))
-            version, signature = value['version'], value['signature']
-            if not isinstance(version, str) or not isinstance(signature, str):
-                raise ValueError('Release metadata requires string version and signature fields.')
-            # Metadata is only an untrusted discovery hint. The publisher archive
-            # signature, signed marker stage/version, and every DLL are verified.
-            Launcher.xxmi_injector.select_development_package(Path(archive), signature, version=version)
-            Events.Call(Events.Application.ShowInfo(
-                title='Development package selected',
-                message=f'Pinned version {version}. Deployment waits until the next verified pre-launch. Upstream XXMI updates and repair are blocked until explicit rollback.',
-                confirm_text='Close', modal=True,
-            ))
-        except Exception as error:
-            self._development_error(error)
 
     def development_package_status(self):
         package = Launcher.xxmi_injector
         try:
             if not package.development_release.selected:
-                Events.Call(Events.Application.ShowInfo(title='Development package',
-                    message='No development package is selected. Ordinary authenticated XXMI updates are enabled.',
-                    confirm_text='Close', modal=True))
+                importer = Config.Active.Importer.importer_path
+                if not package.installed_release.available(importer):
+                    if (importer / '.xxmi-recovery-required.json').exists():
+                        requested = Events.Call(Events.Application.ShowInfo(title='XXMI installation interrupted',
+                            message='The first installation did not finish. Stop the game, then repair XXMI libraries through the launcher. Your mods and configuration are preserved.',
+                            confirm_text='Repair', cancel_text='Close', modal=True))
+                        if requested:
+                            Events.Fire(Events.Application.Update(packages=['XXMI'], force=True, reinstall=True))
+                        return
+                    Events.Call(Events.Application.ShowInfo(title='XXMI libraries recovery',
+                        message='XXMI libraries install and update through the launcher. No previous authenticated installation is available for rollback yet.',
+                        confirm_text='Close', modal=True))
+                    return
+                value = package.installed_release.inspect(package.upstream_package_path, importer)
+                requested = Events.Call(Events.Application.ShowInfo(title='XXMI libraries recovery',
+                    message=f"Previous version: {value['version']}\n\nRestore the previous authenticated libraries and managed configuration. Stop the game before rollback. Your mods are preserved.",
+                    confirm_text='Roll back', cancel_text='Close', modal=True))
+                if requested:
+                    restored = package.rollback_installed_package()
+                    self._preparation_capability = self.get_preparation_capability()
+                    self._preparation_status = self.get_preparation_status(self._preparation_capability)
+                    for name in restored['settings']:
+                        variable = getattr(Vars.Active.Migoto, name, None)
+                        if variable is not None:
+                            variable.set(getattr(Config.Active.Migoto, name))
+                    Vars.Active.Migoto.manage_xxmi_dll_config.set(Vars.Active.Migoto.manage_xxmi_dll_config.get())
+                    Config.Manager.save()
+                    Events.Call(Events.Application.ShowInfo(title='XXMI libraries restored',
+                        message='The previous authenticated installation and managed configuration were restored. Ordinary launcher updates remain available.',
+                        confirm_text='Close', modal=True))
                 return
             selection = package.development_release.selection()
             requested = Events.Call(Events.Application.ShowInfo(

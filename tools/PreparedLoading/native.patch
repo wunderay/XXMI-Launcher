@@ -1,3 +1,62 @@
+diff --git a/.github/workflows/zip-release.yml b/.github/workflows/zip-release.yml
+index 98d27a1af9bc14abafca5e5eb0d7b910025e27ed..923c85b5a6e650173438bf66dbbc0050b6b6c256 100644
+--- a/.github/workflows/zip-release.yml
++++ b/.github/workflows/zip-release.yml
+@@ -24,11 +24,13 @@ jobs:
+ 
+     - name: Generate version header
+       shell: pwsh
++      env:
++        XXMI_PACKAGE_VERSION: ${{ github.ref_name }}
+       run: |
+         .\tools\generate-version.ps1 `
+           -VersionFile .\version.h `
+           -OutputFile .\version.generated.h `
+-          -Tag "${{ github.ref_name }}"
++          -Tag $env:XXMI_PACKAGE_VERSION
+ 
+     - name: Add MSBuild for VS2022 to PATH
+       uses: microsoft/setup-msbuild@v2
+@@ -40,13 +42,37 @@ jobs:
+         msbuild StereoVisionHacks.sln
+         -property:Configuration="Zip Release"
+         -property:Platform=x64
++        -property:PostBuildEventUseInBuild=false
++        -property:PreBuildEventUseInBuild=false
+         -target:rebuild
+         -verbosity:minimal
+ 
+-    - name: Zip DLLs
++    - name: Generate unsigned preparation capabilities
++      shell: pwsh
++      env:
++        XXMI_PACKAGE_VERSION: ${{ github.ref_name }}
++      run: |
++        python .\tools\preparation-capabilities.py `
++          --dll '.\x64\Zip Release\d3d11.dll' `
++          --package-version $env:XXMI_PACKAGE_VERSION `
++          --output '.\PreparationCapabilities.json'
++
++    - name: Stage package files
+       run: |
++        New-Item -ItemType Directory -Force './package-staging' | Out-Null
+         $dll_files = Get-ChildItem -Path './x64/Zip Release' -Filter '*.dll'
+-        Compress-Archive -Path $dll_files.FullName -DestinationPath './LibrariesTemp.zip'
++        if (!$dll_files) { throw 'No package DLLs were built.' }
++        Copy-Item -Path $dll_files.FullName -Destination './package-staging'
++        Copy-Item -Path './PreparationCapabilities.json' -Destination './package-staging'
++        Compress-Archive -Path './package-staging/*' -DestinationPath './LibrariesTemp.zip'
++
++    # The capability file is unsigned development metadata. Before normal
++    # launcher distribution, the authorized release maintainer must qualify
++    # it, change release_stage only through the established signing process,
++    # sign exact metadata bytes, add its signature to Manifest.json, and
++    # authenticate/sign the outer package through the existing private release
++    # process. The launcher must reject this candidate until those signatures
++    # and the required Manifest.json are valid; this public job does not sign.
+         
+     - name: Create GitHub Release
+       id: create_release
 diff --git a/DirectX11/CommandList.cpp b/DirectX11/CommandList.cpp
 index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..3f0da229747015b5980c5e46138e34b581d527e3 100644
 --- a/DirectX11/CommandList.cpp
@@ -18947,6 +19006,118 @@ index 0000000000000000000000000000000000000000..0826f07ab912acd23542c815d3302ba4
 +    assert(trace.GetStats().accepted == afterConcurrent.accepted);
 +    std::cout << "LoadTrace portable tests passed\n";
 +}
+diff --git a/tests/preparation_capabilities/.gitignore b/tests/preparation_capabilities/.gitignore
+new file mode 100644
+index 0000000000000000000000000000000000000000..c18dd8d83ceed1806b50b0aaa46beb7e335fff13
+--- /dev/null
++++ b/tests/preparation_capabilities/.gitignore
+@@ -0,0 +1 @@
++__pycache__/
+diff --git a/tests/preparation_capabilities/test_cli.py b/tests/preparation_capabilities/test_cli.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..01161ed71520f10c933d24e6e51594f563e2015b
+--- /dev/null
++++ b/tests/preparation_capabilities/test_cli.py
+@@ -0,0 +1,99 @@
++import hashlib
++import json
++import subprocess
++import sys
++import tempfile
++import unittest
++from pathlib import Path
++
++
++REPOSITORY = Path(__file__).resolve().parents[2]
++GENERATOR = REPOSITORY / "tools" / "preparation-capabilities.py"
++
++
++class PreparationCapabilitiesCliTests(unittest.TestCase):
++    def run_generator(self, dll, version, output):
++        return subprocess.run(
++            [
++                sys.executable,
++                str(GENERATOR),
++                "--dll",
++                str(dll),
++                "--package-version",
++                version,
++                "--output",
++                str(output),
++            ],
++            capture_output=True,
++            text=True,
++            check=False,
++        )
++
++    def test_writes_utf8_json_with_built_dll_hash_and_contract(self):
++        with tempfile.TemporaryDirectory() as temp:
++            root = Path(temp)
++            dll = root / "d3d11.dll"
++            dll_bytes = bytes(range(256)) * 5000
++            dll.write_bytes(dll_bytes)
++            output = root / "PreparationCapabilities.json"
++
++            result = self.run_generator(dll, "v1.2.3-rc1", output)
++
++            self.assertEqual(result.returncode, 0, result.stderr)
++            raw = output.read_bytes()
++            self.assertFalse(raw.startswith(b"\xef\xbb\xbf"))
++            metadata = json.loads(raw.decode("utf-8"))
++            self.assertEqual(metadata["schema_version"], 1)
++            self.assertEqual(metadata["mod_loading_version"], 2)
++            self.assertEqual(metadata["dll_sha256"], hashlib.sha256(dll_bytes).hexdigest())
++            self.assertEqual(metadata["modes"], ["off", "adaptive", "prepared_profile"])
++            self.assertEqual(
++                metadata["features"],
++                [
++                    "cpu_cache_enabled",
++                    "gpu_cache_enabled",
++                    "adaptive_learning",
++                    "transactional_activation",
++                    "general_fast_refresh",
++                    "full_rescan_key",
++                    "profile_members",
++                    "profile_name",
++                ],
++            )
++            self.assertEqual(metadata["package_version"], "1.2.3-rc1")
++            self.assertEqual(metadata["release_stage"], "development")
++
++    def test_accepts_unprefixed_version(self):
++        with tempfile.TemporaryDirectory() as temp:
++            root = Path(temp)
++            dll = root / "d3d11.dll"
++            dll.write_bytes(b"built dll")
++            output = root / "PreparationCapabilities.json"
++            result = self.run_generator(dll, "1.2.3", output)
++            self.assertEqual(result.returncode, 0, result.stderr)
++            self.assertEqual(json.loads(output.read_text("utf-8"))["package_version"], "1.2.3")
++
++    def test_invalid_version_does_not_create_output(self):
++        invalid_versions = ["", "../1.2", "1.2.3/evil", "é" + "a", "a" * 81]
++        for version in invalid_versions:
++            with self.subTest(version=version):
++                with tempfile.TemporaryDirectory() as temp:
++                    root = Path(temp)
++                    dll = root / "d3d11.dll"
++                    dll.write_bytes(b"built dll")
++                    output = root / "PreparationCapabilities.json"
++                    result = self.run_generator(dll, version, output)
++                    self.assertNotEqual(result.returncode, 0)
++                    self.assertFalse(output.exists())
++
++    def test_missing_dll_does_not_create_output(self):
++        with tempfile.TemporaryDirectory() as temp:
++            root = Path(temp)
++            output = root / "PreparationCapabilities.json"
++            result = self.run_generator(root / "missing.dll", "1.2.3", output)
++            self.assertNotEqual(result.returncode, 0)
++            self.assertFalse(output.exists())
++
++
++if __name__ == "__main__":
++    unittest.main()
 diff --git a/tests/preparation_changes/README.md b/tests/preparation_changes/README.md
 new file mode 100644
 index 0000000000000000000000000000000000000000..5631c7fe3e221ca17fbdc00642fcbc41657a30ad
@@ -22392,3 +22563,87 @@ index 0000000000000000000000000000000000000000..819d69f427cb3601d5648357742cbff3
 +c++ -std=c++14 -Wall -Wextra -Werror -I "$root/DirectX11" \
 + "$root/tests/shader_regex_cache/main.cpp" -o "$build/test"
 +"$build/test"
+diff --git a/tools/preparation-capabilities.py b/tools/preparation-capabilities.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..aa8511d59ec9dd63613c6244edf862b034933b2c
+--- /dev/null
++++ b/tools/preparation-capabilities.py
+@@ -0,0 +1,78 @@
++#!/usr/bin/env python3
++"""Generate unsigned XXMI preparation capability metadata for a built DLL.
++
++The metadata deliberately remains at release_stage=development until the
++authorized release signer qualifies and signs it. See the zip-release workflow
++for the required maintainer handoff before launcher distribution.
++"""
++
++import argparse
++import hashlib
++import json
++import re
++import sys
++from pathlib import Path
++
++
++VERSION_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,79}\Z", re.ASCII)
++
++
++def build_metadata(dll_path: Path, package_version: str) -> dict:
++    if not VERSION_PATTERN.fullmatch(package_version):
++        raise ValueError("package version must be 1-80 safe ASCII characters")
++
++    normalized_version = package_version[1:] if package_version.startswith("v") else package_version
++    if not normalized_version or not VERSION_PATTERN.fullmatch(normalized_version):
++        raise ValueError("package version must remain valid after optional v-prefix removal")
++    if not dll_path.is_file():
++        raise ValueError("d3d11 DLL must exist as a regular file")
++
++    digest = hashlib.sha256()
++    with dll_path.open("rb") as source:
++        for block in iter(lambda: source.read(1024 * 1024), b""):
++            digest.update(block)
++
++    return {
++        "schema_version": 1,
++        "mod_loading_version": 2,
++        "dll_sha256": digest.hexdigest(),
++        "modes": ["off", "adaptive", "prepared_profile"],
++        "features": [
++            "cpu_cache_enabled",
++            "gpu_cache_enabled",
++            "adaptive_learning",
++            "transactional_activation",
++            "general_fast_refresh",
++            "full_rescan_key",
++            "profile_members",
++            "profile_name",
++        ],
++        "package_version": normalized_version,
++        "release_stage": "development",
++    }
++
++
++def main(argv=None) -> int:
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--dll", required=True, type=Path, help="built d3d11.dll")
++    parser.add_argument("--package-version", required=True, help="release tag/version (optional leading v)")
++    parser.add_argument("--output", required=True, type=Path, help="PreparationCapabilities.json destination")
++    args = parser.parse_args(argv)
++
++    try:
++        metadata = build_metadata(args.dll, args.package_version)
++    except (OSError, ValueError) as error:
++        print(f"capability metadata generation failed: {error}", file=sys.stderr)
++        return 2
++
++    payload = (json.dumps(metadata, indent=2, ensure_ascii=True) + "\n").encode("utf-8")
++    try:
++        args.output.write_bytes(payload)
++    except OSError as error:
++        print(f"capability metadata write failed: {error}", file=sys.stderr)
++        return 2
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())

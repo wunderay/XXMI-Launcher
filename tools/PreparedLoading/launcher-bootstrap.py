@@ -1,4 +1,4 @@
-'''Portable launcher entry point. Self-test never starts Application.'''
+'''Standard installation launcher entry point. Self-test never starts Application.'''
 import hashlib
 import json
 import multiprocessing
@@ -7,6 +7,19 @@ import runpy
 import sys
 import traceback
 from pathlib import Path
+import re
+
+
+def verify_executable_version(version: str, info: dict) -> None:
+    if not isinstance(version, str) or not re.fullmatch(
+            r'(0|[1-9][0-9]{0,4})\.(0|[1-9][0-9]{0,4})\.(0|[1-9][0-9]{0,4})', version):
+        raise RuntimeError('Invalid launcher manifest version')
+    parts = tuple(int(part) for part in version.split('.')) + (0,)
+    if any(part > 65535 for part in parts):
+        raise RuntimeError('Launcher manifest version is outside PE version bounds')
+    expected = (parts[0] << 16 | parts[1], parts[2] << 16 | parts[3])
+    if (info['FileVersionMS'], info['FileVersionLS']) != expected:
+        raise RuntimeError(f'Executable version differs from launcher manifest {version}')
 
 
 def self_test(root: Path) -> None:
@@ -17,8 +30,8 @@ def self_test(root: Path) -> None:
 
     sys.addaudithook(deny_external_actions)
     manifest = json.loads((root / 'LAUNCHER-BUILD.json').read_text(encoding='utf-8'))
-    if manifest['format'] != 1 or manifest['version'] != '0.0.0':
-        raise RuntimeError('Unexpected development launcher manifest')
+    if manifest['format'] != 1:
+        raise RuntimeError('Unexpected launcher manifest format')
     for relative, expected in manifest['files'].items():
         path = root / relative
         path.resolve().relative_to(root.resolve())
@@ -38,9 +51,8 @@ def self_test(root: Path) -> None:
     from customtkinter import CTk, CTkLabel, set_default_color_theme
     from tkinterweb import HtmlFrame
 
-    info = win32api.GetFileVersionInfo(str(root / 'XXMI Launcher.exe'), '\\')
-    if info['FileVersionMS'] != 0 or info['FileVersionLS'] != 0:
-        raise RuntimeError('Expected development executable version 0.0.0.0')
+    info = win32api.GetFileVersionInfo(str(root / 'Resources/Bin/XXMI Launcher.exe'), '\\')
+    verify_executable_version(manifest['version'], info)
     if not av.library_versions:
         raise RuntimeError('PyAV native libraries unavailable')
     set_default_color_theme(str(root / 'Themes/Default/custom-tkinter-theme.json'))
@@ -62,7 +74,7 @@ def self_test(root: Path) -> None:
 
 def main() -> None:
     multiprocessing.freeze_support()
-    root = Path(sys.executable).resolve().parent
+    root = Path(sys.executable).resolve().parent.parent.parent
     if sys.argv[1:] == ['--self-test']:
         report = None
         try:
@@ -90,7 +102,7 @@ def main() -> None:
         return
     if '--self-test' in sys.argv[1:]:
         raise SystemExit('Use --self-test without other arguments')
-    runpy.run_module('app', init_globals={'__launcher_root__': root}, run_name='__main__')
+    runpy.run_module('app', run_name='__main__')
 
 
 if __name__ == '__main__':
