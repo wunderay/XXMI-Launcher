@@ -1,20 +1,20 @@
 # Full-plan implementation and qualification status
 
-The source implementation, independent safety review and automated Windows
-validation are complete for this development candidate. The full plan remains
+The source implementation, review remediation and automated Windows checks pass
+for this development candidate. PR #2 is ready for code review, not a draft. The full plan remains
 **release-unqualified** until real-game performance/visual evidence and authorized
 publisher signing are complete. No game was launched, no UAC was triggered,
 and no DLL was installed or deployed.
 
 ## Exact candidate
 
-- Native commit: `626775cad8a2f3a2e1dc1056c437ffa60bd78899`.
-- Native tree: `a7320f0a76ee0be0f3153d731d81532ed49d418f`.
+- Native commit: `4599c694c23c7dfe0a62e40a2878b07985cdc521`.
+- Native tree: `2c35a0dc33f5be79d515ccabeea8c11862c7b79a`.
 - Native base: `a7847eae82aaac32175c9a7d199673d5c9323bcd`.
-- DLL SHA-256: `26ae27a7019ac6aec64c7560071e8e4d8d97738c2794c29398519353235b8fbe`.
-- Development ZIP SHA-256: `0f831c0b84475acfb6cf791dd98514ed802d29efc975dce1f36eb8f89292bc93`.
-- [Windows verification run](https://github.com/wunderay/XXMI-Launcher/actions/runs/40146131131).
-- [Archive, build record, hashes and native Git bundle](../../development-builds/prepared-loading/626775cad8a2/).
+- DLL SHA-256: `c9c9fbf5e3e3f0e5e2c35b3b836542c6d0303aeed240e0c6a2d8c6ace8ccc2a2`.
+- Development ZIP SHA-256: `515ce80659a302b92cfafb53050d64f9b46d402f26aa3aa9f23b94bf48c29243`.
+- [Native Windows verification job](https://github.com/wunderay/XXMI-Launcher/actions/runs/40180466047/job/121130237883).
+- [Archive, build record, hashes and native Git bundle](../../development-builds/prepared-loading/4599c694c23c/).
 
 ## Implemented
 
@@ -38,7 +38,7 @@ multiline control flow; formatting-only passes preserved C++ tokens.
 
 ## Completed verification
 
-- All **71 Windows launcher tests passed**, including actual DPAPI, protected
+- All **77 Windows launcher tests passed**, including actual DPAPI, protected
   handle staging/recovery, Toolhelp and variable-length Unicode rename cases.
 - Native CPU, configuration, memory, notification, working-set, tracing, GPU and
   status suites passed. Actual SDK shader checks cover DEBUG cache retention,
@@ -55,10 +55,55 @@ multiline control flow; formatting-only passes preserved C++ tokens.
 - Independent Runtime, metadata and launcher reviews reproduced, fixed and
   rechecked the ownership, source/retirement, expression, memory and package
   provenance defects found during implementation.
-- The downloaded artifact matched every one of **2,152 tracked native source
+- The downloaded artifact matched every one of **2,156 tracked native source
   files**, plus the generated version header. DLL, patch, source archive,
   commit/tree and workflow identities matched. The native Git bundle verifies
   against the pinned public base.
+
+## Astraea review remediation
+
+- P1: restored the original 16-byte version 1 ShaderRegex cache layout with a
+  separately persisted regex hash. The loader compares that field with the
+  current configuration before NO_MATCH, group linking or cached bytecode use.
+  The shared production validator rejects stale hashes, malformed candidate
+  layouts (including hash 0/1 aliases), invalid lengths and count overflow.
+  This cache path remains validated when prepared loading is off.
+- P2: acceptance now requires the canonical SHA-256 of the complete evidence
+  manifest excluding only its top-level review reference. This binds both full
+  run/capture records, paired conditions, scenarios, recovery and release
+  coverage. The reported baseline 10-to-12 ms rewrite with a fixed 12 ms candidate
+  rejects the unchanged review; fresh-review controls pass.
+- A separate source reviewer found no P1/P2 issues in the remediations. The
+  production regex-validator test passes on Linux and MSVC; all 20 qualification
+  tests pass within the 77-test Windows suite. This is source/test review,
+  not independent human visual or release acceptance.
+
+## Runnable launcher
+
+[Download and run instructions](../../development-builds/launcher/cef37d86a1da/)
+provide a complete portable launcher: extract, open the folder and double-click
+`XXMI Launcher.exe`. Python, PowerShell and build tools are not runtime
+requirements. Shortcuts use the executable's actual directory, supporting both
+this layout and the original installed layout.
+
+[The final Windows EXE build/smoke passed](https://github.com/wunderay/XXMI-Launcher/actions/runs/40181635989)
+at source `cef37d86a1dafe40c9c807e0d1c704833d105083`. It tests the exact
+extracted EXE with developer tools removed from PATH: imports, hidden CTk/Tkhtml,
+native runtimes, themes, localization, image decoding, PE version and integrity.
+The downloaded ZIP SHA-256 is
+`afc9156ac0b94fa0880ef306c60c1b0a30ff8946f17cbe78830a9b1e743c9637`;
+all 1,801 packaged file hashes and the clean source-input record were verified.
+
+The native and 77-test Windows jobs passed at `b3b5a7b8bea6c249ae7b63cdc6feed5fa8263434`
+in run 40180466047. Later packaging-only runs reuse those unchanged native and
+prepared-lifecycle/qualification inputs. The final shortcut-path change was
+separately reviewed and included in the final EXE build. The final packaging-only
+run explicitly skips those reused jobs; it is not a fresh execution of all tests.
+
+The launcher is unsigned and does not include or authorize a native DLL.
+Experimental prepared-loading controls retain the authorized signed-package
+gate. The packaging smoke never constructs the normal Application or launches
+a game; normal user startup can access the network and save configuration.
 
 ## Remaining release gates
 

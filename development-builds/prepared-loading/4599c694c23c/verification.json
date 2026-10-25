@@ -1,0 +1,10 @@
+{
+  "native_source": "4599c694c23c7dfe0a62e40a2878b07985cdc521",
+  "native_tree": "2c35a0dc33f5be79d515ccabeea8c11862c7b79a",
+  "native_base": "a7847eae82aaac32175c9a7d199673d5c9323bcd",
+  "dll_sha256": "c9c9fbf5e3e3f0e5e2c35b3b836542c6d0303aeed240e0c6a2d8c6ace8ccc2a2",
+  "artifact_sha256": "515ce80659a302b92cfafb53050d64f9b46d402f26aa3aa9f23b94bf48c29243",
+  "source_bundle_sha256": "0f3127a2b90c37ada34329ef803e40e90eb9e7c70a55b0422da3861266e55df4",
+  "workflow_run": "https://github.com/wunderay/XXMI-Launcher/actions/runs/40180466047",
+  "qualification": "Synthetic Windows validation only; actual game and release qualification pending"
+}

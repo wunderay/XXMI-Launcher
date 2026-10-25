@@ -1,5 +1,8 @@
 # Prepared loading development candidate
 
+Superseded by [4599c694c23c](../4599c694c23c/), which fixes a persisted
+ShaderRegex cache regression. This older archive is retained unchanged.
+
 Native source: `626775cad8a2f3a2e1dc1056c437ffa60bd78899`. Native tree: `a7320f0a76ee0be0f3153d731d81532ed49d418f`.
 
 The development ZIP contains the production DLL, exact source archive, patch,

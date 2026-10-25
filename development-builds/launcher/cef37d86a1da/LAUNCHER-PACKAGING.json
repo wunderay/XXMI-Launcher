@@ -1,0 +1,11 @@
+{
+    "archive": "XXMI-Launcher-development-win-x64.zip",
+    "sha256": "afc9156ac0b94fa0880ef306c60c1b0a30ff8946f17cbe78830a9b1e743c9637",
+    "smoke_test": "passed: extracted exe; offline hidden GUI, Tcl/Tkhtml, imports, localization, image, version, file integrity; no bundle writes",
+    "normal_application_started": false,
+    "game_tested": false,
+    "self_test_result": {
+        "format": 1,
+        "passed": true
+    }
+}
