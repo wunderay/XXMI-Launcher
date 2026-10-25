@@ -16,6 +16,11 @@ on:
       - 'tests/test_prepared*.py'
       - '.github/workflows/prepared-loading-checks.yml'
   workflow_dispatch:
+    inputs:
+      launcher_package_only:
+        description: 'Rebuild only the portable launcher when native and test inputs are unchanged'
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -52,6 +57,7 @@ jobs:
             work/launcher-package/LAUNCHER-SELF-TEST.json
           if-no-files-found: warn
   launcher-windows:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.launcher_package_only }}
     runs-on: windows-2022
     timeout-minutes: 10
     steps:
@@ -75,6 +81,7 @@ jobs:
           python -m unittest discover -s tests -p 'test_prepared*.py' -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   native-windows:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.launcher_package_only }}
     runs-on: windows-2022
     timeout-minutes: 35
     steps:

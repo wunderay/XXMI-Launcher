@@ -70,7 +70,7 @@ def main() -> None:
         extracted = smoke / 'XXMI Launcher'
         before = file_hashes(extracted)
         environment = dict(os.environ)
-        environment['PATH'] = str(Path(environment['SystemRoot']) / 'System32')
+        environment['PATH'] = str(Path(os.environ['SystemRoot']) / 'System32')
         environment.pop('PYTHONPATH', None)
         environment.pop('PYTHONHOME', None)
         result_path = smoke / 'launcher-self-test.json'
