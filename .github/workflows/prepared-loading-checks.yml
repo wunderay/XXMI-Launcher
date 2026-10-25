@@ -7,10 +7,12 @@ on:
       - 'tools/PreparedLoading/native-candidate.json'
       - 'tools/PreparedLoading/*.py'
       - 'tools/PreparedLoading/*.ps1'
-      - 'src/xxmi_launcher/core/prepared_loading.py'
-      - 'src/xxmi_launcher/core/prepared_release.py'
-      - 'src/xxmi_launcher/core/packages/migoto_package.py'
-      - 'src/xxmi_launcher/gui/windows/settings/frames/importer_settings_frame.py'
+      - 'tools/PreparedLoading/launcher.spec'
+      - 'tools/PreparedLoading/launcher-version.txt'
+      - 'src/xxmi_launcher/**'
+      - 'requirements.txt'
+      - 'Themes/**'
+      - 'Locale/**'
       - 'tests/test_prepared*.py'
       - '.github/workflows/prepared-loading-checks.yml'
   workflow_dispatch:
@@ -20,6 +22,35 @@ concurrency:
   group: prepared-loading-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  launcher-portable:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Build portable launcher and test extracted executable
+        shell: pwsh
+        run: |
+          $fixtureTemp = Join-Path $env:GITHUB_WORKSPACE 'work\launcher-portable-temp'
+          New-Item -ItemType Directory -Force $fixtureTemp | Out-Null
+          $env:TEMP = $fixtureTemp
+          $env:TMP = $fixtureTemp
+          & ./tools/PreparedLoading/build-launcher.ps1 -OutputDirectory ./work/launcher-package
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xxmi-launcher-portable-development
+          path: |
+            work/launcher-package/XXMI-Launcher-development-win-x64.zip
+            work/launcher-package/LAUNCHER-PACKAGING.json
+            work/launcher-package/LAUNCHER-SELF-TEST.json
+          if-no-files-found: warn
   launcher-windows:
     runs-on: windows-2022
     timeout-minutes: 10

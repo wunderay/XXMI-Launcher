@@ -16997,10 +16997,16 @@ index 2097f910a892d098519f2a97f1b4a3dc2cb2a4a7..1fbb41ef304a1b5fc0d72e255981c3dc
  	std::vector<TextureOverride*> fuzzy_matches;
  };
 diff --git a/DirectX11/ShaderRegex.cpp b/DirectX11/ShaderRegex.cpp
-index 49d3e2fe77959238d58ac03521bd1a6838186182..2245929f258e74950c216dee6cc3f5ee887dea7b 100644
+index 49d3e2fe77959238d58ac03521bd1a6838186182..b73e82c1cc19fd5eaf5966892224abdcb7dabda0 100644
 --- a/DirectX11/ShaderRegex.cpp
 +++ b/DirectX11/ShaderRegex.cpp
-@@ -6,9 +6,9 @@
+@@ -1,4 +1,5 @@
+ #include "ShaderRegex.h"
++#include "ShaderRegexCache.h"
+ #include "CommandList.h"
+ #include "globals.h" // For ShaderOverride FIXME: This should be in a separate header
+ #include "log.h"
+@@ -6,9 +7,9 @@
  #include <algorithm>
  #include <iterator>
  
@@ -17013,7 +17019,7 @@ index 49d3e2fe77959238d58ac03521bd1a6838186182..2245929f258e74950c216dee6cc3f5ee
  
  static void log_pcre2_error_nonl(int err, char *fmt, ...)
  {
-@@ -365,6 +365,7 @@ void ShaderRegexGroup::apply_regex_patterns(std::string *asm_text, bool *match,
+@@ -365,6 +366,7 @@ void ShaderRegexGroup::apply_regex_patterns(std::string *asm_text, bool *match,
  
  void ShaderRegexGroup::link_command_lists_and_filter_index(UINT64 shader_hash)
  {
@@ -17021,7 +17027,7 @@ index 49d3e2fe77959238d58ac03521bd1a6838186182..2245929f258e74950c216dee6cc3f5ee
  	ShaderOverride *shader_override = NULL;
  	wstring ini_section, ini_line;
  	CommandList::Commands::reverse_iterator i;
-@@ -376,7 +377,7 @@ void ShaderRegexGroup::link_command_lists_and_filter_index(UINT64 shader_hash)
+@@ -376,7 +378,7 @@ void ShaderRegexGroup::link_command_lists_and_filter_index(UINT64 shader_hash)
  	if (command_list.noop() && post_command_list.noop() && filter_index == FLT_MAX)
  		return;
  
@@ -17030,7 +17036,7 @@ index 49d3e2fe77959238d58ac03521bd1a6838186182..2245929f258e74950c216dee6cc3f5ee
  
  	// Initialise the ShaderOverride's command lists if they aren't already:
  	if (shader_override->command_list.ini_section.empty()) {
-@@ -427,13 +428,14 @@ void ShaderRegexGroup::link_command_lists_and_filter_index(UINT64 shader_hash)
+@@ -427,13 +429,14 @@ void ShaderRegexGroup::link_command_lists_and_filter_index(UINT64 shader_hash)
  
  bool unlink_shader_regex_command_lists_and_filter_index(UINT64 shader_hash)
  {
@@ -17047,23 +17053,38 @@ index 49d3e2fe77959238d58ac03521bd1a6838186182..2245929f258e74950c216dee6cc3f5ee
  		return false;
  
  	shader_override = &shader_override_i->second;
-@@ -469,13 +471,14 @@ bool unlink_shader_regex_command_lists_and_filter_index(UINT64 shader_hash)
- #define SHADER_REGEX_CACHE_VERSION 1
- struct ShaderRegexCacheHeader {
- 	uint32_t version;
--	uint32_t shader_regex_hash;
-+	uint32_t& ConfigRegexHash() { return ConfigState().regexHash; }
- 	uint32_t patched;
- 	uint32_t num_matches;
- };
+@@ -466,16 +469,9 @@ bool unlink_shader_regex_command_lists_and_filter_index(UINT64 shader_hash)
+ 	return ret;
+ }
  
+-#define SHADER_REGEX_CACHE_VERSION 1
+-struct ShaderRegexCacheHeader {
+-	uint32_t version;
+-	uint32_t shader_regex_hash;
+-	uint32_t patched;
+-	uint32_t num_matches;
+-};
+-
  ShaderRegexCache load_shader_regex_cache(UINT64 hash, const wchar_t *shader_type, vector<byte> *bytecode, std::wstring *tagline)
  {
 +	ConfigReadScope configuration_scope;
  	ShaderRegexCache ret = ShaderRegexCache::NO_CACHE;
  	HANDLE meta_f = INVALID_HANDLE_VALUE;
  	HANDLE bin_f = INVALID_HANDLE_VALUE;
-@@ -566,6 +569,7 @@ out:
+@@ -506,11 +502,7 @@ ShaderRegexCache load_shader_regex_cache(UINT64 hash, const wchar_t *shader_type
+ 	header = (ShaderRegexCacheHeader*)buf;
+ 	match_ids = (uint32_t*)(buf + sizeof(ShaderRegexCacheHeader));
+ 
+-	if (header->version != SHADER_REGEX_CACHE_VERSION
+-	 || header->shader_regex_hash != shader_regex_hash)
+-		goto out;
+-
+-	if (size != sizeof(ShaderRegexCacheHeader) + header->num_matches * sizeof(uint32_t))
++	if (!valid_shader_regex_cache_header(*header, size, ConfigRegexHash()))
+ 		goto out;
+ 
+ 	// num_matches may be 0, which means the ShaderRegex didn't match the
+@@ -566,6 +558,7 @@ out:
  static void save_shader_regex_cache_meta(UINT64 hash, const wchar_t *shader_type, vector<uint32_t> *match_ids,
  		bool patched, std::string *asm_text, std::wstring *tagline)
  {
@@ -17071,7 +17092,16 @@ index 49d3e2fe77959238d58ac03521bd1a6838186182..2245929f258e74950c216dee6cc3f5ee
  	ShaderRegexCacheHeader header;
  	wchar_t path[MAX_PATH];
  	FILE *f = NULL;
-@@ -720,6 +724,7 @@ bool get_shader_model_from_bytecode(const void* data, size_t size, std::string*
+@@ -596,7 +589,7 @@ static void save_shader_regex_cache_meta(UINT64 hash, const wchar_t *shader_type
+ 			return;
+ 
+ 		header.version = SHADER_REGEX_CACHE_VERSION;
+-		header.shader_regex_hash = shader_regex_hash;
++		header.regex_hash = ConfigRegexHash();
+ 		header.patched = patched;
+ 		header.num_matches = (uint32_t)match_ids->size();
+ 		fwrite(&header, 1, sizeof(ShaderRegexCacheHeader), f);
+@@ -720,6 +713,7 @@ bool get_shader_model_from_bytecode(const void* data, size_t size, std::string*
  // Process groups that do not have patches to apply. Those can be handled without disassembly.
  void link_shader_regex_groups_without_patterns(const wchar_t* shader_type, std::string* shader_model, UINT64 hash, bool* decompilation_required)
  {
@@ -17079,7 +17109,7 @@ index 49d3e2fe77959238d58ac03521bd1a6838186182..2245929f258e74950c216dee6cc3f5ee
  	ShaderRegexGroups::iterator i;
  	vector<uint32_t> match_ids;
  	vector<ShaderRegexGroup*> match_groups;
-@@ -762,6 +767,7 @@ void link_shader_regex_groups_without_patterns(const wchar_t* shader_type, std::
+@@ -762,6 +756,7 @@ void link_shader_regex_groups_without_patterns(const wchar_t* shader_type, std::
  
  bool apply_shader_regex_groups(std::string *asm_text, const wchar_t *shader_type, std::string *shader_model, UINT64 hash, std::wstring *tagline)
  {
@@ -17107,6 +17137,45 @@ index ab81d43311a29ee317acb3c60974092b2af87c27..7e10d3a2ce40d70a45b43c5cabced266
 -extern uint32_t shader_regex_hash;
 +uint32_t& ConfigRegexHash();
 +#define shader_regex_hash ConfigRegexHash()
+diff --git a/DirectX11/ShaderRegexCache.h b/DirectX11/ShaderRegexCache.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..0c6506f8ef2e628293a7a4a4443a96f8d131cf43
+--- /dev/null
++++ b/DirectX11/ShaderRegexCache.h
+@@ -0,0 +1,33 @@
++#pragma once
++
++#include <cstddef>
++#include <cstdint>
++
++#define SHADER_REGEX_CACHE_VERSION 1
++
++struct ShaderRegexCacheHeader {
++	uint32_t version;
++	// Keep the persisted hash distinct from the current configuration accessor.
++	uint32_t regex_hash;
++	uint32_t patched;
++	uint32_t num_matches;
++};
++
++static_assert(sizeof(ShaderRegexCacheHeader) == 16, "ShaderRegex cache version 1 header must remain 16 bytes");
++
++inline bool valid_shader_regex_cache_header(const ShaderRegexCacheHeader &header, size_t size, uint32_t current_regex_hash)
++{
++	if (header.version != SHADER_REGEX_CACHE_VERSION
++	 || header.regex_hash != current_regex_hash
++	 || size < sizeof(ShaderRegexCacheHeader))
++		return false;
++
++	// The writer stores a bool and can only patch a shader after a match.
++	// These also reject hashless candidate caches when the current hash is 0/1.
++	if (header.patched > 1 || (header.patched && !header.num_matches))
++		return false;
++
++	const size_t matches_size = size - sizeof(ShaderRegexCacheHeader);
++	return matches_size % sizeof(uint32_t) == 0
++		&& matches_size / sizeof(uint32_t) == header.num_matches;
++}
 diff --git a/DirectX11/globals.h b/DirectX11/globals.h
 index 7667daec284911c21e1c5ac4defad1fea12ba06d..086aedd81d0a08ae275a608b577c9b76efd9519a 100644
 --- a/DirectX11/globals.h
@@ -22200,3 +22269,126 @@ index 0000000000000000000000000000000000000000..223d119798e089e3ba0e6977004be249
 +    assert(!bounded.Selection().Complete());
 +    std::cout << "working_set: dependency closure, cancellation, actual co-use and bounded learning passed\n";
 +}
+diff --git a/tests/shader_regex_cache/README.md b/tests/shader_regex_cache/README.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..e1500b3eac6d242ddadf065134959dde918e4037
+--- /dev/null
++++ b/tests/shader_regex_cache/README.md
+@@ -0,0 +1,3 @@
++Run `bash tests/shader_regex_cache/run.sh` on a C++14 host. The test includes the production persisted header and metadata validator used by `load_shader_regex_cache`, with the configuration hash macro active as it is in `ShaderRegex.cpp`.
++
++It verifies the original 16-byte version 1 layout, valid NO_MATCH/matched/patched metadata, hash changes for all three cases, the malformed candidate format that omitted the hash (including current hashes 0/1), and invalid version/payload lengths including match-count overflow. The validator retains the original writer's invariants: `patched` stores a bool, and a patched cache has at least one match. The production loader applies this validator before returning NO_MATCH, linking groups, or loading cached patched bytecode. This portable test does not execute Windows file I/O, command lists, or D3D11.
+diff --git a/tests/shader_regex_cache/main.cpp b/tests/shader_regex_cache/main.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..47b27e523ff5ed9cf0ac5699f0fafcceb392662d
+--- /dev/null
++++ b/tests/shader_regex_cache/main.cpp
+@@ -0,0 +1,94 @@
++#include <cstddef>
++#include <cstdint>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <limits>
++
++// ShaderRegex.h defines this before ShaderRegex.cpp includes the cache header.
++// A persisted field must not be rewritten into the configuration accessor.
++#define shader_regex_hash ConfigRegexHash()
++#include "ShaderRegexCache.h"
++
++static void require(bool condition, const char *message)
++{
++	if (!condition) {
++		std::fprintf(stderr, "%s\n", message);
++		std::exit(1);
++	}
++}
++
++template <size_t N>
++static bool valid_fixture(const uint32_t (&words)[N], uint32_t current_hash)
++{
++	ShaderRegexCacheHeader header = {};
++	std::memcpy(&header, words, sizeof(words) < sizeof(header) ? sizeof(words) : sizeof(header));
++	return valid_shader_regex_cache_header(header, sizeof(words), current_hash);
++}
++
++int main()
++{
++	const uint32_t original_hash = 0x12345678;
++	const uint32_t changed_hash = 0x87654321;
++
++	// Original version 1 disk format: version, regex hash, patched, count, ids.
++	const uint32_t no_match[] = { 1, original_hash, 0, 0 };
++	const uint32_t match[] = { 1, original_hash, 0, 1, 7 };
++	const uint32_t patch[] = { 1, original_hash, 1, 2, 7, 9 };
++	require(valid_fixture(no_match, original_hash), "Original NO_MATCH cache rejected");
++	require(valid_fixture(match, original_hash), "Original matched cache rejected");
++	require(valid_fixture(patch, original_hash), "Original patched cache rejected");
++	require(!valid_fixture(no_match, changed_hash), "Changed regex reused NO_MATCH cache");
++	require(!valid_fixture(match, changed_hash), "Changed regex reused group metadata");
++	require(!valid_fixture(patch, changed_hash), "Changed regex reused patched bytecode metadata");
++
++	// The broken candidate omitted the persisted hash without changing version.
++	const uint32_t broken_no_match[] = { 1, 0, 0 };
++	const uint32_t broken_match[] = { 1, 0, 1, 7 };
++	const uint32_t broken_patch[] = { 1, 1, 2, 7, 9 };
++	require(!valid_fixture(broken_no_match, original_hash), "12-byte candidate header accepted");
++	require(!valid_fixture(broken_match, original_hash), "Candidate matched metadata accepted");
++	require(!valid_fixture(broken_patch, original_hash), "Candidate patched metadata accepted");
++
++	// A candidate's bool can alias the restored hash when the current hash is
++	// 0 or 1. The original writer's flag/count invariants disambiguate it.
++	for (uint32_t small_hash = 0; small_hash <= 1; small_hash++) {
++		const uint32_t valid_no_match[] = { 1, small_hash, 0, 0 };
++		const uint32_t valid_match[] = { 1, small_hash, 0, 1, 0 };
++		const uint32_t valid_patch[] = { 1, small_hash, 1, 1, 0 };
++		const uint32_t aliased_one_match[] = { 1, small_hash, 1, 0 };
++		const uint32_t aliased_two_matches[] = { 1, small_hash, 2, 1, 0 };
++		require(valid_fixture(valid_no_match, small_hash), "Original small-hash NO_MATCH cache rejected");
++		require(valid_fixture(valid_match, small_hash), "Original small-hash matched cache rejected");
++		require(valid_fixture(valid_patch, small_hash), "Original small-hash patched cache rejected");
++		require(!valid_fixture(aliased_one_match, small_hash), "Candidate matched cache aliases empty patched cache");
++		require(!valid_fixture(aliased_two_matches, small_hash), "Candidate match count aliases patched flag");
++	}
++
++	const uint32_t truncated[] = { 1, original_hash, 0, 1 };
++	const uint32_t trailing[] = { 1, original_hash, 0, 0, 7 };
++	const uint32_t wrong_version[] = { 2, original_hash, 0, 0 };
++	const uint32_t overflow_count[] = { 1, original_hash, 1, 0x40000000 };
++	require(!valid_fixture(truncated, original_hash), "Truncated match list accepted");
++	require(!valid_fixture(trailing, original_hash), "Trailing match data accepted");
++	require(!valid_fixture(wrong_version, original_hash), "Unknown cache version accepted");
++	require(!valid_fixture(overflow_count, original_hash), "Overflowed match count accepted");
++
++	ShaderRegexCacheHeader header = { 1, original_hash, 0, 0 };
++	require(offsetof(ShaderRegexCacheHeader, regex_hash) == 4, "Persisted hash moved");
++	require(offsetof(ShaderRegexCacheHeader, patched) == 8, "Patched flag moved");
++	require(offsetof(ShaderRegexCacheHeader, num_matches) == 12, "Match count moved");
++	require(!valid_shader_regex_cache_header(header, sizeof(header) + 1, original_hash),
++		"Partial match id accepted");
++	header.regex_hash = changed_hash;
++	require(!valid_shader_regex_cache_header(header, sizeof(header), original_hash),
++		"Persisted hash was replaced by current configuration hash");
++	require(valid_shader_regex_cache_header(header, sizeof(header), changed_hash),
++		"Current generation's cache rejected");
++	header.num_matches = std::numeric_limits<uint32_t>::max();
++	require(!valid_shader_regex_cache_header(header, sizeof(header), changed_hash),
++		"Maximum match count wrapped to an empty payload");
++
++	std::puts("ShaderRegex cache format/hash regression tests passed");
++	return 0;
++}
+diff --git a/tests/shader_regex_cache/run.sh b/tests/shader_regex_cache/run.sh
+new file mode 100755
+index 0000000000000000000000000000000000000000..819d69f427cb3601d5648357742cbff3cc180689
+--- /dev/null
++++ b/tests/shader_regex_cache/run.sh
+@@ -0,0 +1,8 @@
++#!/usr/bin/env bash
++set -euo pipefail
++root="$(cd "$(dirname "$0")/../.." && pwd)"
++build="$(mktemp -d)"
++trap 'rm -rf "$build"' EXIT
++c++ -std=c++14 -Wall -Wextra -Werror -I "$root/DirectX11" \
++ "$root/tests/shader_regex_cache/main.cpp" -o "$build/test"
++"$build/test"

@@ -1,7 +1,7 @@
 {
-  "purpose": "Reviewed development candidate; full Windows and actual-game qualification gates apply",
-  "native_parent": "626775cad8a2f3a2e1dc1056c437ffa60bd78899",
-  "native_tree": "a7320f0a76ee0be0f3153d731d81532ed49d418f",
+  "purpose": "Reviewed ShaderRegex remediation candidate; full Windows and actual-game qualification gates apply",
+  "native_parent": "4599c694c23c7dfe0a62e40a2878b07985cdc521",
+  "native_tree": "2c35a0dc33f5be79d515ccabeea8c11862c7b79a",
   "native_base": "a7847eae82aaac32175c9a7d199673d5c9323bcd",
-  "patch_sha256": "20aedb0816ab2e2b399f90947d20d4749d80b525ccf1f5148e3235b8e48b86c6"
+  "patch_sha256": "6a3245241793d780301ab189af476b6d3268bca53bb04b0d36a2846eabee8121"
 }

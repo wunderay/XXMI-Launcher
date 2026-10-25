@@ -55,7 +55,8 @@
       "$ref": "#/$defs/artifact"
     },
     "review": {
-      "$ref": "#/$defs/artifact"
+      "$ref": "#/$defs/artifact",
+      "description": "Referenced JSON must satisfy review.schema.json, including evidence_sha256 binding the entire manifest except this top-level review reference."
     },
     "release_coverage": {
       "$ref": "#/$defs/artifact"

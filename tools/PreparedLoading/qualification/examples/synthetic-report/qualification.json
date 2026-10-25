@@ -55,7 +55,7 @@
     "Qualification applies only to the exact importer/version, scenarios and conditions listed. No publisher signing or release authorization is performed."
   ],
   "origin": "synthetic-test",
-  "manifest_sha256": "30d536d89ab1bbd80f44227652952ecccc3426514e68791dcb280e0bc3a91052",
+  "manifest_sha256": "ec6e406ce6cd97493a5755599b3b0c4335a7486f01d61b517b11b875dca61849",
   "verified_artifacts": {
     "baseline.source": "e04cdcb6ffb336d874c58817da7cfe8a58f45cb6541aac7b53c910b6797daf03",
     "baseline.patch": "60450789dea8d3c35ffaaa6c90fa3b27406a7e9f63bb807452e9f72f18a9fcbe",
@@ -79,6 +79,6 @@
     "recovery.json": "24deff7b3ba0648ca3c69875756ffa637e160a34d30e40ab415a33fea2197592",
     "recovery.jsonl": "602ff5ae5618c365e298f8551cff83c18c37567528f883dd79cacdfdb3ccb61a",
     "recovery.raw": "0c80cb94ff99dc3482f59735676bbf572e56585c651fe15d4cb5f1663e882ca2",
-    "review.json": "d7b50e6b9ab0c54140ca3e29be97188ab11209d790c564241a864dc60cd249a0"
+    "review.json": "cf67984628497a4615050ed5456c2bb7b1e82d16bbf7b3c619f1ddacf9317b88"
   }
 }

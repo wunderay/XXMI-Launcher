@@ -80,8 +80,12 @@ class QualificationTests(unittest.TestCase):
             scenarios=['outfit-toggle'], candidate_dll_sha256=runs[1]['dll']['sha256'],
             baseline_dll_sha256=runs[0]['dll']['sha256'], samples_sha256=runs[1]['samples']['sha256'],
             trace_sha256=runs[1]['trace']['sha256'], recovery_sha256=recovery['sha256']))
-        return dict(schema_version=1, origin='synthetic-test', baseline=runs[0], candidate=runs[1],
-                    scenarios=[dict(name='outfit-toggle', cache_state='warm-gpu')], recovery=recovery, review=review)
+        manifest = dict(schema_version=1, origin='synthetic-test', baseline=runs[0], candidate=runs[1],
+                        scenarios=[dict(name='outfit-toggle', cache_state='warm-gpu')], recovery=recovery, review=review)
+        record = json.loads((self.root / review['path']).read_text())
+        record['evidence_sha256'] = q.review_evidence_sha256(manifest)
+        manifest['review'] = self.artifact(review['path'], record)
+        return manifest
 
     def evaluate(self):
         path = self.root / 'manifest.json'
@@ -95,6 +99,28 @@ class QualificationTests(unittest.TestCase):
 
     def issues(self, report):
         return ' '.join(g['name'] for g in report['gates'])
+
+    def refresh_review(self):
+        ref = self.manifest['review']
+        review = json.loads((self.root / ref['path']).read_text())
+        baseline, candidate = self.manifest['baseline'], self.manifest['candidate']
+        review.update(origin=self.manifest['origin'],
+            evidence_sha256=q.review_evidence_sha256(self.manifest),
+            baseline_dll_sha256=baseline['dll']['sha256'], candidate_dll_sha256=candidate['dll']['sha256'],
+            samples_sha256=candidate['samples']['sha256'], trace_sha256=candidate['trace']['sha256'],
+            recovery_sha256=self.manifest['recovery']['sha256'],
+            scenarios=[scenario['name'] for scenario in self.manifest['scenarios']])
+        if 'release_coverage' in self.manifest:
+            review['release_coverage_sha256'] = self.manifest['release_coverage']['sha256']
+        self.manifest['review'] = self.artifact(ref['path'], review)
+
+    def mock_actual_origin(self):
+        # Exercise acceptance paths with synthetic bytes; never real evidence.
+        self.manifest['origin'] = 'actual-game'
+        for run in (self.manifest['baseline'], self.manifest['candidate']):
+            self.replace_artifact(run, 'capture', lambda x: x.replace('synthetic-test', 'actual-game'))
+        self.replace_artifact(self.manifest, 'recovery', lambda x: x.replace('synthetic-test', 'actual-game'))
+        self.refresh_review()
 
     def test_valid_synthetic_fixture_diagnostic_only(self):
         report = self.evaluate()
@@ -193,6 +219,136 @@ class QualificationTests(unittest.TestCase):
         capture.update(samples_sha256=run['samples']['sha256'], trace_sha256=run['trace']['sha256'])
         run['capture'] = self.artifact(ref['path'], capture)
 
+    def set_frame_ms(self, name, value):
+        run = self.manifest[name]
+        rows = list(csv.reader((self.root / run['samples']['path']).read_text().splitlines()))
+        for row in rows[1:]:
+            row[q.COLUMNS.index('frame_ms')] = str(value)
+        out = io.StringIO()
+        csv.writer(out, lineterminator='\n').writerows(rows)
+        run['samples'] = self.artifact(run['samples']['path'], out.getvalue())
+        self.refresh_capture(run)
+
+    def test_baseline_rewrite_cannot_reuse_review_to_flip_failed_performance(self):
+        self.mock_actual_origin()
+        self.set_frame_ms('candidate', 12)
+        self.refresh_review()
+        self.assertIn('paired added frame p99 exceeds 1 ms', self.issues(self.evaluate()))
+        original_review = dict(self.manifest['review'])
+        self.set_frame_ms('baseline', 12)
+        report = self.evaluate()
+        self.assertEqual(self.manifest['review'], original_review)
+        self.assertEqual(report['scenarios'][0]['paired_added_frame_ms']['p99'], 0)
+        self.assertIn('review evidence mismatch', self.issues(report))
+        self.assertFalse(report['prepared_optimization_qualified'])
+        self.assertFalse(report['release_qualified'])
+        self.refresh_review()
+        self.assertTrue(self.evaluate()['prepared_optimization_qualified'])
+
+    def test_review_binds_both_complete_runs_and_capture_records(self):
+        for name in ('baseline', 'candidate'):
+            for field in ('samples', 'trace', 'capture', 'compiler'):
+                with self.subTest(run=name, field=field):
+                    self.manifest = self.fixture()
+                    self.mock_actual_origin()
+                    original_review = dict(self.manifest['review'])
+                    run = self.manifest[name]
+                    if field == 'samples':
+                        self.set_frame_ms(name, 10.2)
+                    elif field == 'trace':
+                        self.replace_artifact(run, field, lambda x: x.replace(',1,1,0,1,', ',1,2,0,1,'))
+                        self.refresh_capture(run)
+                    elif field == 'capture':
+                        self.replace_artifact(run, field, lambda x: x.replace('synthetic generator', 'revised generator'))
+                    else:
+                        self.replace_artifact(run, field, lambda x: x.replace('/synthetic', '/revised'))
+                    report = self.evaluate()
+                    self.assertTrue(report['diagnostic_collection_pass'], report)
+                    self.assertEqual(self.manifest['review'], original_review)
+                    self.assertIn('review evidence mismatch', self.issues(report))
+                    self.assertFalse(report['prepared_optimization_qualified'])
+                    self.refresh_review()
+                    self.assertTrue(self.evaluate()['prepared_optimization_qualified'])
+
+    def test_review_binds_shared_conditions_and_scenario_claims(self):
+        for field in (*q.CONDITIONS[1:], 'scenarios'):
+            with self.subTest(field=field):
+                self.manifest = self.fixture()
+                self.mock_actual_origin()
+                original_review = dict(self.manifest['review'])
+                if field == 'scenarios':
+                    self.manifest['scenarios'][0]['name'] = 'character-revisit'
+                    for name in ('baseline', 'candidate'):
+                        run = self.manifest[name]
+                        self.replace_artifact(run, 'samples', lambda x: x.replace('outfit-toggle', 'character-revisit'))
+                        self.refresh_capture(run)
+                elif field in q.CONDITIONS[5:]:
+                    ref = self.artifact(field, 'revised synthetic ' + field)
+                    self.manifest['baseline'][field] = self.manifest['candidate'][field] = ref
+                else:
+                    self.manifest['baseline'][field] = self.manifest['candidate'][field] = 'revised synthetic'
+                report = self.evaluate()
+                self.assertTrue(report['diagnostic_collection_pass'], report)
+                self.assertEqual(self.manifest['review'], original_review)
+                self.assertIn('review evidence mismatch', self.issues(report))
+                self.assertFalse(report['prepared_optimization_qualified'])
+                self.refresh_review()
+                self.assertTrue(self.evaluate()['prepared_optimization_qualified'])
+
+    def test_review_binds_recovery_and_release_coverage_inputs(self):
+        for field in ('recovery', 'release_coverage'):
+            with self.subTest(field=field):
+                self.manifest = self.fixture()
+                self.mock_actual_origin()
+                original_review = dict(self.manifest['review'])
+                if field == 'recovery':
+                    self.replace_artifact(self.manifest, field, lambda x: x.replace('recovery.raw', 'revised.raw'))
+                    (self.root / 'revised.raw').write_bytes((self.root / 'recovery.raw').read_bytes())
+                else:
+                    self.manifest[field] = self.artifact('coverage.json', dict(origin='actual-game',
+                        candidate_dll_sha256=self.manifest['candidate']['dll']['sha256'], cases={}))
+                report = self.evaluate()
+                self.assertEqual(self.manifest['review'], original_review)
+                self.assertIn('review evidence mismatch', self.issues(report))
+                self.assertFalse(report['prepared_optimization_qualified'])
+                self.refresh_review()
+                self.assertTrue(self.evaluate()['prepared_optimization_qualified'])
+
+    def test_review_digest_is_required_and_non_circular(self):
+        self.mock_actual_origin()
+        digest = q.review_evidence_sha256(self.manifest)
+        reordered = dict(reversed(list(self.manifest.items())))
+        self.assertEqual(q.review_evidence_sha256(reordered), digest)
+        self.replace_artifact(self.manifest, 'review', lambda x: x.replace('Synthetic fixture only', 'Another mock reviewer'))
+        self.assertEqual(q.review_evidence_sha256(self.manifest), digest)
+        self.assertTrue(self.evaluate()['prepared_optimization_qualified'])
+        ref = self.manifest['review']
+        record = json.loads((self.root / ref['path']).read_text())
+        record.pop('evidence_sha256')
+        self.manifest['review'] = self.artifact(ref['path'], record)
+        self.assertIn('review evidence mismatch', self.issues(self.evaluate()))
+        self.assertFalse(self.evaluate()['prepared_optimization_qualified'])
+
+    def test_complete_mock_release_needs_fresh_review_after_coverage_edit(self):
+        self.mock_actual_origin()
+        evidence = self.artifact('release.raw', 'synthetic release observation')
+        record = dict(verdict='accept', observation='synthetic observation', conditions='synthetic conditions',
+                      reviewer='Synthetic fixture only', reviewed_utc='2026-10-24T00:03:00Z', evidence=[evidence])
+        self.manifest['release_coverage'] = self.artifact('coverage.json', dict(origin='actual-game',
+            candidate_dll_sha256=self.manifest['candidate']['dll']['sha256'],
+            cases={case: record for case in q.RELEASE_CASES}))
+        self.refresh_review()
+        self.assertTrue(self.evaluate()['release_qualified'])
+        original_review = dict(self.manifest['review'])
+        self.replace_artifact(self.manifest, 'release_coverage', lambda x: x.replace('synthetic observation', 'revised observation'))
+        report = self.evaluate()
+        self.assertEqual(self.manifest['review'], original_review)
+        self.assertIn('review evidence mismatch', self.issues(report))
+        self.assertFalse(report['prepared_optimization_qualified'])
+        self.assertFalse(report['release_qualified'])
+        self.refresh_review()
+        self.assertTrue(self.evaluate()['release_qualified'])
+
     def test_too_few_samples_and_paired_stats(self):
         for run in (self.manifest['baseline'], self.manifest['candidate']):
             self.replace_artifact(run, 'samples', lambda x: '\n'.join(x.splitlines()[:-1])+'\n')
@@ -256,14 +412,7 @@ class QualificationTests(unittest.TestCase):
     def test_mock_actual_origin_cannot_skip_full_release_matrix(self):
         # Mock metadata exercises the release branch only. This remains a
         # synthetic unit test; its return value is never published as evidence.
-        self.manifest['origin'] = 'actual-game'
-        for run in (self.manifest['baseline'], self.manifest['candidate']):
-            self.replace_artifact(run, 'capture', lambda x: x.replace('synthetic-test', 'actual-game'))
-        self.replace_artifact(self.manifest, 'recovery', lambda x: x.replace('synthetic-test', 'actual-game'))
-        ref = self.manifest['review']
-        review = json.loads((self.root/ref['path']).read_text())
-        review.update(origin='actual-game', recovery_sha256=self.manifest['recovery']['sha256'])
-        self.manifest['review'] = self.artifact(ref['path'], review)
+        self.mock_actual_origin()
         report = self.evaluate()
         self.assertTrue(report['prepared_optimization_qualified'])
         self.assertFalse(report['release_qualified'])
@@ -271,6 +420,7 @@ class QualificationTests(unittest.TestCase):
         self.assertIn('release_coverage', self.issues(report))
         self.manifest['release_coverage'] = self.artifact('coverage.json', dict(
             origin='actual-game', candidate_dll_sha256=self.manifest['candidate']['dll']['sha256'], cases={}))
+        self.refresh_review()
         report = self.evaluate()
         self.assertFalse(report['release_qualified'])
         self.assertIn('full release validation matrix pending', self.issues(report))

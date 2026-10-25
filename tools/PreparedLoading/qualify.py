@@ -61,6 +61,15 @@ def read_json(path):
     return json.loads(path.read_text(encoding='utf-8'), object_pairs_hook=unique)
 
 
+def review_evidence_sha256(manifest):
+    # Exclude only the review reference to avoid a circular digest. Artifact
+    # references bind their verified bytes, including both complete captures.
+    evidence = {key: value for key, value in manifest.items() if key != 'review'}
+    data = json.dumps(evidence, sort_keys=True, separators=(',', ':'),
+                      ensure_ascii=True, allow_nan=False).encode('utf-8')
+    return hashlib.sha256(data).hexdigest()
+
+
 class Importer:
     def __init__(self, manifest):
         self.root = manifest.parent.resolve()
@@ -312,6 +321,8 @@ def qualify(path):
         require(len(recovery['captures']) >= 1, 'missing raw recovery captures')
         review = importer.json(manifest['review'])
         require(review.get('origin') == manifest['origin'], 'review origin mismatch')
+        require(review.get('evidence_sha256') == review_evidence_sha256(manifest),
+                'review evidence mismatch: independent review must cover the complete current bundle')
         require(review['candidate_dll_sha256'] == runs[1]['dll']['sha256'], 'review candidate mismatch')
         require(review['baseline_dll_sha256'] == runs[0]['dll']['sha256'], 'review baseline mismatch')
         require(review['samples_sha256'] == runs[1]['samples']['sha256'], 'review samples mismatch')

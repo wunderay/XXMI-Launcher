@@ -21,6 +21,7 @@ function Run-NativeTest {
         $arguments = @('/nologo', "/std:$Standard", '/MT', '/EHsc', '/W4', '/WX', '/UNDEBUG',
             '/D_CRT_SECURE_NO_WARNINGS', '/DUNICODE', '/D_UNICODE',
             '/DNOMINMAX', '/DWIN32_LEAN_AND_MEAN', "/I$mod",
+            "/I$(Join-Path $native 'DirectX11')",
             "/I$(Join-Path $native 'DirectXTK\Inc')")
         $arguments += $Sources | ForEach-Object { Join-Path $native $_ }
         $arguments += $Definitions | ForEach-Object { "/D$_" }
@@ -87,6 +88,7 @@ Run-NativeTest -Name 'gpu_policy' -Sources @(
     'DirectX11\ModLoading\MemoryBudgetController.cpp'
 ) -Libraries @('d3d11.lib', 'dxgi.lib')
 Run-NativeTest -Name 'runtime_policy' -Sources @('tests\preparation_runtime\main.cpp')
+Run-NativeTest -Name 'shader_regex_cache' -Sources @('tests\shader_regex_cache\main.cpp')
 Run-NativeTest -Name 'ownership' -Sources @('tests\preparation_ownership\main.cpp') -Standard 'c++17'
 Run-NativeTest -Name 'working_set' -Sources @(
     'tests\preparation_working_set\working_set_test.cpp',
