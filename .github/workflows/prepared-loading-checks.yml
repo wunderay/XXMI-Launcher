@@ -62,6 +62,7 @@ jobs:
         if: always()
         with:
           name: xxmi-launcher-installation-payload
+          include-hidden-files: true
           path: |
             work/launcher-package/install-payload/
             work/launcher-package/LAUNCHER-PACKAGING.json
