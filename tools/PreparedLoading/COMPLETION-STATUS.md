@@ -1,20 +1,35 @@
-# Full-plan implementation and qualification status
+# Implementation and normal release status
 
-The source implementation, review remediation and automated Windows checks pass
-for this development candidate. PR #2 is ready for code review, not a draft. The full plan remains
-**release-unqualified** until real-game performance/visual evidence and authorized
-publisher signing are complete. No game was launched, no UAC was triggered,
-and no DLL was installed or deployed.
+Prepared loading is integrated into the existing launcher's ordinary library
+update, settings and recovery paths. PR #2 is ready for code review, not a draft.
+The native implementation and automated Windows checks pass for the exact
+candidate below.
 
-## Exact candidate
+**Delivery to an installed launcher remains blocked on the maintained MSI
+build/release workflow and authorized package signing.** Those are not available
+in the public source/workspace. No normal release or deployment has occurred.
+Actual-game visual/performance qualification remains open.
 
-- Native commit: `4599c694c23c7dfe0a62e40a2878b07985cdc521`.
-- Native tree: `2c35a0dc33f5be79d515ccabeea8c11862c7b79a`.
-- Native base: `a7847eae82aaac32175c9a7d199673d5c9323bcd`.
-- DLL SHA-256: `c9c9fbf5e3e3f0e5e2c35b3b836542c6d0303aeed240e0c6a2d8c6ace8ccc2a2`.
-- Development ZIP SHA-256: `515ce80659a302b92cfafb53050d64f9b46d402f26aa3aa9f23b94bf48c29243`.
-- [Native Windows verification job](https://github.com/wunderay/XXMI-Launcher/actions/runs/40180466047/job/121130237883).
-- [Archive, build record, hashes and native Git bundle](../../development-builds/prepared-loading/4599c694c23c/).
+## Current normal user flow
+
+- Install and update XXMI libraries through the existing launcher controls.
+- Configure preparation inside Importer settings when the authenticated library
+  advertises support. Unsupported or unsigned support remains disabled with a
+  reason; users do not select a development ZIP or paste metadata.
+- Use library recovery for the previous authenticated installation, or the
+  ordinary Repair action after an interrupted first install.
+
+Normal updates snapshot the old authenticated package before download changes
+its manifest. Durable barriers, fixed-root validation, protected staging and
+idle-process checks cover partial writes and recovery. Rollback preserves Mods,
+nvapi and unrelated INI edits. The existing publisher trust checks remain intact.
+
+The launcher payload uses `Resources/Bin/XXMI Launcher.exe` with the original
+root calculation, Themes and Locale. It supports a release-owner-supplied
+version. The build helper stages a payload for maintained installer/release
+integration and does not publish another standalone launcher archive. The native
+tag-package producer includes capability metadata beside the DLLs; metadata
+remains unsigned/development until the existing release owner signs it.
 
 ## Implemented
 
@@ -36,87 +51,67 @@ physical residency, rendered correctness or a hardware performance target.
 New native code follows the original repository's tab indentation and readable
 multiline control flow; formatting-only passes preserved C++ tokens.
 
-## Completed verification
+## Exact candidate and completed verification
 
-- All **77 Windows launcher tests passed**, including actual DPAPI, protected
-  handle staging/recovery, Toolhelp and variable-length Unicode rename cases.
-- Native CPU, configuration, memory, notification, working-set, tracing, GPU and
-  status suites passed. Actual SDK shader checks cover DEBUG cache retention,
-  executable/reflection equivalence, exact optimized DXBC and eight standard
-  include cases. Independently compiled DEBUG PDB metadata is nondeterministic;
-  only comparison copies are stripped, while cached bytes remain exact.
-- The production parser and prepared-runtime DLL fixtures passed: include
-  discovery, clean-build equivalence, bounded numeric expansion, full worker/GPU
-  preparation, latest persistent migration, publication, first use and last-good
-  retention. SINGLETHREADED WARP checks include a real buffer, foreign-call
-  rejection, worker pin release and final destruction on its owner thread.
-- Continuous trace DLL export passed with 100,000 events and graceful stopping.
-  Test exports were checked absent from the packaged production DLL.
-- Independent Runtime, metadata and launcher reviews reproduced, fixed and
-  rechecked the ownership, source/retirement, expression, memory and package
-  provenance defects found during implementation.
-- The downloaded artifact matched every one of **2,156 tracked native source
-  files**, plus the generated version header. DLL, patch, source archive,
-  commit/tree and workflow identities matched. The native Git bundle verifies
-  against the pinned public base.
+- Launcher code/build/test source: `c7749bfc00e47bdebf10d0d95d045e413ea2473d`.
+- Native source: `58a87cbce73c8888c0df88cd6fa175fff2efbb16`.
+- Native tree: `9da30f68f7c6b71668b04c6557d198674352dc2a`.
+- Native base: `a7847eae82aaac32175c9a7d199673d5c9323bcd`.
+- [Full Windows run passed](https://github.com/wunderay/XXMI-Launcher/actions/runs/40231123585).
 
-## Astraea review remediation
+All three jobs passed at that source:
 
-- P1: restored the original 16-byte version 1 ShaderRegex cache layout with a
-  separately persisted regex hash. The loader compares that field with the
-  current configuration before NO_MATCH, group linking or cached bytecode use.
-  The shared production validator rejects stale hashes, malformed candidate
-  layouts (including hash 0/1 aliases), invalid lengths and count overflow.
-  This cache path remains validated when prepared loading is off.
-- P2: acceptance now requires the canonical SHA-256 of the complete evidence
-  manifest excluding only its top-level review reference. This binds both full
-  run/capture records, paired conditions, scenarios, recovery and release
-  coverage. The reported baseline 10-to-12 ms rewrite with a fixed 12 ms candidate
-  rejects the unchanged review; fresh-review controls pass.
-- A separate source reviewer found no P1/P2 issues in the remediations. The
-  production regex-validator test passes on Linux and MSVC; all 20 qualification
-  tests pass within the 77-test Windows suite. This is source/test review,
-  not independent human visual or release acceptance.
+- **101 Windows lifecycle/qualification tests**, including real protected-file
+  commits and subprocess termination/restart during single-DLL deployment and
+  first-install repair. Publisher verification is explicitly mocked in the
+  installation contract fixtures; separate Windows tests exercise actual DPAPI.
+- **9 Windows distribution/GUI tests**: real Importer settings, validated mode
+  application, unsigned-support refusal, standard Update events, repeated
+  scrollable-frame cleanup, original installation layout and version resources.
+- Native CPU/cache, configuration/IR/budget, notification, working-set, shader,
+  GPU/WARP, ownership, status and loss-aware trace suites; production parser and
+  complete worker/preparation/publication/first-use/migration/last-good fixtures;
+  plus all **4 native capability-generator tests**.
 
-## Runnable launcher
+The staged standard-layout EXE passed its offline hidden GUI/import/assets and
+integrity smoke with developer tools removed from PATH. This does not start the
+normal Application, invoke Windows Installer, launch a game or request elevation.
 
-[Download and run instructions](../../development-builds/launcher/cef37d86a1da/)
-provide a complete portable launcher: extract, open the folder and double-click
-`XXMI Launcher.exe`. Python, PowerShell and build tools are not runtime
-requirements. Shortcuts use the executable's actual directory, supporting both
-this layout and the original installed layout.
+Downloaded artifacts were checked again: **1,800 installation payload files**,
+clean source-input status and manifest digest; **2,159 tracked native files** plus
+its generated version header; native DLL/patch/source/archive/commit/tree
+identities. The artifact transport preserves hidden files so the downloaded
+payload matches the tested tree. Native Git history verifies against the pinned
+public base. The compact [verification record](integration-evidence/verification.json)
+binds the source, job/artifact IDs and hashes; its source-only bundle is a
+maintainer handoff, not a deployable library package.
 
-[The final Windows EXE build/smoke passed](https://github.com/wunderay/XXMI-Launcher/actions/runs/40181635989)
-at source `cef37d86a1dafe40c9c807e0d1c704833d105083`. It tests the exact
-extracted EXE with developer tools removed from PATH: imports, hidden CTk/Tkhtml,
-native runtimes, themes, localization, image decoding, PE version and integrity.
-The downloaded ZIP SHA-256 is
-`afc9156ac0b94fa0880ef306c60c1b0a30ff8946f17cbe78830a9b1e743c9637`;
-all 1,801 packaged file hashes and the clean source-input record were verified.
-
-The native and 77-test Windows jobs passed at `b3b5a7b8bea6c249ae7b63cdc6feed5fa8263434`
-in run 40180466047. Later packaging-only runs reuse those unchanged native and
-prepared-lifecycle/qualification inputs. The final shortcut-path change was
-separately reviewed and included in the final EXE build. The final packaging-only
-run explicitly skips those reused jobs; it is not a fresh execution of all tests.
-
-The launcher is unsigned and does not include or authorize a native DLL.
-Experimental prepared-loading controls retain the authorized signed-package
-gate. The packaging smoke never constructs the normal Application or launches
-a game; normal user startup can access the network and save configuration.
+Separate source review covered ordinary update/rollback, crash barriers,
+first-install repair, subset transaction replay, package roots, staging, build
+layout and Tk callback ownership. This does not authenticate a human reviewer
+or establish actual-game visual/release acceptance. Earlier Astraea findings
+remain fixed: genuine persisted ShaderRegex cache identity/format, and reviewer
+acceptance bound to the complete paired evidence manifest.
 
 ## Remaining release gates
 
-1. Import the actual collector 0.1.6 raw report/source files. The forwarded local
-   paths and hashes are a reported baseline receipt, not transferred evidence.
-2. Collect paired candidate/baseline real-game scenarios, resource and memory
-   evidence, preparation cost and first-correct-frame observations across the
-   plan's validation matrix. The user launches Zenless manually; screenshots
-   remain optional supporting evidence.
-3. Obtain independent visual/timing acceptance and authorized publisher signing
-   through the existing trust path. Capability metadata stays unsigned and the
-   launcher gate stays closed until then. No importer/version is yet qualified.
+1. Provide or run the maintained MSI authoring/build workflow and the authorized
+   publisher package-signing process. The public launcher source lacks that MSI
+   project; `SpectrumQT/XXMI-Installer` is deprecated. The native metadata, DLLs
+   and outer package must be authenticated through the existing signer before
+   the launcher accepts support. No signing key or substitute trust path is
+   created by this work.
+2. Transfer and inspect original collector 0.1.6 baseline files. The forwarded
+   paths and hashes remain a reported receipt, not transferred evidence.
+3. Collect pinned paired actual-game scenarios and the plan's memory, recovery,
+   performance and complete first-eligible-frame evidence; obtain independent
+   human acceptance and release qualification. The user launches Zenless
+   manually; screenshots remain optional supporting evidence.
 
-See [the evidence protocol](qualification/README.md). The older development ZIP
-in the parent directory belongs to the previous limited implementation and is
-separate from this candidate. The original Phase 0 patch remains unchanged.
+No MSI installation, active DLL deployment, game launch, UAC, signing, release
+publication or merge was performed. Prior standalone portable development
+archives are retained as historical evidence and are not the current normal
+release delivery. The original Phase 0 patch remains unchanged.
+
+See [normal installation/release handoff](NORMAL-INSTALLATION.md) and
+[the qualification protocol](qualification/README.md).

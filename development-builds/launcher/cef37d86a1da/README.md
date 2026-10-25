@@ -1,5 +1,10 @@
 # Portable XXMI Launcher development build
 
+Historical development artifact: this predates the normal update/recovery
+integration and is retained for reproducibility. Current source work follows
+[the existing installation/update workflow](../../../tools/PreparedLoading/NORMAL-INSTALLATION.md);
+this archive is not the current normal-release delivery.
+
 1. Download `XXMI-Launcher-development-win-x64.zip`.
 2. Extract the complete archive into a writable folder.
 3. Open the `XXMI Launcher` folder and double-click **XXMI Launcher.exe**.

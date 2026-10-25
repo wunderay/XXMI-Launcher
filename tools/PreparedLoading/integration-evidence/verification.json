@@ -1,0 +1,41 @@
+{
+  "launcher_source": "c7749bfc00e47bdebf10d0d95d045e413ea2473d",
+  "native_source": "58a87cbce73c8888c0df88cd6fa175fff2efbb16",
+  "native_tree": "9da30f68f7c6b71668b04c6557d198674352dc2a",
+  "native_base": "a7847eae82aaac32175c9a7d199673d5c9323bcd",
+  "patch_sha256": "f6dcc8255fdf3e4c198dc1e519f583d52e248306e73c9163a3fb87be4fdefaff",
+  "workflow_run": "https://github.com/wunderay/XXMI-Launcher/actions/runs/40231123585",
+  "workflow_conclusion": "success",
+  "tests": {
+    "windows_lifecycle_and_qualification": 101,
+    "windows_distribution_and_gui": 9,
+    "native_capability_cli": 4,
+    "native_parser_runtime_and_synthetic_suites": "passed"
+  },
+  "native_dll_sha256": "e6046849adb566f0150de23121c66473c55e10f7b17bb4bce8e3a324bd2f6b0d",
+  "native_source_files_verified": 2159,
+  "native_generated_header_verified": true,
+  "native_package_sha256": "98cddd2f81ba25bd934b42bf721a7a3afd5ffdeb2324f68c57d78f6f83b71142",
+  "native_artifact_id": 12613800535,
+  "installation_payload_artifact_id": 12613151764,
+  "payload": {
+    "launcher_source": "c7749bfc00e47bdebf10d0d95d045e413ea2473d",
+    "files_verified": 1800,
+    "payload_manifest_sha256": "3ff55553afb34e681f91a86800a5e045b74ef9eb86e8fa23fcc844ddb892c9f0",
+    "exe_sha256": "4bb454b64a8107dbc1420ae51ccd1e552805fe5dc62be87cfc0b0d2aeab583bf",
+    "smoke_passed": true,
+    "source_input_status": ""
+  },
+  "native_history_bundle_sha256": "d81dd676169134d4d4f183f0cadb984eb49f475b1bdca39820e6a843d6bf40b1",
+  "delivery": {
+    "installer_published": false,
+    "publisher_signed": false,
+    "game_qualified": false,
+    "game_launched": false,
+    "uac_triggered": false
+  },
+  "remaining_requirements": [
+    "Maintained MSI build/release project and authorized publisher package signing workflow",
+    "Original baseline raw files and paired actual-game visual/performance/recovery qualification"
+  ]
+}
