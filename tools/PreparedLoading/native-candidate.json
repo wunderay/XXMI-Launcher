@@ -1,7 +1,7 @@
 {
   "purpose": "Reviewed development candidate; full Windows and actual-game qualification gates apply",
-  "native_parent": "0e6e787eb357b1177822e875bf4320a119947c4e",
-  "native_tree": "ba4afcd3b723b66ff6ea3137e8d80d7a4d1361fb",
+  "native_parent": "626775cad8a2f3a2e1dc1056c437ffa60bd78899",
+  "native_tree": "a7320f0a76ee0be0f3153d731d81532ed49d418f",
   "native_base": "a7847eae82aaac32175c9a7d199673d5c9323bcd",
-  "patch_sha256": "318713df5c9a17ca561920ccc47d81bb11b7d5324e84ceef62d4fcd30525c40c"
+  "patch_sha256": "20aedb0816ab2e2b399f90947d20d4749d80b525ccf1f5148e3235b8e48b86c6"
 }

@@ -7591,10 +7591,10 @@ index 0000000000000000000000000000000000000000..05093b8b9e083a9c4dce003503d5589f
 +} // namespace ModLoading
 diff --git a/DirectX11/ModLoading/GeneralConfigPipeline.inl b/DirectX11/ModLoading/GeneralConfigPipeline.inl
 new file mode 100644
-index 0000000000000000000000000000000000000000..f04d447a9adc5e6c4993994354dc205f4ca2c4f0
+index 0000000000000000000000000000000000000000..b09bc8191461752bd7d8b31628c7964b0d7bcb1f
 --- /dev/null
 +++ b/DirectX11/ModLoading/GeneralConfigPipeline.inl
-@@ -0,0 +1,882 @@
+@@ -0,0 +1,904 @@
 +// Private production pipeline, included by Runtime.cpp inside ModLoading.
 +// CPU build/discovery/verification and monitor construction never run in Present.
 +namespace {
@@ -7706,6 +7706,10 @@ index 0000000000000000000000000000000000000000..f04d447a9adc5e6c4993994354dc205f
 +	size_t cursor = 0, readyAssets = 0;
 +	int retirementSlot = -1;
 +	bool valid = false, iniPrepared = false, activationRequested = false;
++#ifdef XXMI_MODLOADING_TESTS
++	int lastStage = -1, lastPublication = -1;
++	bool lastUploaded = false, lastCommit = false;
++#endif
 +	std::string reason;
 +	~GeneralBuildResult()
 +	{
@@ -8436,12 +8440,20 @@ index 0000000000000000000000000000000000000000..f04d447a9adc5e6c4993994354dc205f
 +	const auto requested = service.refreshActivation.Consume();
 +	if (requested == candidate->id && state->transactionalActivation) candidate->activationRequested = true;
 +	if (!candidate->activationRequested) return;
++	// Activation duration measures one owner-side attempt, excluding preparation
++	// and readiness waits: 0 = published, 1 = retry, -1 = compatible reload needed.
++	ScopedLoadTrace activationTrace(LoadStage::Activation, candidate->id);
++	activationTrace.SetResult(1);
 +	ID3D11DeviceContext* context = suppliedContext;
 +	bool releaseContext = false;
 +	if (!context) { device->GetImmediateContext(&context); releaseContext = true; }
 +	if (!context) return;
 +	uint64_t revision = 0;
 +	const auto staged = StageConfigurationRuntime(candidate->next->graph, candidate->expected, 262144, revision);
++#ifdef XXMI_MODLOADING_TESTS
++	candidate->lastStage = int(staged);
++	candidate->lastPublication = -1;
++#endif
 +	bool uploaded = staged == ConfigPublishResult::Published;
 +	if (uploaded && candidate->next->graph->ownedIniTexture) {
 +		D3D11_MAPPED_SUBRESOURCE mapped{};
@@ -8458,20 +8470,30 @@ index 0000000000000000000000000000000000000000..f04d447a9adc5e6c4993994354dc205f
 +		published = state->monitor->CommitIfCurrent(candidate->versions.source, [&] {
 +			return candidate->next->monitor->CommitIfCurrent(candidate->nextSourceToken, [&] {
 +				if (candidate->versions.runtime != service.legacyConfigEpoch.load()) return false;
-+				if (PublishStagedConfiguration(candidate->next->graph, candidate->expected, revision) != ConfigPublishResult::Published) return false;
++				const auto publication = PublishStagedConfiguration(candidate->next->graph, candidate->expected, revision);
++#ifdef XXMI_MODLOADING_TESTS
++				candidate->lastPublication = int(publication);
++#endif
++				if (publication != ConfigPublishResult::Published) return false;
 +				candidate->next->enabled.store(true); state->enabled.store(false);
 +				std::atomic_store(&service.state, candidate->next);
 +				return true;
 +			});
 +		});
 +	}
++#ifdef XXMI_MODLOADING_TESTS
++	candidate->lastUploaded = uploaded;
++	candidate->lastCommit = published;
++#endif
 +	if (releaseContext) context->Release();
 +	if (published) {
++		activationTrace.SetResult(0);
 +		SubmitGraphRetirement(candidate->retirementSlot, candidate->expected); candidate->retirementSlot = -1;
 +		service.refreshActivation.SetReady(0); service.pendingGeneral.reset();
 +		GeneralStatus(candidate->next, {}, PreparationStatusState::Ready, "Complete prepared configuration activated", statusTicket);
 +		LoadTrace::Get().RecordInstant(LoadStage::Activation, candidate->id, 0, 0);
 +	} else if (staged == ConfigPublishResult::MigrationBudget || staged == ConfigPublishResult::Invalid) {
++		activationTrace.SetResult(-1);
 +		candidate->valid = false; candidate->reason = "Bounded runtime migration/initializer validation requires compatible reload";
 +		service.refreshActivation.SetReady(0);
 +	}
@@ -12064,10 +12086,10 @@ index 0000000000000000000000000000000000000000..4cb127af8c62c3855dded4805a97ecc7
 +}
 diff --git a/DirectX11/ModLoading/Runtime.cpp b/DirectX11/ModLoading/Runtime.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..79ebc96fbeb8cd020bccd635a263292830b924e2
+index 0000000000000000000000000000000000000000..b4778ae5bfb93a52e14afb8cf28ed33d496049e5
 --- /dev/null
 +++ b/DirectX11/ModLoading/Runtime.cpp
-@@ -0,0 +1,2134 @@
+@@ -0,0 +1,2334 @@
 +// Resource creation mode uses global NVAPI state; keep every preparation call
 +// on the Present owner under the same lock as the compatibility resource path.
 +#include "../lock.h"
@@ -12078,6 +12100,9 @@ index 0000000000000000000000000000000000000000..79ebc96fbeb8cd020bccd635a2632928
 +#include "../CommandList.h"
 +#include "../IniHandler.h"
 +#include "../globals.h"
++#ifdef XXMI_MODLOADING_TESTS
++#include "../HackerDevice.h"
++#endif
 +#include "../profiling.h"
 +#include "PreparationScheduler.h"
 +#include "SnapshotIO.h"
@@ -12269,7 +12294,8 @@ index 0000000000000000000000000000000000000000..79ebc96fbeb8cd020bccd635a2632928
 +		std::shared_ptr<ConfigGenerationPin> graph;
 +		std::shared_ptr<ID3D11Query> query;
 +		ID3D11Device* device = nullptr;
-+		bool reserved = false, submitted = false;
++		std::thread::id owner;
++		bool reserved = false, submitted = false, singleThreaded = false;
 +	};
 +	std::mutex graphRetirementMutex;
 +	std::array<GraphRetirement, 8> graphRetirement;
@@ -12295,7 +12321,7 @@ index 0000000000000000000000000000000000000000..79ebc96fbeb8cd020bccd635a2632928
 +thread_local bool retiringDevice = false;
 +struct TryGlobalConfigGuard {
 +	bool acquired;
-+	TryGlobalConfigGuard() : acquired(TryEnterCriticalSection(&G->mCriticalSection) != FALSE) {}
++	explicit TryGlobalConfigGuard(bool enter = true) : acquired(enter && TryEnterCriticalSection(&G->mCriticalSection) != FALSE) {}
 +	~TryGlobalConfigGuard() { if (acquired) LeaveCriticalSection(&G->mCriticalSection); }
 +};
 +struct RuntimeOwnerScope {
@@ -12741,7 +12767,7 @@ index 0000000000000000000000000000000000000000..79ebc96fbeb8cd020bccd635a2632928
 +	if (!state->refreshEnabled || !service.refreshWorker || !state->enabled.load()) return;
 +	if (FAILED(device->GetDeviceRemovedReason())) {
 +		service.refreshActivation.SetReady(0); service.pendingRefresh.reset(); service.refreshPlanner.reset();
-+	service.pendingGeneral.reset();
++		service.pendingGeneral.reset();
 +		state->refreshReason = "filename refresh unavailable after device removal; use F10";
 +		service.refreshActivation.Consume(); return;
 +	}
@@ -12750,7 +12776,7 @@ index 0000000000000000000000000000000000000000..79ebc96fbeb8cd020bccd635a2632928
 +		state->refreshReason = "filename refresh invalidated by device recreation; use F10";
 +		service.refreshManager.Clear(); service.refreshRetirement.clear();
 +		service.refreshActivation.SetReady(0); service.pendingRefresh.reset(); service.refreshPlanner.reset();
-+	service.pendingGeneral.reset();
++		service.pendingGeneral.reset();
 +	}
 +	PollRefreshRetirement(device);
 +	std::shared_ptr<RefreshBuildResult> result;
@@ -12758,7 +12784,7 @@ index 0000000000000000000000000000000000000000..79ebc96fbeb8cd020bccd635a2632928
 +	  if (lock.owns_lock()) result.swap(state->refreshResult); }
 +	if (result) {
 +		service.refreshActivation.SetReady(0); service.pendingRefresh.reset(); service.refreshPlanner.reset();
-+	service.pendingGeneral.reset();
++		service.pendingGeneral.reset();
 +		if (result->legacyConfigEpoch != service.legacyConfigEpoch.load() ||
 +			result->patch.versions.device != epoch || !state->monitor->IsCurrent(result->patch.versions.source)) return;
 +		CustomResource* original = nullptr; D3D11_BUFFER_DESC descriptor{};
@@ -12782,7 +12808,7 @@ index 0000000000000000000000000000000000000000..79ebc96fbeb8cd020bccd635a2632928
 +	if (build.legacyConfigEpoch != service.legacyConfigEpoch.load() || build.patch.versions.device != epoch ||
 +		!state->monitor->IsCurrent(build.patch.versions.source)) {
 +		service.refreshActivation.SetReady(0); service.pendingRefresh.reset(); service.refreshPlanner.reset();
-+	service.pendingGeneral.reset();
++		service.pendingGeneral.reset();
 +		state->refreshReason = "filename refresh source changed; last-good generation remains active";
 +		service.refreshActivation.Consume(); return;
 +	}
@@ -12876,7 +12902,7 @@ index 0000000000000000000000000000000000000000..79ebc96fbeb8cd020bccd635a2632928
 +	if (!state->monitor->IsCurrent(build.patch.versions.source) ||
 +		build.legacyConfigEpoch != service.legacyConfigEpoch.load() || FAILED(device->GetDeviceRemovedReason())) {
 +		service.refreshActivation.SetReady(0); service.pendingRefresh.reset(); service.refreshPlanner.reset();
-+	service.pendingGeneral.reset();
++		service.pendingGeneral.reset();
 +		service.refreshActivation.Consume();
 +		state->refreshReason = "filename refresh proof became stale; last-good generation remains active"; return;
 +	}
@@ -12884,6 +12910,10 @@ index 0000000000000000000000000000000000000000..79ebc96fbeb8cd020bccd635a2632928
 +	state->refreshReason = "filename refresh prepared; press the configured refresh shortcut to apply";
 +	const uint64_t requested = service.refreshActivation.Consume();
 +	if (requested && requested == build.id && state->monitor->IsCurrent(build.patch.versions.source)) {
++		// Match complete-graph activation durations: 0 = published, 1 = retry.
++		// This interval excludes asynchronous preparation and readiness waits.
++		ScopedLoadTrace activationTrace(LoadStage::Activation, build.id);
++		activationTrace.SetResult(1);
 +		const BuildVersions current{build.patch.versions.source, epoch, state->legacyConfigEpoch};
 +		if (active && pending->retirementQuery) {
 +			pending->retirementQuery->AddRef();
@@ -12899,12 +12929,13 @@ index 0000000000000000000000000000000000000000..79ebc96fbeb8cd020bccd635a2632928
 +			return published == ResourceRefreshPublishResult::Activated;
 +		});
 +		if (committed) {
++			activationTrace.SetResult(0);
 +			if (active && pending->retirementQuery) {
 +				ID3D11DeviceContext* context = nullptr; device->GetImmediateContext(&context);
 +				if (context) { context->End(pending->retirementQuery); context->Release(); }
 +			}
 +			service.refreshActivation.SetReady(0); service.pendingRefresh.reset(); service.refreshPlanner.reset();
-+	service.pendingGeneral.reset();
++			service.pendingGeneral.reset();
 +			state->refreshReason = "filename refresh applied; general configuration changes still use F10";
 +		} else {
 +			if (active) service.refreshRetirement.erase(active->id);
@@ -13008,9 +13039,20 @@ index 0000000000000000000000000000000000000000..79ebc96fbeb8cd020bccd635a2632928
 +
 +namespace {
 +thread_local int legacyRetirementSlot = -1;
++#ifdef XXMI_MODLOADING_TESTS
++std::atomic<uint64_t> graphRetirementContextCalls{0}, graphRetirementDataCalls{0};
++#endif
 +int ReserveGraphRetirement(ID3D11Device* device)
 +{
 +	auto& service = Services();
++	TryGlobalConfigGuard configGuard(device != nullptr);
++	std::unique_lock<std::recursive_mutex> ownerLock(service.plannerMutex, std::defer_lock);
++	if (device)
++		ownerLock.try_lock();
++	if (device && (!configGuard.acquired || !ownerLock.owns_lock() ||
++		(service.device == device && service.owner != std::thread::id() && service.owner != std::this_thread::get_id())))
++		return -1;
++	const bool singleThreaded = device && (device->GetCreationFlags() & D3D11_CREATE_DEVICE_SINGLETHREADED);
 +	int slot = -1;
 +	{
 +		std::lock_guard<std::mutex> lock(service.graphRetirementMutex);
@@ -13025,7 +13067,10 @@ index 0000000000000000000000000000000000000000..79ebc96fbeb8cd020bccd635a2632928
 +		return -1;
 +	std::shared_ptr<ConfigGenerationPin> deferredGraph;
 +	try {
-+		deferredGraph = Disposal().Make<ConfigGenerationPin>();
++		// A SINGLETHREADED graph may own GPU children whose final Release
++		// must stay on this owner. The slot retains it until both GPU and
++		// all other CPU owners have finished; ordinary devices dispose async.
++		deferredGraph = singleThreaded ? std::make_shared<ConfigGenerationPin>() : Disposal().Make<ConfigGenerationPin>();
 +	} catch (...) {
 +		CancelGraphRetirement(slot);
 +		return -1;
@@ -13040,6 +13085,8 @@ index 0000000000000000000000000000000000000000..79ebc96fbeb8cd020bccd635a2632928
 +	std::lock_guard<std::mutex> lock(service.graphRetirementMutex);
 +	auto& entry = service.graphRetirement[slot];
 +	entry.device = device;
++	entry.owner = std::this_thread::get_id();
++	entry.singleThreaded = singleThreaded;
 +	entry.graph = std::move(deferredGraph);
 +	if (query)
 +		entry.query = std::shared_ptr<ID3D11Query>(query, [](ID3D11Query* p) { p->Release(); });
@@ -13053,8 +13100,15 @@ index 0000000000000000000000000000000000000000..79ebc96fbeb8cd020bccd635a2632928
 +	{
 +		auto& service = Services();
 +		std::lock_guard<std::mutex> lock(service.graphRetirementMutex);
-+		discarded = std::move(service.graphRetirement[slot]);
-+		service.graphRetirement[slot] = {};
++		auto& entry = service.graphRetirement[slot];
++		// Only an empty, unsubmitted SINGLETHREADED reservation is cancellable.
++		// Its protecting pin must survive other CPU owners and the GPU fence;
++		// Poll is the sole release path once a retired graph has been attached.
++		if (entry.singleThreaded && (entry.owner != std::this_thread::get_id() ||
++			entry.submitted || (entry.graph && *entry.graph)))
++			return;
++		discarded = std::move(entry);
++		entry = {};
 +	}
 +}
 +bool CompleteGraphRetirement(size_t slot, const std::shared_ptr<ConfigGenerationPin> &graph,
@@ -13068,6 +13122,9 @@ index 0000000000000000000000000000000000000000..79ebc96fbeb8cd020bccd635a2632928
 +		// Another poll may have completed and reused this slot while the
 +		// caller queried D3D. Only the captured reservation may be released.
 +		if (!entry.reserved || !entry.submitted || entry.graph != graph || entry.query != query) return false;
++		if (entry.singleThreaded && (entry.owner != std::this_thread::get_id() ||
++			!entry.graph || !*entry.graph || entry.graph->use_count() != 1))
++			return false;
 +		discarded = std::move(entry);
 +		entry = {};
 +	}
@@ -13078,30 +13135,59 @@ index 0000000000000000000000000000000000000000..79ebc96fbeb8cd020bccd635a2632928
 +	if (slot < 0)
 +		return;
 +	std::shared_ptr<ID3D11Query> query;
++	std::shared_ptr<ConfigGenerationPin> graph;
 +	ID3D11Device* device = nullptr;
++	std::thread::id owner;
 +	{
 +		auto& service = Services();
 +		std::lock_guard<std::mutex> lock(service.graphRetirementMutex);
 +		auto& entry = service.graphRetirement[slot];
-+		*entry.graph = std::move(previous);
++		if (!*entry.graph)
++			*entry.graph = std::move(previous);
++		else if (*entry.graph != previous)
++			return;
++		// Do not even copy the wrapper/query onto a foreign thread: an owner
++		// poll could otherwise leave that temporary as their final COM owner.
++		if (entry.query && entry.owner != std::this_thread::get_id())
++			return;
 +		query = entry.query;
++		graph = entry.graph;
 +		device = entry.device;
++		owner = entry.owner;
++		if (!query && !device) {
++			entry.submitted = true;
++			return;
++		}
 +	}
-+	if (query && device) {
++	// The graph is retained even if submission cannot reach its device owner.
++	// An unsubmitted slot never authorizes retirement without an event proof.
++	if (!query || !device || owner != std::this_thread::get_id())
++		return;
++	TryGlobalConfigGuard configGuard;
++	auto& service = Services();
++	std::unique_lock<std::recursive_mutex> ownerLock(service.plannerMutex, std::try_to_lock);
++	if (!configGuard.acquired || !ownerLock.owns_lock())
++		return;
++	{
 +		ID3D11DeviceContext* context = nullptr;
++#ifdef XXMI_MODLOADING_TESTS
++		++graphRetirementContextCalls;
++#endif
 +		device->GetImmediateContext(&context);
 +		if (context) {
 +			context->End(query.get());
 +			context->Release();
 +		} else return; // Retain fail-closed: no unproved release.
 +	}
-+	auto& service = Services();
 +	std::lock_guard<std::mutex> lock(service.graphRetirementMutex);
-+	service.graphRetirement[slot].submitted = true;
++	auto& entry = service.graphRetirement[slot];
++	if (entry.graph == graph && entry.query == query && entry.owner == owner)
++		entry.submitted = true;
 +}
 +void PollGraphRetirement(ID3D11Device* currentDevice)
 +{
-+	(void)currentDevice;
++	if (runtimeBusy)
++		return;
 +	auto& service = Services();
 +	for (size_t i = 0; i < service.graphRetirement.size(); ++i) {
 +		std::shared_ptr<ID3D11Query> query;
@@ -13112,6 +13198,9 @@ index 0000000000000000000000000000000000000000..79ebc96fbeb8cd020bccd635a2632928
 +			std::lock_guard<std::mutex> lock(service.graphRetirementMutex);
 +			const auto& entry = service.graphRetirement[i];
 +			candidate = entry.reserved && entry.submitted && entry.graph && *entry.graph && entry.graph->use_count() == 1;
++			if (candidate && entry.query &&
++				(entry.device != currentDevice || entry.owner != std::this_thread::get_id()))
++				candidate = false;
 +			if (candidate) {
 +				query = entry.query;
 +				graph = entry.graph;
@@ -13122,10 +13211,20 @@ index 0000000000000000000000000000000000000000..79ebc96fbeb8cd020bccd635a2632928
 +			continue;
 +		bool complete = !query;
 +		if (query && owningDevice) {
++			TryGlobalConfigGuard configGuard;
++			std::unique_lock<std::recursive_mutex> ownerLock(service.plannerMutex, std::try_to_lock);
++			if (!configGuard.acquired || !ownerLock.owns_lock())
++				continue;
 +			ID3D11DeviceContext* context = nullptr;
++#ifdef XXMI_MODLOADING_TESTS
++			++graphRetirementContextCalls;
++#endif
 +			owningDevice->GetImmediateContext(&context);
 +			BOOL done = FALSE;
 +			if (context) {
++#ifdef XXMI_MODLOADING_TESTS
++				++graphRetirementDataCalls;
++#endif
 +				complete = context->GetData(query.get(), &done, sizeof(done), D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK && done;
 +				context->Release();
 +			}
@@ -13537,7 +13636,7 @@ index 0000000000000000000000000000000000000000..79ebc96fbeb8cd020bccd635a2632928
 +	if (service.epoch && service.epoch != epoch) {
 +		state->refreshReason = "filename refresh invalidated by device recreation; use F10";
 +		service.refreshActivation.SetReady(0); service.pendingRefresh.reset(); service.refreshPlanner.reset();
-+	service.pendingGeneral.reset();
++		service.pendingGeneral.reset();
 +		service.refreshManager.Clear(); service.refreshRetirement.clear();
 +		service.profileGpuPins.clear(); service.activeResources.clear(); service.planner.reset();
 +		service.plannerGeneration = 0;
@@ -13560,7 +13659,7 @@ index 0000000000000000000000000000000000000000..79ebc96fbeb8cd020bccd635a2632928
 +		for (auto& item : state->profile) { item.second.source.reset(); item.second.pinnedGpu.reset(); item.second.observedGpu.reset(); }
 +		service.profileGpuPins.clear(); service.activeResources.clear(); service.planner.reset(); service.plannerGeneration = 0;
 +		service.refreshActivation.SetReady(0); service.pendingRefresh.reset(); service.refreshPlanner.reset();
-+	service.pendingGeneral.reset();
++		service.pendingGeneral.reset();
 +		if (state->generalEnabled) ScheduleGeneralBuild(state, request, epoch);
 +		else if (request.iniChanged) ScheduleRefreshBuild(state, request, epoch);
 +		// INI edits only invalidate preparation; never execute or auto-reload
@@ -14071,11 +14170,132 @@ index 0000000000000000000000000000000000000000..79ebc96fbeb8cd020bccd635a2632928
 +		auto createDevice = reinterpret_cast<decltype(&D3D11CreateDevice)>(GetProcAddress(module, "D3D11CreateDevice"));
 +		if (!createDevice)
 +			return __LINE__;
++		auto passThrough = [](ID3D11Device*& device, ID3D11DeviceContext*& context) {
++			HackerDevice* wrapped = nullptr;
++			if (FAILED(device->QueryInterface(IID_HackerDevice, reinterpret_cast<void**>(&wrapped))))
++				return true;
++			auto realDevice = wrapped->GetPassThroughOrigDevice1();
++			auto realContext = wrapped->GetPassThroughOrigContext1();
++			if (!realDevice || !realContext) {
++				wrapped->Release();
++				return false;
++			}
++			realDevice->AddRef();
++			realContext->AddRef();
++			context->Release();
++			device->Release();
++			wrapped->Release();
++			device = realDevice;
++			context = realContext;
++			return true;
++		};
 +		ID3D11Device* rawDevice = nullptr; ID3D11DeviceContext* rawContext = nullptr;
 +		if (FAILED(createDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0, nullptr, 0,
 +			D3D11_SDK_VERSION, &rawDevice, nullptr, &rawContext))) return __LINE__;
++		if (!passThrough(rawDevice, rawContext))
++			return __LINE__;
 +		std::shared_ptr<ID3D11Device> device(rawDevice, [](ID3D11Device* p) { p->Release(); });
 +		std::shared_ptr<ID3D11DeviceContext> context(rawContext, [](ID3D11DeviceContext* p) { p->Release(); });
++		{
++			ID3D11Device* rawSingleThreaded = nullptr;
++			ID3D11DeviceContext* rawSingleContext = nullptr;
++			if (FAILED(createDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, D3D11_CREATE_DEVICE_SINGLETHREADED,
++				nullptr, 0, D3D11_SDK_VERSION, &rawSingleThreaded, nullptr, &rawSingleContext)))
++				return __LINE__;
++			if (!passThrough(rawSingleThreaded, rawSingleContext))
++				return __LINE__;
++			std::shared_ptr<ID3D11Device> singleThreaded(rawSingleThreaded, [](ID3D11Device* p) { p->Release(); });
++			std::shared_ptr<ID3D11DeviceContext> singleContext(rawSingleContext, [](ID3D11DeviceContext* p) { p->Release(); });
++			if (!(singleThreaded->GetCreationFlags() & D3D11_CREATE_DEVICE_SINGLETHREADED))
++				return __LINE__;
++			const int slot = ReserveGraphRetirement(singleThreaded.get());
++			if (slot < 0)
++				return __LINE__;
++			std::thread foreignEmptyCancel([&] { CancelGraphRetirement(slot); });
++			foreignEmptyCancel.join();
++			{
++				auto& retirement = Services();
++				std::lock_guard<std::mutex> guard(retirement.graphRetirementMutex);
++				if (!retirement.graphRetirement[slot].reserved)
++					return __LINE__;
++			}
++			const auto retirementOwner = std::this_thread::get_id();
++			auto destructionThread = std::make_shared<std::atomic<int>>(0);
++			ConfigGenerationPin retired(new ConfigurationState(), [retirementOwner, destructionThread](ConfigurationState* graph) {
++				destructionThread->store(std::this_thread::get_id() == retirementOwner ? 1 : -1);
++				delete graph;
++			});
++			D3D11_BUFFER_DESC bufferDescriptor{};
++			bufferDescriptor.ByteWidth = 16;
++			bufferDescriptor.Usage = D3D11_USAGE_DEFAULT;
++			bufferDescriptor.BindFlags = D3D11_BIND_VERTEX_BUFFER;
++			ID3D11Buffer* buffer = nullptr;
++			if (FAILED(singleThreaded->CreateBuffer(&bufferDescriptor, nullptr, &buffer)))
++				return __LINE__;
++			retired->resources[L"retirement"].resource = buffer;
++			auto cpuPin = retired;
++			std::weak_ptr<ConfigurationState> retained = retired;
++			const auto beforeSubmit = graphRetirementContextCalls.load();
++			std::thread foreignSubmit([&, previous = std::move(retired)]() mutable {
++				SubmitGraphRetirement(slot, std::move(previous));
++			});
++			foreignSubmit.join();
++			if (retained.expired() || graphRetirementContextCalls.load() != beforeSubmit)
++				return __LINE__;
++			{
++				auto& retirement = Services();
++				std::lock_guard<std::mutex> guard(retirement.graphRetirementMutex);
++				if (retirement.graphRetirement[slot].submitted)
++					return __LINE__;
++				retired = *retirement.graphRetirement[slot].graph;
++			}
++			SubmitGraphRetirement(slot, std::move(retired));
++			const auto contextCalls = graphRetirementContextCalls.load();
++			const auto dataCalls = graphRetirementDataCalls.load();
++			CancelGraphRetirement(slot);
++			PollGraphRetirement(device.get());
++			std::thread foreign([&] {
++				CancelGraphRetirement(slot);
++				PollGraphRetirement(singleThreaded.get());
++			});
++			foreign.join();
++			if (retained.expired() || graphRetirementContextCalls.load() != contextCalls || graphRetirementDataCalls.load() != dataCalls)
++				return __LINE__;
++			{
++				auto& retirement = Services();
++				std::lock_guard<std::mutex> guard(retirement.graphRetirementMutex);
++				if (!retirement.graphRetirement[slot].reserved || !retirement.graphRetirement[slot].submitted)
++					return __LINE__;
++			}
++			singleContext->Flush();
++			PollGraphRetirement(singleThreaded.get());
++			if (retained.expired() || destructionThread->load() != 0 || graphRetirementDataCalls.load() != dataCalls)
++				return __LINE__;
++			// Model the old RuntimeState releasing its final graph pin on its
++			// disposal worker. The slot must still protect every GPU child.
++			std::thread releaseCpuPin([pin = std::move(cpuPin)]() mutable { pin.reset(); });
++			releaseCpuPin.join();
++			if (retained.expired() || destructionThread->load() != 0)
++				return __LINE__;
++			// With only the slot's pin left, wrong-device/foreign polling must
++			// still avoid the driver and preserve owner-thread destruction.
++			PollGraphRetirement(device.get());
++			std::thread foreignFinalPin([&] {
++				CancelGraphRetirement(slot);
++				PollGraphRetirement(singleThreaded.get());
++			});
++			foreignFinalPin.join();
++			if (retained.expired() || graphRetirementContextCalls.load() != contextCalls || graphRetirementDataCalls.load() != dataCalls)
++				return __LINE__;
++			const ULONGLONG retirementDeadline = GetTickCount64() + 5000;
++			while (!retained.expired() && GetTickCount64() < retirementDeadline) {
++				PollGraphRetirement(singleThreaded.get());
++				Sleep(5);
++			}
++			if (!retained.expired() || destructionThread->load() != 1 ||
++				graphRetirementContextCalls.load() <= contextCalls || graphRetirementDataCalls.load() <= dataCalls)
++				return __LINE__;
++		}
 +		auto& service = Services();
 +		service.generalCpuBudget->SetCapacity(256 * MiB);
 +		DetachedConfigServices compilerServices; compilerServices.cpuBudget = service.generalCpuBudget;
@@ -14139,6 +14359,8 @@ index 0000000000000000000000000000000000000000..79ebc96fbeb8cd020bccd635a2632928
 +					static_cast<unsigned long long>(candidate->nextSourceToken),
 +					static_cast<unsigned long long>(candidate->next && candidate->next->monitor ? candidate->next->monitor->CurrentToken() : 0),
 +					candidate->reason.c_str());
++				fprintf(stderr, "Runtime fixture activation attempt: stage=%d publication=%d uploaded=%d committed=%d (Published=0 Busy=1 Stale=2 Invalid=3 MigrationBudget=4)\n",
++					candidate->lastStage, candidate->lastPublication, int(candidate->lastUploaded), int(candidate->lastCommit));
 +			}
 +			fflush(stderr);
 +		};
