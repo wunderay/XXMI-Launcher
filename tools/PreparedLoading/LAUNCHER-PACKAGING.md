@@ -31,6 +31,9 @@ that PE files or ZIP timestamps are bit-for-bit reproducible.
 
 `LAUNCHER-BUILD.json` inside the bundle records installed build dependencies, source
 commit/local-change status, requirements digest, and packaged file hashes.
+The source-status check covers tracked and untracked files in the application,
+themes, localization, requirements, license and build-script input paths; generated build
+output and temporary files are outside those paths.
 `LAUNCHER-PACKAGING.json` beside the ZIP records its SHA-256 and smoke-test outcome.
 `LAUNCHER-SELF-TEST.json` preserves the frozen test receipt or failure traceback,
 including when the windowed executable has no standard error stream.

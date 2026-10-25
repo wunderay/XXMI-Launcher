@@ -23,6 +23,15 @@ def file_hashes(root: Path) -> dict[str, str]:
             for path in sorted(root.rglob('*')) if path.is_file()}
 
 
+def source_status(root: Path) -> str:
+    # Build output and temporary files are outside these input paths. Include
+    # untracked inputs so an extra module or asset cannot silently enter a build.
+    return subprocess.check_output([
+        'git', '-C', str(root), 'status', '--porcelain', '--untracked-files=all',
+        '--', 'src', 'Themes', 'Locale', 'requirements.txt', 'LICENSE', 'tools/PreparedLoading',
+    ], text=True).strip()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, required=True)
@@ -44,12 +53,14 @@ def main() -> None:
         'Development build 0.0.0: launcher self-update is disabled by the existing version check.\n'
         'This launcher does not contain or authorize a prepared-loading native DLL.\n'
         'Normal launcher startup can access the network and write its configuration.\n', encoding='utf-8')
+    status = source_status(root)
     manifest = {
         'format': 1,
         'version': '0.0.0',
         'packager': 'PyInstaller 6.20.0; hooks-contrib 2026.5',
         'launcher_source': subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip(),
-        'source_has_local_changes': bool(subprocess.check_output(['git', '-C', str(root), 'status', '--porcelain'], text=True).strip()),
+        'source_has_local_changes': bool(status),
+        'source_input_status': status,
         'requirements_sha256': digest(root / 'requirements.txt'),
         'build_dependencies': subprocess.check_output([os.sys.executable, '-m', 'pip', 'freeze'], text=True).splitlines(),
         'qualification': 'Development packaging only; no real game compatibility or performance qualification.',
