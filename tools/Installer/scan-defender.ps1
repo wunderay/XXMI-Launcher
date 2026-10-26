@@ -81,20 +81,38 @@ function Get-Detections {
 function Invoke-Scanner([string]$Executable, [string[]]$Arguments, [string]$Name, [int]$TimeoutSeconds) {
     $stdout = Join-Path $out "$Name.stdout.log"
     $stderr = Join-Path $out "$Name.stderr.log"
-    $process = Start-Process -FilePath $Executable -ArgumentList $Arguments -PassThru -NoNewWindow `
-        -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-    $timedOut = -not $process.WaitForExit($TimeoutSeconds * 1000)
-    if ($timedOut) {
-        $process.Kill()
-        $process.WaitForExit()
-    }
-    $process.Refresh()
-    [pscustomobject]@{
-        arguments = $Arguments
-        exit_code = $process.ExitCode
-        timed_out = $timedOut
-        stdout_file = [IO.Path]::GetFileName($stdout)
-        stderr_file = [IO.Path]::GetFileName($stderr)
+    $process = [Diagnostics.Process]::new()
+    try {
+        $process.StartInfo.FileName = $Executable
+        # The caller quotes the fixed MSI path; no shell interprets these arguments.
+        $process.StartInfo.Arguments = $Arguments -join ' '
+        $process.StartInfo.UseShellExecute = $false
+        $process.StartInfo.CreateNoWindow = $true
+        $process.StartInfo.RedirectStandardOutput = $true
+        $process.StartInfo.RedirectStandardError = $true
+        if (-not $process.Start()) { throw 'Scanner process did not start.' }
+        # Drain both pipes concurrently before waiting, avoiding full-pipe deadlocks.
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $timedOut = -not $process.WaitForExit($TimeoutSeconds * 1000)
+        if ($timedOut) {
+            $process.Kill()
+            if (-not $process.WaitForExit(5000)) { throw 'Owned scanner process did not exit after timeout termination.' }
+        }
+        if (-not $stdoutTask.Wait(5000) -or -not $stderrTask.Wait(5000)) {
+            throw 'Scanner output did not finish flushing within the time limit.'
+        }
+        $stdoutTask.GetAwaiter().GetResult() | Set-Content -LiteralPath $stdout -Encoding utf8
+        $stderrTask.GetAwaiter().GetResult() | Set-Content -LiteralPath $stderr -Encoding utf8
+        [pscustomobject]@{
+            arguments = $Arguments
+            exit_code = [int]$process.ExitCode
+            timed_out = $timedOut
+            stdout_file = [IO.Path]::GetFileName($stdout)
+            stderr_file = [IO.Path]::GetFileName($stderr)
+        }
+    } finally {
+        $process.Dispose()
     }
 }
 
