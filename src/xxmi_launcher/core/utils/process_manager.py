@@ -36,6 +36,8 @@ class ProcessPriorityClass(Enum):
 class ExecutableLaunch:
     exe_path: Path
     cmd_args: str
+    # Windows Installer parses quotes itself; an argv round-trip changes PROPERTY="".
+    preserve_arguments: bool = False
 
 
 @dataclass
@@ -471,6 +473,19 @@ class ProcessManager:
 
         match context.start_method, context.target:
             case StartMethod.NATIVE, ExecutableLaunch() as target:
+                if target.preserve_arguments:
+                    if context.parent_process is not None:
+                        raise ValueError("preserve_arguments does not support parent_process")
+                    return subprocess.Popen(
+                        f'"{target.exe_path}" {target.cmd_args}',
+                        executable=str(target.exe_path),
+                        shell=False,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        creationflags=flags,
+                        cwd=context.work_dir,
+                    )
+
                 if context.parent_process is None:
                     return subprocess.Popen(
                         [str(target.exe_path), *split_windows_args(target.cmd_args, like_cmd=False)],

@@ -88,12 +88,56 @@ class InstallerUpdateTests(unittest.TestCase):
         self.package.run_msi_installer()
         args, kwargs = self.popen.call_args
         command = args[0]
-        self.assertTrue(Path(command[0]).is_absolute())
-        self.assertEqual(Path(command[0]).name.lower(), 'msiexec.exe')
-        self.assertEqual(command[1:5], ['/i', str(self.package.downloaded_asset_path), '/qr', '/norestart'])
-        self.assertEqual(command[5:], [f'APPDIR={self.launcher.Paths.App.Root}', 'CREATE_SHORTCUTS='])
-        self.assertNotIn('shell', kwargs)
+        executable = kwargs['executable']
+        self.assertTrue(Path(executable).is_absolute())
+        self.assertEqual(Path(executable).name.lower(), 'msiexec.exe')
+        self.assertEqual(command, (
+            f'"{executable}" /i "{self.package.downloaded_asset_path}" /qr /norestart '
+            f'APPDIR="{self.launcher.Paths.App.Root}" CREATE_SHORTCUTS=""'
+        ))
+        self.assertIs(kwargs['shell'], False)
         self.popen.assert_called_once()
+
+    def test_msi_raw_arguments_preserve_quotes_and_shell_characters(self):
+        self.package.downloaded_asset_path = Path('C:/fixture/update package & retained.msi')
+        self.visible_pids.add(self.root.pid)
+        self.package.run_msi_installer()
+        command = self.popen.call_args.args[0]
+        self.assertIsInstance(command, str)
+        self.assertIn(f'/i "{self.package.downloaded_asset_path}"', command)
+        self.assertTrue(command.endswith('CREATE_SHORTCUTS=""'))
+        self.assertIs(self.popen.call_args.kwargs['shell'], False)
+
+    def test_default_executable_launch_still_uses_argument_list(self):
+        target = self.processes.ExecutableLaunch(
+            exe_path=Path('C:/fixture/ordinary application.exe'),
+            cmd_args='"argument with spaces" ordinary',
+        )
+        context = self.processes.LaunchContext(
+            start_method=self.launcher.StartMethod.NATIVE,
+            process_name=target.exe_path.name,
+            target=target,
+        )
+        self.processes.ProcessManager(context)._launch(context)
+        self.assertEqual(self.popen.call_args.args[0],
+                         [str(target.exe_path), 'argument with spaces', 'ordinary'])
+        self.assertNotIn('executable', self.popen.call_args.kwargs)
+        self.assertNotIn('shell', self.popen.call_args.kwargs)
+
+    def test_raw_arguments_reject_parent_override_without_launching(self):
+        context = self.processes.LaunchContext(
+            start_method=self.launcher.StartMethod.NATIVE,
+            process_name='msiexec.exe',
+            target=self.processes.ExecutableLaunch(
+                exe_path=Path('C:/Windows/System32/msiexec.exe'),
+                cmd_args='CREATE_SHORTCUTS=""',
+                preserve_arguments=True,
+            ),
+            parent_process=object(),
+        )
+        with self.assertRaisesRegex(ValueError, 'preserve_arguments does not support parent_process'):
+            self.processes.ProcessManager(context)._launch(context)
+        self.popen.assert_not_called()
 
     def test_legacy_enhanced_ui_window_is_an_owned_descendant(self):
         child = ProcessFixture(102, 'EnhancedUI.exe')

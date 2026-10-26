@@ -9,7 +9,9 @@ from pathlib import Path
 import shutil
 import struct
 import subprocess
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 import uuid
 import zlib
 
@@ -20,6 +22,24 @@ validator = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(validator)
 authoring = validator.authoring
 INERT = b'INERT XXMI INSTALLER FIXTURE; NEVER EXECUTE\n'
+
+
+def fixture_msi_command(msiexec, operation, target, log, appdir=None, repair=False):
+    '''Preserve MSI's native property quotes instead of C-runtime argv quoting.'''
+    def quoted(value):
+        value = str(value)
+        if any(character in value for character in ('"', '\0', '\r', '\n')):
+            raise ValueError('Unsafe fixture MSI command value')
+        return '"' + value + '"'
+
+    if operation not in ('/i', '/x') or (operation == '/i') != (appdir is not None) or (repair and operation != '/i'):
+        raise ValueError('Invalid fixture MSI operation/context')
+    command = quoted(msiexec) + ' ' + operation + ' ' + quoted(target) + ' /qn /norestart'
+    if appdir is not None:
+        command += ' APPDIR=' + quoted(appdir) + ' CREATE_SHORTCUTS=""'
+    if repair:
+        command += ' REINSTALL=ALL REINSTALLMODE=amus'
+    return command + ' /l*v ' + quoted(log)
 
 
 def fixture_payload(root, version):
@@ -66,6 +86,30 @@ def cabinet(files, compressed=True):
 
 
 class InstallerStaticValidationTests(unittest.TestCase):
+    def test_native_msi_command_preserves_quoted_path_and_empty_property(self):
+        command = fixture_msi_command(r'C:\Windows\System32\msiexec.exe', '/i',
+                                      r'C:\fixture path\package.msi', r'C:\fixture path\install.log',
+                                      r'C:\fixture path\application root', repair=True)
+        self.assertEqual(command,
+                         '"C:\\Windows\\System32\\msiexec.exe" /i "C:\\fixture path\\package.msi" /qn /norestart'
+                         ' APPDIR="C:\\fixture path\\application root" CREATE_SHORTCUTS=""'
+                         ' REINSTALL=ALL REINSTALLMODE=amus /l*v "C:\\fixture path\\install.log"')
+        self.assertNotIn(r'\"', command)
+        with self.assertRaises(ValueError):
+            fixture_msi_command('msiexec', '/i', 'fixture.msi', 'log', 'injected" PROPERTY=value')
+
+    def test_fixture_uses_native_command_with_explicit_executable_and_no_shell(self):
+        case = WindowsInstallerFixtureTests('test_install_upgrade_repair_uninstall_preserve_unmanaged_data')
+        case.directory = Path('fixture-work')
+        case.msiexec = Path('C:/Windows/System32/msiexec.exe')
+        command = fixture_msi_command(case.msiexec, '/i', 'fixture.msi', 'fixture.log', 'fixture app root')
+        with patch.object(Path, 'open'), patch.object(subprocess, 'run', return_value=SimpleNamespace(returncode=0)) as launch:
+            case.run_tool(command, 'command.log', native_msi=True)
+        self.assertEqual(launch.call_args.args[0], command)
+        self.assertEqual(launch.call_args.kwargs['executable'], str(case.msiexec))
+        self.assertIs(launch.call_args.kwargs['shell'], False)
+        self.assertEqual(launch.call_args.kwargs['timeout'], 180)
+
     def test_mszip_dictionary_and_uncompressed_hashes(self):
         files = {'File_one': b'abcd' * 20000, 'File_two': b'xyz' * 19000}
         expected = {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}
@@ -178,10 +222,15 @@ class WindowsInstallerFixtureTests(unittest.TestCase):
         self.assertIsNotNone(wix, 'Preinstalled WiX 3 is required; the fixture test downloads no tools')
         self.candle, self.light = wix / 'candle.exe', wix / 'light.exe'
 
-    def run_tool(self, arguments, log, accepted=(0,)):
+    def run_tool(self, arguments, log, accepted=(0,), native_msi=False):
         with (self.directory / log).open('wb') as stream:
-            result = subprocess.run([str(value) for value in arguments], cwd=self.directory, stdout=stream,
-                                    stderr=subprocess.STDOUT, timeout=180, check=False)
+            command = arguments if native_msi else [str(value) for value in arguments]
+            options = {'executable': str(self.msiexec)} if native_msi else {}
+            if native_msi:
+                stream.write((command + '\n').encode('utf-8'))
+                stream.flush()
+            result = subprocess.run(command, cwd=self.directory, stdout=stream, shell=False,
+                                    stderr=subprocess.STDOUT, timeout=180, check=False, **options)
         self.assertIn(result.returncode, accepted, f'Installer fixture command failed ({result.returncode}); see {self.directory / log}')
 
     def build(self, version):
@@ -243,12 +292,11 @@ class WindowsInstallerFixtureTests(unittest.TestCase):
         require_high_integrity()
         self.verify_fixture(fixture)
         self.cleanup_codes.add(fixture['product_code'])
-        arguments = [self.msiexec, '/i', fixture['msi'], '/qn', '/norestart',
-                     'APPDIR=' + str(self.appdir), 'CREATE_SHORTCUTS=',
-                     '/l*v', self.directory / (fixture['version'] + ('-repair' if repair else '-install') + '.log')]
-        if repair:
-            arguments += ['REINSTALL=ALL', 'REINSTALLMODE=amus']
-        self.run_tool(arguments, fixture['version'] + ('-repair-command.log' if repair else '-install-command.log'), (0, 3010))
+        command = fixture_msi_command(self.msiexec, '/i', fixture['msi'],
+                                      self.directory / (fixture['version'] + ('-repair' if repair else '-install') + '.log'),
+                                      self.appdir, repair)
+        self.run_tool(command, fixture['version'] + ('-repair-command.log' if repair else '-install-command.log'),
+                      (0, 3010), native_msi=True)
 
     def uninstall(self, code, cleanup=False):
         require_high_integrity()
@@ -256,8 +304,9 @@ class WindowsInstallerFixtureTests(unittest.TestCase):
         fixture = self.fixtures[code]
         self.verify_fixture(fixture)
         self.assertEqual(code, authoring._guid(self.identity, 'product:' + fixture['version'] + ':' + authoring.validate_payload(fixture['payload'], fixture['version'])['payload_sha256']))
-        self.run_tool([self.msiexec, '/x', code, '/qn', '/norestart', '/l*v', self.directory / (fixture['version'] + '-uninstall.log')],
-                      fixture['version'] + '-uninstall-command.log', (0, 1605, 3010) if cleanup else (0, 3010))
+        command = fixture_msi_command(self.msiexec, '/x', code, self.directory / (fixture['version'] + '-uninstall.log'))
+        self.run_tool(command, fixture['version'] + '-uninstall-command.log',
+                      (0, 1605, 3010) if cleanup else (0, 3010), native_msi=True)
         self.cleanup_codes.discard(code)
 
     def cleanup_products(self):

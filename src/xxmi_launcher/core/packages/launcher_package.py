@@ -117,6 +117,7 @@ class LauncherPackage(Package):
             target=ExecutableLaunch(
                 exe_path=Path(os.environ.get('SYSTEMROOT', r'C:\Windows')) / 'System32' / 'msiexec.exe',
                 cmd_args=cmd_args,
+                preserve_arguments=True,
             ),
         )
 
