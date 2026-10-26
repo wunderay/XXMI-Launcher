@@ -1,0 +1,2 @@
+# Keep downloaded receipts and checksums byte-for-byte on every platform.
+* -text whitespace=cr-at-eol
