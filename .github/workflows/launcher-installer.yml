@@ -3,7 +3,9 @@ on:
   push:
     branches: [codex/prepared-mod-launcher]
     paths:
-      - 'tools/Installer/**'
+      - 'tools/Installer/authoring.py'
+      - 'tools/Installer/validate_msi.py'
+      - 'tools/Installer/build-msi.ps1'
       - 'tools/PreparedLoading/*.py'
       - 'tools/PreparedLoading/*.ps1'
       - 'tools/PreparedLoading/launcher.spec'
@@ -80,8 +82,8 @@ jobs:
         with:
           name: xxmi-original-installer
           include-hidden-files: true
+          # MSI distribution is held during the reported Defender investigation.
           path: |
-            work/installer/*.msi
             work/installer/*.sha256
             work/installer/*.json
             work/installer/*.wxs
