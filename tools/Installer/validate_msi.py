@@ -136,12 +136,8 @@ def require(condition, message):
         raise ValueError(message)
 
 
-def cabinet_hashes(data, expected_sizes):
-    '''Decode only single-cabinet NONE/MSZIP data, entirely in memory.
-
-    Cabinet names must be MSI File identifiers. No cabinet path is ever written
-    to disk, and decompressed bytes are bounded by the verified staged payload.
-    '''
+def cabinet_layout(data, expected_sizes):
+    '''Validate file spans before decompression, allowing exact SmartCab aliases.'''
     require(len(data) >= 36, 'Truncated cabinet header')
     header = struct.unpack_from('<4sIIIIIBBHHHHH', data)
     signature, _, total, _, files_offset, _, minor, major, folder_count, file_count, flags, _, index = header
@@ -163,16 +159,39 @@ def cabinet_hashes(data, expected_sizes):
         require(name in expected_sizes and name not in seen and size == expected_sizes[name], 'Unexpected cabinet file/name/size')
         require(folder < folder_count, 'Spanned cabinet files are unsupported')
         seen.add(name)
-        files.append((name, size, offset, folder))
-    result = {}
+        files.append({'name': name, 'size': size, 'offset': offset, 'folder': folder})
+    layout = {'cabinet_bytes': len(data), 'file_count': file_count, 'folder_count': folder_count,
+              'files': files, 'folders': []}
     for folder_index, (offset, block_count, compression) in enumerate(folders):
         require(compression in (0, 1), 'Only uncompressed/MSZIP cabinets are permitted')
         require(position <= offset <= len(data), 'Invalid cabinet data offset')
-        members = [entry for entry in files if entry[3] == folder_index]
-        bound = sum(entry[1] for entry in members)
+        members = [entry for entry in files if entry['folder'] == folder_index]
+        declared = sum(entry['size'] for entry in members)
+        # WiX 3.14.1 cabcutil.cpp DuplicateFile copies size, folder and offset
+        # for an identical file. Only an exact whole-file span may be shared.
+        spans = sorted({(entry['offset'], entry['size']) for entry in members if entry['size']})
+        bound = 0
+        for start, size in spans:
+            require(start == bound, f'Cabinet folder {folder_index} has a gap/partial overlap: offset={start}, expected={bound}, size={size}')
+            bound += size
+        require(bound <= declared, 'Cabinet unique spans exceed declared payload bytes')
+        require(all(entry['offset'] <= bound for entry in members if not entry['size']), f'Cabinet folder {folder_index} has an out-of-bounds empty file')
+        layout['folders'].append({'index': folder_index, 'data_offset': offset, 'block_count': block_count,
+                                  'compression': compression, 'declared_file_bytes': declared,
+                                  'unique_file_bytes': bound, 'decoded_bytes': 0,
+                                  'shared_nonempty_aliases': sum(bool(entry['size']) for entry in members) - len(spans),
+                                  'unique_nonempty_spans': [{'offset': start, 'size': size} for start, size in spans]})
+    return layout
+
+
+def _cabinet_hashes(data, layout):
+    result = {}
+    for folder in layout['folders']:
+        folder_index, compression = folder['index'], folder['compression']
+        bound = folder['unique_file_bytes']
         output = bytearray()
-        cursor = offset
-        for _ in range(block_count):
+        cursor = folder['data_offset']
+        for _ in range(folder['block_count']):
             require(cursor + 8 <= len(data), 'Truncated cabinet data header')
             _, compressed_size, unpacked_size = struct.unpack_from('<IHH', data, cursor)
             cursor += 8
@@ -186,13 +205,29 @@ def cabinet_hashes(data, expected_sizes):
                 require(decoder.eof and not decoder.unused_data and not decoder.unconsumed_tail, 'Invalid MSZIP block')
             require(len(block) == unpacked_size and len(output) + len(block) <= bound, 'Cabinet decompression exceeds file bounds')
             output.extend(block)
-        require(len(output) == bound, 'Cabinet decompressed size does not match its files')
-        expected_offset = 0
-        for name, size, file_offset, _ in sorted(members, key=lambda entry: entry[2]):
-            require(file_offset == expected_offset and file_offset + size <= len(output), 'Cabinet files overlap or leave gaps')
-            result[name] = hashlib.sha256(memoryview(output)[file_offset:file_offset + size]).hexdigest()
-            expected_offset += size
+            folder['decoded_bytes'] = len(output)
+        require(len(output) == bound, f'Cabinet folder {folder_index} decompressed size mismatch: decoded={len(output)}, unique_spans={bound}, declared_files={folder["declared_file_bytes"]}')
+        span_hashes = {}
+        for entry in layout['files']:
+            if entry['folder'] != folder_index:
+                continue
+            size, file_offset = entry['size'], entry['offset']
+            require(file_offset + size <= len(output), 'Cabinet file exceeds its decoded folder')
+            span = (file_offset, size)
+            if span not in span_hashes:
+                span_hashes[span] = hashlib.sha256(memoryview(output)[file_offset:file_offset + size]).hexdigest()
+            result[entry['name']] = span_hashes[span]
     return result
+
+
+def cabinet_hashes(data, expected_sizes):
+    '''Decode bounded NONE/MSZIP bytes in memory; never extract cabinet paths.'''
+    return _cabinet_hashes(data, cabinet_layout(data, expected_sizes))
+
+
+def validate_embedded_hashes(hashes, files, expected):
+    require(set(hashes) == set(files) and {files[key]: value for key, value in hashes.items()} == expected,
+            'Embedded cabinet SHA-256 differs from the staged payload')
 
 
 ALLOWED_TABLES = set('''_Validation ActionText AdminExecuteSequence AdminUISequence AdvtExecuteSequence
@@ -318,7 +353,7 @@ def validate_tables(tables, template, plan, identity):
     return properties, file_map, sizes
 
 
-def validate_msi(msi, payload, version, identity=None):
+def validate_msi(msi, payload, version, identity=None, diagnostic_path=None):
     identity = identity or authoring.PRODUCTION_IDENTITY
     plan = authoring.validate_payload(Path(payload), version)
     msi = Path(msi).resolve(strict=True)
@@ -337,10 +372,18 @@ def validate_msi(msi, payload, version, identity=None):
         limit = sum(sizes.values()) + len(sizes) * 1024 + 1024 * 1024
         for row in media:
             cabinet = database.stream(row['Cabinet'][1:], limit)
-            for identifier, sha256 in cabinet_hashes(cabinet, sizes).items():
+            layout = cabinet_layout(cabinet, sizes)
+            if diagnostic_path is not None:
+                Path(diagnostic_path).write_text(json.dumps(layout, indent=4) + '\n', encoding='utf-8')
+            try:
+                cabinet_files = _cabinet_hashes(cabinet, layout)
+            finally:
+                if diagnostic_path is not None:
+                    Path(diagnostic_path).write_text(json.dumps(layout, indent=4) + '\n', encoding='utf-8')
+            for identifier, sha256 in cabinet_files.items():
                 require(identifier not in hashes, 'Duplicate file across embedded cabinets')
                 hashes[identifier] = sha256
-        require({files[key]: value for key, value in hashes.items()} == plan['files'], 'Embedded cabinet SHA-256 differs from the staged payload')
+        validate_embedded_hashes(hashes, files, plan['files'])
     finally:
         database.close()
     return {'format': 1, 'msi': str(msi), 'msi_sha256': authoring.digest(msi), 'version': version,
@@ -357,7 +400,8 @@ def main():
     parser.add_argument('--version', required=True)
     parser.add_argument('--output', required=True, type=Path)
     args = parser.parse_args()
-    result = validate_msi(args.msi, args.payload, args.version)
+    result = validate_msi(args.msi, args.payload, args.version,
+                          diagnostic_path=args.output.with_name('INSTALLER-CABINET.json'))
     args.output.write_text(json.dumps(result, indent=4) + '\n', encoding='utf-8')
     print('PASS: MSI database, identity, installation actions, and embedded payload match')
 

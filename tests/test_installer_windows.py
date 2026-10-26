@@ -47,6 +47,8 @@ def fixture_payload(root, version):
         authoring.EXECUTABLE: INERT + version.encode('ascii'),
         'Resources/Bin/_internal/runtime.dll': INERT + b'fixture runtime ' + version.encode('ascii'),
         'Themes/Default/theme.json': INERT + b'fixture theme',
+        'Themes/duplicate-one.txt': INERT + b'identical SmartCab fixture content',
+        'Themes/duplicate-two.txt': INERT + b'identical SmartCab fixture content',
         'Locale/en/strings.json': INERT + b'fixture locale ' + version.encode('ascii'),
         'LICENSE': INERT + b'Fixture license',
         'Themes/obsolete.txt' if version == '1.0.0' else 'Themes/new.txt': INERT + b'fixture versioned asset',
@@ -62,13 +64,18 @@ def fixture_payload(root, version):
     return files
 
 
-def cabinet(files, compressed=True):
+def cabinet(files, compressed=True, deduplicate=False):
     '''Small, independent CAB fixtures; no external compressor or extraction.'''
     file_table, contents = bytearray(), bytearray()
+    offsets = {}
     for name, data in files.items():
-        file_table.extend(struct.pack('<IIHHHH', len(data), len(contents), 0, 0, 0, 0))
+        offset = offsets.get(data) if deduplicate else None
+        if offset is None:
+            offset = len(contents)
+            offsets[data] = offset
+            contents.extend(data)
+        file_table.extend(struct.pack('<IIHHHH', len(data), offset, 0, 0, 0, 0))
         file_table.extend(name.encode('ascii') + b'\0')
-        contents.extend(data)
     blocks, history = bytearray(), b''
     for offset in range(0, len(contents), 32768):
         raw = bytes(contents[offset:offset + 32768])
@@ -116,6 +123,40 @@ class InstallerStaticValidationTests(unittest.TestCase):
         for compressed in (False, True):
             with self.subTest(compressed=compressed):
                 self.assertEqual(validator.cabinet_hashes(cabinet(files, compressed), {name: len(data) for name, data in files.items()}), expected)
+
+    def test_smartcab_exact_span_aliases_hash_every_name_and_bound_unique_bytes(self):
+        files = {'File_one': b'abcd' * 20000, 'File_empty': b'', 'File_two': b'xyz' * 19000,
+                 'File_copy': b'abcd' * 20000, 'File_empty_copy': b''}
+        expected = {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}
+        sizes = {name: len(data) for name, data in files.items()}
+        for compressed in (False, True):
+            data = cabinet(files, compressed, deduplicate=True)
+            layout = validator.cabinet_layout(data, sizes)
+            folder = layout['folders'][0]
+            self.assertEqual(folder['shared_nonempty_aliases'], 1)
+            self.assertEqual(folder['unique_file_bytes'], len(files['File_one']) + len(files['File_two']))
+            self.assertEqual(folder['declared_file_bytes'], sum(sizes.values()))
+            hashes = validator.cabinet_hashes(data, sizes)
+            self.assertEqual(hashes, expected)
+            validator.validate_embedded_hashes(hashes, {name: name for name in files}, expected)
+            wrong_source = dict(expected, File_copy=hashlib.sha256(b'efgh' * 20000).hexdigest())
+            with self.assertRaisesRegex(ValueError, 'SHA-256'):
+                validator.validate_embedded_hashes(hashes, {name: name for name in files}, wrong_source)
+        self.assertEqual(validator.cabinet_hashes(cabinet({'File_empty': b''}), {'File_empty': 0}),
+                         {'File_empty': hashlib.sha256(b'').hexdigest()})
+
+    def test_smartcab_rejects_partial_overlaps_gaps_huge_offsets_and_empty_file_escape(self):
+        files = {'File_one': b'a' * 100, 'File_two': b'b' * 50}
+        second_offset_field = 44 + 16 + len('File_one') + 1 + 4
+        for offset in (0, 50, 101, 0xffffffff):
+            damaged = bytearray(cabinet(files))
+            struct.pack_into('<I', damaged, second_offset_field, offset)
+            with self.subTest(offset=offset), self.assertRaisesRegex(ValueError, 'gap/partial overlap'):
+                validator.cabinet_layout(bytes(damaged), {name: len(data) for name, data in files.items()})
+        empty = bytearray(cabinet({'File_one': b'a' * 100, 'File_two': b''}))
+        struct.pack_into('<I', empty, second_offset_field, 101)
+        with self.assertRaisesRegex(ValueError, 'out-of-bounds empty file'):
+            validator.cabinet_layout(bytes(empty), {'File_one': 100, 'File_two': 0})
 
     def test_cabinet_rejects_bad_headers_names_offsets_and_output_bounds(self):
         original = cabinet({'File_one': b'a' * 100})
@@ -282,7 +323,8 @@ class WindowsInstallerFixtureTests(unittest.TestCase):
         for name, data in fixture['expected'].items():
             self.assertTrue(data.startswith(INERT))
             self.assertEqual((fixture['payload'] / name).read_bytes(), data)
-        receipt = validator.validate_msi(fixture['msi'], fixture['payload'], fixture['version'], self.identity)
+        receipt = validator.validate_msi(fixture['msi'], fixture['payload'], fixture['version'], self.identity,
+                                         diagnostic_path=fixture['msi'].parent / 'INSTALLER-CABINET.json')
         self.assertEqual(receipt['product_code'], fixture['product_code'])
         self.assertEqual(set(receipt['files']), set(fixture['expected']) | {authoring.MANIFEST})
         self.assertTrue(receipt['read_only'])
