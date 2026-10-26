@@ -1,10 +1,12 @@
 import subprocess
 import webbrowser
 import re
+import psutil
 
 from dataclasses import dataclass
 from customtkinter import filedialog
 from urllib.parse import urlparse
+from tkinter import TclError
 
 import core.event_manager as Events
 import core.config_manager as Config
@@ -16,12 +18,19 @@ from core.locale_manager import L, Locale
 
 from core.config.enums import InjectMode, InputDisableMode, LogLevel
 from core.packages.migoto_package import MigotoFork
+from core.prepared_loading import MODES, REFRESH_KEYS, LIMITS, STATUS_FILE, PreparationCapability, validate_limit, read_preparation_status
 
 from gui.windows.settings.settings_content_frame import SettingsContentFrame, SettingsSection, SettingsOption, OptionWidget, Condition
 
 
 class ModelImporterSettingsFrame(SettingsContentFrame):
     def __init__(self, master):
+        self._preparation_capability = self.get_preparation_capability()
+        self._preparation_status = self.get_preparation_status(self._preparation_capability)
+        if Vars.Active.Migoto.preparation_mode.get() not in MODES:
+            Vars.Active.Migoto.preparation_mode.set('off')
+        if Vars.Active.Migoto.preparation_refresh_key.get() not in REFRESH_KEYS:
+            Vars.Active.Migoto.preparation_refresh_key.set('')
         super().__init__(
             master,
             sections=(
@@ -119,6 +128,114 @@ class ModelImporterSettingsFrame(SettingsContentFrame):
                             ),
                         ),
 
+                    ),
+                ),
+
+                SettingsSection(
+                    label_text=L('importer_settings_preparation_section', 'Experimental mod preparation'),
+                    options=(
+                        SettingsOption(
+                            label_text=L('importer_settings_preparation_mode', 'Preparation mode'),
+                            widget=OptionWidget.DROPDOWN,
+                            value_variable='Vars.Active.Migoto.preparation_mode',
+                            dropdown_values=MODES,
+                            tooltip=lambda: self._preparation_capability.format_diagnostics(self._preparation_status) + '\n\n'
+                                'Off disables preparation. Adaptive prepares observed assets. Prepared profile uses '
+                                'the native prepared working set. Options require an authenticated compatible package. '
+                                'Use the independent protocol v2 switches to opt into each rollout stage.',
+                            value_validate_command=self.validate_preparation_mode,
+                            enabled_if=Condition(variables=('Vars.Active.Migoto.manage_xxmi_dll_config',), predicate=self.can_prepare),
+                        ),
+                        *tuple(SettingsOption(
+                            label_text=label,
+                            widget=OptionWidget.CHECKBOX,
+                            value_variable=f'Vars.Active.Migoto.preparation_{key}',
+                            tooltip='Requires authenticated preparation protocol v2. Disabled by default; each rollout stage can be disabled independently.',
+                            enabled_if=Condition(variables=('Vars.Active.Migoto.manage_xxmi_dll_config',),
+                                predicate=lambda key=key: self.can_prepare_feature(key)),
+                        ) for key, label in (
+                            ('cpu_cache_enabled', 'Enable CPU cache'),
+                            ('gpu_cache_enabled', 'Enable GPU prewarming'),
+                            ('adaptive_learning', 'Learn observed asset usage'),
+                            ('transactional_activation', 'Enable transactional refresh'),
+                            ('general_fast_refresh', 'Enable general configuration refresh'),
+                        )),
+                        SettingsOption(
+                            label_text='Full preparation rescan shortcut',
+                            widget=OptionWidget.DROPDOWN,
+                            value_variable='Vars.Active.Migoto.preparation_full_rescan_key',
+                            dropdown_values=REFRESH_KEYS,
+                            tooltip='Rebuilds the preparation plan from all declared assets. Must differ from the activation shortcut; F10 remains available.',
+                            enabled_if=Condition(variables=('Vars.Active.Migoto.manage_xxmi_dll_config',),
+                                predicate=lambda: self.can_prepare_feature('full_rescan_key')),
+                        ),
+                        *tuple(SettingsOption(
+                            label_text=label,
+                            widget=OptionWidget.INPUT_STR,
+                            value_variable=f'Vars.Active.Migoto.preparation_{key}',
+                            tooltip=tooltip,
+                            enabled_if=Condition(variables=('Vars.Active.Migoto.manage_xxmi_dll_config',),
+                                predicate=lambda key=key: self.can_prepare_feature(key)),
+                        ) for key, label, tooltip in (
+                            ('profile_name', 'Preparation profile name', 'Optional display label. Up to 128 plain characters.'),
+                            ('profile_members', 'Preparation profile members', 'Exact Resource/CustomShader IDs separated by |. Empty selects all declared assets. Dependencies are validated by the native compiler.'),
+                        )),
+                        *tuple(SettingsOption(
+                            label_text=label,
+                            widget=OptionWidget.INPUT_INT,
+                            value_variable=f'Vars.Active.Migoto.preparation_{key}',
+                            tooltip=f'Allowed range: {LIMITS[key][0]}–{LIMITS[key][1]}. '
+                                + ('Enabled caches require at least 16 MiB. ' if key in ('cpu_cache_mb', 'gpu_cache_mb') else '')
+                                + ('Must not exceed the enabled CPU cache limit. ' if key == 'max_asset_mb' else '')
+                                + ('Zero disables CPU and dependent GPU preparation.' if key == 'cpu_cache_mb'
+                                   else 'Zero disables GPU preparation while keeping the CPU cache.' if key == 'gpu_cache_mb' else ''),
+                            value_validate_command=lambda key=key: self.validate_preparation_limit(key),
+                            enabled_if=Condition(variables=('Vars.Active.Migoto.manage_xxmi_dll_config',), predicate=self.can_prepare),
+                        ) for key, label in (
+                            ('cpu_cache_mb', 'CPU cache limit (MiB)'),
+                            ('gpu_cache_mb', 'GPU cache limit (MiB)'),
+                            ('disk_cache_mb', 'Derived disk cache limit (MiB; 0 disables)'),
+                            ('max_asset_mb', 'Maximum asset size (MiB)'),
+                            ('worker_threads', 'Preparation workers'),
+                            ('max_pending_jobs', 'Maximum pending jobs'),
+                            ('create_budget_ms', 'Creation budget (ms)'),
+                            ('upload_budget_mb', 'Upload budget (MiB)'),
+                        )),
+                        SettingsOption(
+                            label_text='Apply prepared filename refresh',
+                            widget=OptionWidget.DROPDOWN,
+                            value_variable='Vars.Active.Migoto.preparation_refresh_key',
+                            dropdown_values=REFRESH_KEYS,
+                            tooltip='Applies only a replacement already prepared when the shortcut is pressed. '
+                                'Supports verified static vertex/index buffer filename edits. Unsupported edits keep '
+                                'using F10. A pending preparation is not activated later by an earlier key press.',
+                            enabled_if=Condition(variables=('Vars.Active.Migoto.manage_xxmi_dll_config',), predicate=self.can_prepare),
+                        ),
+                        SettingsOption(
+                            label_text='Allow GPU creation during a loading window',
+                            widget=OptionWidget.CHECKBOX,
+                            value_variable='Vars.Active.Migoto.preparation_loading_window',
+                            tooltip='Enable only during a known loading window. Disabled by default. '
+                                'GPU cache memory and creation/upload budgets still apply.',
+                            enabled_if=Condition(variables=('Vars.Active.Migoto.manage_xxmi_dll_config',), predicate=self.can_prepare),
+                        ),
+                        SettingsOption(
+                            label_text='XXMI libraries recovery',
+                            widget=OptionWidget.BUTTON,
+                            value_variable='',
+                            button_text='Status and rollback',
+                            button_command=self.development_package_status,
+                            tooltip='Installation and updates use the normal launcher package flow. Rollback restores the previous authenticated libraries and managed configuration after verifying the game is stopped.',
+                        ),
+                        SettingsOption(
+                            label_text=f'Preparation snapshot: {self._preparation_status.label}',
+                            widget=OptionWidget.BUTTON,
+                            value_variable='',
+                            button_text='Diagnostics',
+                            button_command=self.show_preparation_diagnostics,
+                            tooltip='Status is sampled when settings open. Diagnostics refreshes the native report. '
+                                'Preparing and Ready are separate from mod enabled status.',
+                        ),
                     ),
                 ),
 
@@ -273,6 +390,109 @@ class ModelImporterSettingsFrame(SettingsContentFrame):
 
             ),
         )
+
+    @staticmethod
+    def get_preparation_capability():
+        if Launcher.xxmi_injector:
+            return Launcher.xxmi_injector.preparation_capability()
+        return PreparationCapability(False, 'XXMI package is unavailable.')
+
+    def can_prepare(self):
+        return self._preparation_capability.supported and self.manage_xxmi_dll_config()
+
+    def can_prepare_feature(self, key):
+        return (self.can_prepare() and self._preparation_capability.protocol_version >= 2
+                and key in self._preparation_capability.features)
+
+    @staticmethod
+    def get_preparation_status(capability):
+        return read_preparation_status(Config.Active.Importer.importer_path / STATUS_FILE,
+                                       capability, process_is_alive=psutil.pid_exists)
+
+    def validate_preparation_mode(self):
+        if Vars.Active.Migoto.preparation_mode.get() not in self._preparation_capability.modes:
+            return 'This package does not support the selected mode; preparation will remain off.'
+        return ''
+
+    @staticmethod
+    def validate_preparation_limit(key):
+        try:
+            error = validate_limit(key, getattr(Vars.Active.Migoto, f'preparation_{key}').get())
+            if error:
+                return error
+            if key in ('max_asset_mb', 'cpu_cache_mb'):
+                cpu_limit = Vars.Active.Migoto.preparation_cpu_cache_mb.get()
+                if cpu_limit > 0 and Vars.Active.Migoto.preparation_max_asset_mb.get() > cpu_limit:
+                    return 'Maximum asset size must not exceed the CPU cache limit.'
+            return ''
+        except (ValueError, TypeError, TclError):
+            return 'Enter an integer.'
+
+    @staticmethod
+    def _development_error(error):
+        Events.Call(Events.Application.ShowError(
+            title='XXMI libraries operation refused', message=str(error),
+            confirm_text='Close', modal=True,
+        ))
+
+    def development_package_status(self):
+        package = Launcher.xxmi_injector
+        try:
+            if not package.development_release.selected:
+                importer = Config.Active.Importer.importer_path
+                if not package.installed_release.available(importer):
+                    if (importer / '.xxmi-recovery-required.json').exists():
+                        requested = Events.Call(Events.Application.ShowInfo(title='XXMI installation interrupted',
+                            message='The first installation did not finish. Stop the game, then repair XXMI libraries through the launcher. Your mods and configuration are preserved.',
+                            confirm_text='Repair', cancel_text='Close', modal=True))
+                        if requested:
+                            Events.Fire(Events.Application.Update(packages=['XXMI'], force=True, reinstall=True))
+                        return
+                    Events.Call(Events.Application.ShowInfo(title='XXMI libraries recovery',
+                        message='XXMI libraries install and update through the launcher. No previous authenticated installation is available for rollback yet.',
+                        confirm_text='Close', modal=True))
+                    return
+                value = package.installed_release.inspect(package.upstream_package_path, importer)
+                requested = Events.Call(Events.Application.ShowInfo(title='XXMI libraries recovery',
+                    message=f"Previous version: {value['version']}\n\nRestore the previous authenticated libraries and managed configuration. Stop the game before rollback. Your mods are preserved.",
+                    confirm_text='Roll back', cancel_text='Close', modal=True))
+                if requested:
+                    restored = package.rollback_installed_package()
+                    self._preparation_capability = self.get_preparation_capability()
+                    self._preparation_status = self.get_preparation_status(self._preparation_capability)
+                    for name in restored['settings']:
+                        variable = getattr(Vars.Active.Migoto, name, None)
+                        if variable is not None:
+                            variable.set(getattr(Config.Active.Migoto, name))
+                    Vars.Active.Migoto.manage_xxmi_dll_config.set(Vars.Active.Migoto.manage_xxmi_dll_config.get())
+                    Config.Manager.save()
+                    Events.Call(Events.Application.ShowInfo(title='XXMI libraries restored',
+                        message='The previous authenticated installation and managed configuration were restored. Ordinary launcher updates remain available.',
+                        confirm_text='Close', modal=True))
+                return
+            selection = package.development_release.selection()
+            requested = Events.Call(Events.Application.ShowInfo(
+                title='Development package pin',
+                message=f"Version: {selection['version']}\nStage: {selection['stage']}\nArchive SHA256: {selection['archive_sha256']}\nImporter: {selection['importer']}\n\nRollback restores prior libraries and managed configuration. Mods remain untouched. Stop the game before rollback.",
+                confirm_text='Roll back', cancel_text='Close', modal=True,
+            ))
+            if requested:
+                package.rollback_development_package()
+                Events.Call(Events.Application.ShowInfo(title='Development package rolled back',
+                    message='Prior libraries and managed configuration were restored and verified. Ordinary authenticated XXMI updates are enabled.',
+                    confirm_text='Close', modal=True))
+        except Exception as error:
+            self._development_error(error)
+
+    def show_preparation_diagnostics(self):
+        capability = self.get_preparation_capability()
+        status = self.get_preparation_status(capability)
+        Events.Call(Events.Application.ShowInfo(
+            title='Experimental mod preparation',
+            message=capability.format_diagnostics(status),
+            confirm_text='Close',
+            modal=True,
+        ))
 
     @staticmethod
     def is_xxmi_dll(fork: MigotoFork = MigotoFork.XXMI, min_version: str | None = None) -> bool:

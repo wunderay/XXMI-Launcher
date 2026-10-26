@@ -1,0 +1,3 @@
+
+# Generated unified patch contexts must preserve upstream whitespace.
+tools/PreparedLoading/native.patch -whitespace

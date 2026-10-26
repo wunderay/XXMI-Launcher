@@ -1,0 +1,7 @@
+{
+  "purpose": "Normal native package capability integration; publisher signing and actual-game qualification remain required",
+  "native_parent": "58a87cbce73c8888c0df88cd6fa175fff2efbb16",
+  "native_tree": "9da30f68f7c6b71668b04c6557d198674352dc2a",
+  "native_base": "a7847eae82aaac32175c9a7d199673d5c9323bcd",
+  "patch_sha256": "f6dcc8255fdf3e4c198dc1e519f583d52e248306e73c9163a3fb87be4fdefaff"
+}

@@ -1,0 +1,97 @@
+name: Original launcher MSI
+on:
+  push:
+    branches: [codex/prepared-mod-launcher]
+    paths:
+      - 'tools/Installer/**'
+      - 'tools/PreparedLoading/*.py'
+      - 'tools/PreparedLoading/*.ps1'
+      - 'tools/PreparedLoading/launcher.spec'
+      - 'tools/PreparedLoading/launcher-version.txt'
+      - 'tests/test_installer*.py'
+      - 'src/xxmi_launcher/**'
+      - 'requirements.txt'
+      - 'Themes/**'
+      - 'Locale/**'
+      - 'LICENSE'
+      - '.github/workflows/launcher-installer.yml'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Development MSI version (canonical X.Y.Z)'
+        default: '2.4.10'
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: original-msi-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  installer:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    env:
+      INSTALLER_VERSION: ${{ inputs.version || '2.4.10' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Use isolated temporary files
+        shell: pwsh
+        run: |
+          $fixtureTemp = Join-Path $env:GITHUB_WORKSPACE 'work\installer-temp'
+          New-Item -ItemType Directory -Force $fixtureTemp | Out-Null
+          "TEMP=$fixtureTemp" >> $env:GITHUB_ENV
+          "TMP=$fixtureTemp" >> $env:GITHUB_ENV
+      - name: Qualify original authoring with inert MSI fixtures
+        shell: pwsh
+        env:
+          XXMI_RUN_INSTALLER_FIXTURES: '1'
+        run: |
+          python -c 'import subprocess, sys; results = [subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", pattern, "-v"], timeout=600).returncode for pattern in ("test_installer_authoring.py", "test_installer_windows.py")]; sys.exit(any(results))'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build and smoke test the normal launcher payload
+        shell: pwsh
+        run: |
+          python -c 'import sys; sys.path.insert(0, "tools/Installer"); from authoring import validate_version; import os; validate_version(os.environ["INSTALLER_VERSION"])'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./tools/PreparedLoading/build-launcher.ps1 -OutputDirectory ./work/launcher-package -Version $env:INSTALLER_VERSION
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Compile and inspect the original MSI without installing it
+        shell: pwsh
+        run: |
+          $python = Join-Path $env:GITHUB_WORKSPACE 'work\launcher-package\build\venv\Scripts\python.exe'
+          & ./tools/Installer/build-msi.ps1 -Payload ./work/launcher-package/install-payload -Version $env:INSTALLER_VERSION -OutputDirectory ./work/installer -Python $python
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test normal launcher MSI updater
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'src\xxmi_launcher'
+          $python = Join-Path $env:GITHUB_WORKSPACE 'work\launcher-package\build\venv\Scripts\python.exe'
+          & $python -c 'import subprocess, sys; subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_installer_update.py", "-v"], check=True, timeout=120)'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xxmi-original-installer
+          include-hidden-files: true
+          path: |
+            work/installer/*.msi
+            work/installer/*.sha256
+            work/installer/*.json
+            work/installer/*.wxs
+            work/installer/*.log
+            work/launcher-package/LAUNCHER-PACKAGING.json
+            work/launcher-package/LAUNCHER-SELF-TEST.json
+            work/launcher-package/install-payload/LAUNCHER-BUILD.json
+            work/launcher-package/build/launcher-build.log
+            work/installer-fixtures/**/*.log
+            work/installer-fixtures/**/INSTALLER-*.json
+            work/installer-fixtures/**/LIFECYCLE-RESULT.json
+            work/installer-fixtures/**/MSI-DATABASE.json
+          if-no-files-found: warn

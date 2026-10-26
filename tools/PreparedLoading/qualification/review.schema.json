@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Prepared Loading independent review v1",
+  "description": "Referenced review JSON contract. Hash bindings establish evidence consistency, not reviewer identity or authentic game observations. qualify.py performs authoritative semantic validation.",
+  "type": "object",
+  "required": [
+    "origin", "evidence_sha256", "reviewer", "reviewed_utc", "independence_basis",
+    "visual_observation", "first_eligible_frame_observation", "verdict", "appearance", "timing",
+    "scenarios", "candidate_dll_sha256", "baseline_dll_sha256", "samples_sha256",
+    "trace_sha256", "recovery_sha256"
+  ],
+  "properties": {
+    "origin": { "enum": ["actual-game", "synthetic-test"] },
+    "evidence_sha256": {
+      "$ref": "#/$defs/sha256",
+      "description": "SHA256 of UTF-8 json.dumps(manifest without only its top-level review member, sort_keys=True, separators=(',', ':'), ensure_ascii=True, allow_nan=False), without a trailing newline. Binds complete baseline/candidate run and capture records, conditions, scenarios, recovery and optional release_coverage."
+    },
+    "reviewer": { "$ref": "#/$defs/text" },
+    "reviewed_utc": { "$ref": "#/$defs/text" },
+    "independence_basis": { "$ref": "#/$defs/text" },
+    "visual_observation": { "$ref": "#/$defs/text" },
+    "first_eligible_frame_observation": { "$ref": "#/$defs/text" },
+    "verdict": { "const": "accept" },
+    "appearance": { "const": "correct-complete" },
+    "timing": { "const": "first-eligible-frame" },
+    "scenarios": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/text" }
+    },
+    "candidate_dll_sha256": { "$ref": "#/$defs/sha256" },
+    "baseline_dll_sha256": { "$ref": "#/$defs/sha256" },
+    "samples_sha256": { "$ref": "#/$defs/sha256" },
+    "trace_sha256": { "$ref": "#/$defs/sha256" },
+    "recovery_sha256": { "$ref": "#/$defs/sha256" },
+    "release_coverage_sha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "text": { "type": "string", "minLength": 1 }
+  }
+}

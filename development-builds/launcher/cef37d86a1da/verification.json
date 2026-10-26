@@ -1,0 +1,10 @@
+{
+  "launcher_source": "cef37d86a1dafe40c9c807e0d1c704833d105083",
+  "source_input_status": "",
+  "package_sha256": "afc9156ac0b94fa0880ef306c60c1b0a30ff8946f17cbe78830a9b1e743c9637",
+  "exe_sha256": "3b65f7864629aebdb7e7276326f2702cdef2325b6dbabf698057409dc7b47e36",
+  "files_verified": 1801,
+  "workflow_run": "https://github.com/wunderay/XXMI-Launcher/actions/runs/40181635989",
+  "workflow_job": "https://github.com/wunderay/XXMI-Launcher/actions/runs/40181635989/job/121133748048",
+  "qualification": "Windows frozen startup smoke only; no actual-game or release qualification"
+}

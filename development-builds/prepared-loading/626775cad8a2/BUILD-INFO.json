@@ -1,0 +1,17 @@
+{
+  "native_base": "a7847eae82aaac32175c9a7d199673d5c9323bcd",
+  "patch_sha256": "20aedb0816ab2e2b399f90947d20d4749d80b525ccf1f5148e3235b8e48b86c6",
+  "dll_sha256": "26ae27a7019ac6aec64c7560071e8e4d8d97738c2794c29398519353235b8fbe",
+  "launcher_source": "7f589b1cf962b946ff8e57b1c756d770ebeedb33",
+  "workflow_run": "https://github.com/wunderay/XXMI-Launcher/actions/runs/40146131131",
+  "configuration": "Zip Release|x64",
+  "compiler": "14.44.35207",
+  "windows_sdk": "10.0.26100.0\\",
+  "deployment_events": "disabled",
+  "qualification": "Synthetic Windows tests only; real game compatibility and performance unqualified.",
+  "capability_signature": "not signed; launcher capability gate remains closed",
+  "native_source": "626775cad8a2f3a2e1dc1056c437ffa60bd78899",
+  "native_tree": "a7320f0a76ee0be0f3153d731d81532ed49d418f",
+  "corresponding_source_sha256": "1ee4794fafc7149a790bec7641d20ac1428014dd8d81f7d27b241eec40ddd34c",
+  "corresponding_source_files": 2153
+}

@@ -1,0 +1,148 @@
+name: Prepared loading development checks
+on:
+  push:
+    branches: [codex/prepared-mod-launcher]
+    paths:
+      - 'tools/PreparedLoading/native.patch'
+      - 'tools/PreparedLoading/native-candidate.json'
+      - 'tools/PreparedLoading/*.py'
+      - 'tools/PreparedLoading/*.ps1'
+      - 'tools/PreparedLoading/launcher.spec'
+      - 'tools/PreparedLoading/launcher-version.txt'
+      - 'src/xxmi_launcher/**'
+      - 'requirements.txt'
+      - 'Themes/**'
+      - 'Locale/**'
+      - 'tests/test_prepared*.py'
+      - 'tests/test_launcher*.py'
+      - '.github/workflows/prepared-loading-checks.yml'
+  workflow_dispatch:
+    inputs:
+      launcher_only:
+        description: 'Validate launcher installation and lifecycle using unchanged native source evidence'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: prepared-loading-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  launcher-installation:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Build standard installation payload and test staged executable
+        shell: pwsh
+        run: |
+          $fixtureTemp = Join-Path $env:GITHUB_WORKSPACE 'work\launcher-installation-temp'
+          New-Item -ItemType Directory -Force $fixtureTemp | Out-Null
+          $env:TEMP = $fixtureTemp
+          $env:TMP = $fixtureTemp
+          & ./tools/PreparedLoading/build-launcher.ps1 -OutputDirectory ./work/launcher-package
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test normal launcher settings and installation layout
+        shell: pwsh
+        run: |
+          $fixtureTemp = Join-Path $env:GITHUB_WORKSPACE 'work\launcher-installation-temp'
+          $env:TEMP = $fixtureTemp
+          $env:TMP = $fixtureTemp
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'src\xxmi_launcher'
+          $python = Join-Path $env:GITHUB_WORKSPACE 'work\launcher-package\build\venv\Scripts\python.exe'
+          & $python -c 'import subprocess, sys; subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_launcher*.py", "-v"], check=True, timeout=120)'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xxmi-launcher-installation-payload
+          include-hidden-files: true
+          path: |
+            work/launcher-package/install-payload/
+            work/launcher-package/LAUNCHER-PACKAGING.json
+            work/launcher-package/LAUNCHER-SELF-TEST.json
+            work/launcher-package/build/launcher-build.log
+            work/launcher-package/build/pyinstaller/launcher/warn-launcher.txt
+          if-no-files-found: warn
+  launcher-windows:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install isolated fixture dependencies
+        shell: pwsh
+        run: python -m pip install cryptography psutil pywin32
+      - name: Test authenticated package lifecycle and qualification gates
+        shell: pwsh
+        run: |
+          $fixtureTemp = Join-Path $env:GITHUB_WORKSPACE 'work\launcher-fixtures'
+          New-Item -ItemType Directory -Force $fixtureTemp | Out-Null
+          $env:TEMP = $fixtureTemp
+          $env:TMP = $fixtureTemp
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'src\xxmi_launcher'
+          python -m unittest discover -s tests -p 'test_prepared*.py' -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  native-windows:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.launcher_only }}
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - name: Preserve exact source line endings for patch application
+        shell: pwsh
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+        with:
+          path: launcher
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: SpectrumQT/XXMI-Libs-Package
+          ref: a7847eae82aaac32175c9a7d199673d5c9323bcd
+          path: native
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Apply exact native candidate
+        shell: pwsh
+        run: |
+          git -C native apply --check ../launcher/tools/PreparedLoading/native.patch
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git -C native apply ../launcher/tools/PreparedLoading/native.patch
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - uses: microsoft/setup-msbuild@v2
+        with:
+          vs-version: '[17.0,18.0)'
+      - name: Build isolated DLL and run synthetic fixtures
+        shell: pwsh
+        run: |
+          $fixtureTemp = Join-Path $env:GITHUB_WORKSPACE 'work\native-fixtures'
+          New-Item -ItemType Directory -Force $fixtureTemp | Out-Null
+          $env:TEMP = $fixtureTemp
+          $env:TMP = $fixtureTemp
+          & ./launcher/tools/PreparedLoading/build-native.ps1 -NativeSource ./native -OutputDirectory ./work/prepared-build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Preserve source patch
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force work/prepared-build | Out-Null
+          Copy-Item launcher/tools/PreparedLoading/native.patch work/prepared-build/native.patch
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: prepared-loading-development
+          path: work/prepared-build/
+          if-no-files-found: warn
