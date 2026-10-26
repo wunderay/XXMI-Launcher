@@ -43,7 +43,15 @@
         "independently_reproduced": false,
         "antivirus_acceptance_established": false,
         "false_positive_established": false,
-        "affected_nested_file": "not yet supplied",
-        "download_recommended": false
+        "affected_nested_file": "not identified; user supplied exact original MSI URL",
+        "download_recommended": false,
+        "reported_resource": "original immutable f4e0880 MSI download URL",
+        "static_defender_result": "no_detection_in_CI_custom_scan",
+        "defender_definition_version": "1.461.208.0",
+        "defender_engine_version": "1.1.26090.9",
+        "diagnostic_source": "e3c29e0cccfe98907156e0e74d8de9a61e65c627",
+        "diagnostic_run": "https://github.com/wunderay/XXMI-Launcher/actions/runs/40272769199",
+        "ci_real_time_protection": false,
+        "ci_cloud_reporting": false
     }
 }
