@@ -118,6 +118,12 @@ class InstallerAuthoringTests(unittest.TestCase):
             self.generate()
 
     def test_windows_case_collisions_rejected_for_files_and_directories(self):
+        # Detect filesystem behavior before writing a name that could alias a
+        # required fixture file or directory on a case-insensitive volume.
+        probe = self.directory / 'CaseSensitivityProbe'
+        probe.mkdir()
+        if (self.directory / 'casesensitivityprobe').exists():
+            self.skipTest('distinct case variants cannot coexist on this filesystem')
         for extra_name in ('Themes/Default/THEME.json', 'themes/another.txt'):
             extra = self.payload / extra_name
             extra.parent.mkdir(parents=True, exist_ok=True)
@@ -127,6 +133,19 @@ class InstallerAuthoringTests(unittest.TestCase):
             extra.unlink()
             if extra_name.startswith('themes/'):
                 extra.parent.rmdir()
+
+    def test_manifest_case_collisions_rejected_without_filesystem_aliases(self):
+        manifest_path = self.payload / 'LAUNCHER-BUILD.json'
+        original = manifest_path.read_text()
+        for name in ('Themes/Default/THEME.json', 'themes/another.txt'):
+            with self.subTest(name=name):
+                self.manifest(lambda data: data['files'].update({name: '0' * 64}))
+                with self.assertRaisesRegex(ValueError, 'file set'):
+                    self.generate()
+                manifest_path.write_text(original)
+        # A rejected manifest must never mutate or remove an existing payload.
+        self.assertEqual((self.payload / 'Themes/Default/theme.json').read_bytes(), b'{}')
+        self.generate()
 
     def test_symlink_file_directory_and_payload_root_rejected(self):
         outside = self.directory / 'outside'

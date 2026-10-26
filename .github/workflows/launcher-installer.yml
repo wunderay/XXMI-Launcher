@@ -50,9 +50,7 @@ jobs:
         env:
           XXMI_RUN_INSTALLER_FIXTURES: '1'
         run: |
-          python -m unittest discover -s tests -p 'test_installer_authoring.py' -v
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -c 'import subprocess, sys; subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_installer_windows.py", "-v"], check=True, timeout=600)'
+          python -c 'import subprocess, sys; results = [subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", pattern, "-v"], timeout=600).returncode for pattern in ("test_installer_authoring.py", "test_installer_windows.py")]; sys.exit(any(results))'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build and smoke test the normal launcher payload
         shell: pwsh
