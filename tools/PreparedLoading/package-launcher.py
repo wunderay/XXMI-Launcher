@@ -61,6 +61,9 @@ def source_status(root: Path) -> str:
         'git', '-C', str(root), 'status', '--porcelain', '--untracked-files=all',
         '--', 'src', 'Themes', 'Locale', 'requirements.txt', 'LICENSE', 'tools/PreparedLoading',
         'tests/test_launcher_distribution.py', 'tests/test_launcher_user_flow.py',
+        'tools/Installer', 'tests/test_installer_authoring.py',
+        'tests/test_installer_update.py', 'tests/test_installer_windows.py',
+        '.github/workflows/launcher-installer.yml',
         '.github/workflows/prepared-loading-checks.yml',
     ], text=True).strip()
 

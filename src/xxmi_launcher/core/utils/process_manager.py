@@ -53,6 +53,12 @@ class LaunchContext:
     parent_process: "ProcessManager | None" = None
 
 
+@dataclass(frozen=True)
+class OwnedProcessResult:
+    window_found: bool = False
+    exit_code: int | None = None
+
+
 class ProcessManager:
     """
     Generic Windows process manager.
@@ -88,6 +94,7 @@ class ProcessManager:
         self._process: psutil.Process | None = None
         self._process_handle: int | None = None
         self._suspended_process: SuspendedProcess | None = None
+        self._native_process: subprocess.Popen | None = None
 
     # -------------------------------------------------------------------------
     # Public API
@@ -195,6 +202,60 @@ class ProcessManager:
 
         return not self.is_running()
 
+    def wait_for_owned_window_or_exit(
+        self,
+        timeout: float = 30.0,
+        interval: float = 0.25,
+        process_names: tuple[str, ...] = (),
+    ) -> OwnedProcessResult:
+        """Wait for this native launch's window (including observed descendants) or exit.
+
+        Unlike name-based discovery, this never accepts another running instance.
+        Descendants are retained only after observation under a live owned process;
+        psutil's identity check rejects exited processes and reused PIDs.
+        """
+        native_process = self._native_process
+        if native_process is None:
+            raise ValueError("An owned native subprocess launch is required")
+
+        tracked = {}
+        if self._process is not None:
+            try:
+                tracked[(self._process.pid, self._process.create_time())] = self._process
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                pass
+        names = {name.casefold() for name in process_names}
+        deadline = time.monotonic() + timeout
+
+        while True:
+            live = []
+            for identity, process in list(tracked.items()):
+                try:
+                    if not process.is_running() or process.create_time() != identity[1]:
+                        continue
+                    live.append(process)
+                    for child in process.children(recursive=True):
+                        tracked[(child.pid, child.create_time())] = child
+                        live.append(child)
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    continue
+
+            for process in live:
+                try:
+                    if process.is_running() and (not names or process.name().casefold() in names):
+                        if self._has_visible_window(process):
+                            return OwnedProcessResult(True, native_process.poll())
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    continue
+
+            exit_code = native_process.poll()
+            if exit_code is not None:
+                return OwnedProcessResult(exit_code=exit_code)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return OwnedProcessResult()
+            time.sleep(min(interval, remaining))
+
     def start(
         self,
         args: str | None = None,
@@ -235,6 +296,7 @@ class ProcessManager:
         log.debug(f"Starting process: args={args}, wait={wait}, timeout={timeout}, check_running={check_running}, context={context}")
 
         process = self._launch(context)
+        self._native_process = process if process is not None and not isinstance(process, SuspendedProcess) else None
 
         # Native subprocess launches give us a PID directly.
         #
@@ -249,6 +311,13 @@ class ProcessManager:
 
             try:
                 self._process = psutil.Process(process.pid)
+            except psutil.NoSuchProcess:
+                # A short-lived native process may already have completed.
+                # Retain its Popen object so owned waits can inspect the exit code.
+                if self._native_process is None or wait:
+                    self._forget_process()
+                    raise
+                self._forget_process()
             except Exception:
                 self._forget_process()
                 raise

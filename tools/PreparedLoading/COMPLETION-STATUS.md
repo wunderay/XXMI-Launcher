@@ -6,12 +6,14 @@ The native implementation and automated Windows checks pass for the exact
 candidate below.
 
 **Official updater delivery still requires the authorized publisher release
-and package-signing process.** The exact upstream MSI authoring project was not
-found, but a public Nuitka/WiX reference provides a route to recreating a fork
-build; missing upstream build files are not an absolute technical blocker. See
-[the public build research](PUBLIC-BUILD-RESEARCH.md). No replacement MSI has been
-implemented or validated, no normal release/deployment has occurred, and
-actual-game qualification remains open.
+and package-signing process.** An [original MSI project](../Installer/README.md)
+now authors the standard launcher payload without using GPMI's packaging code.
+It preserves the existing installation identity and adds standard MSI updater
+window handling and numeric version comparisons. Windows compilation, read-only
+payload inspection and isolated inert-fixture lifecycle tests are required before
+accepting a build. No normal release/deployment has occurred, and actual-game
+qualification remains open. The earlier [build research](PUBLIC-BUILD-RESEARCH.md)
+is historical context, not the implementation recipe.
 
 ## Current normal user flow
 

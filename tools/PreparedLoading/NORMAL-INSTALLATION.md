@@ -79,21 +79,21 @@ project, and `SpectrumQT/XXMI-Installer` is deprecated. The existing normal
 updater already selects the MSI asset for an MSI installation and authenticates
 downloads before installation.
 
-Further [public research](PUBLIC-BUILD-RESEARCH.md) identifies Advanced Installer
-22.5 in the official MSI and a public GPMI Nuitka/WiX build reference. The exact
-upstream `.aip` project was not found. Recreating a fork MSI is feasible, but the
-reference is not drop-in: XXMI uses different scope, registry, upgrade and
-installer-window contracts. No replacement MSI authoring has been implemented
-or validated here.
+The [original MSI project](../Installer/README.md) builds a development installer
+from the standard payload with XXMI's existing scope, registry and upgrade
+identity. It does not use GPMI packaging code or the unpublished upstream `.aip`.
+The workflow compiles with default ICE validation, inspects the real MSI without
+installing it, and tests install/upgrade/repair/uninstall using isolated inert
+fixtures. Windows qualification must pass for the exact source before delivery.
 
 Official delivery still requires the release owner to build a compatible MSI,
 include the normal launcher payload and publish the authenticated native package
 described above. Windows Authenticode and project updater ECDSA signatures are
-separate; the public build reference supplies neither the existing publisher
+separate; the original build project supplies neither the existing publisher
 private key nor authority to publish an accepted upstream update.
 
 Real-game performance, complete first-eligible-frame appearance, recovery
 observations and independent acceptance remain separate qualification gates.
 The user launches Zenless manually. Automated fixture results do not establish
-that those gates have passed. No MSI deployment, game launch, UAC, signing,
+that those gates have passed. No real MSI deployment, game launch, UAC, signing,
 release publication or merge is performed by this work.
