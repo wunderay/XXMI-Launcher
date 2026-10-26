@@ -10,8 +10,9 @@ and package-signing process.** An [original MSI project](../Installer/README.md)
 now authors the standard launcher payload without using GPMI's packaging code.
 It preserves the existing installation identity and adds standard MSI updater
 window handling and numeric version comparisons. Windows compilation, read-only
-payload inspection and isolated inert-fixture lifecycle tests are required before
-accepting a build. No normal release/deployment has occurred, and actual-game
+payload inspection and isolated inert-fixture lifecycle tests passed. The
+[single development MSI](../../development-builds/installer/1202392c4aea/README.md)
+is available. No normal release/deployment has occurred, and actual-game
 qualification remains open. The earlier [build research](PUBLIC-BUILD-RESEARCH.md)
 is historical context, not the implementation recipe.
 
@@ -58,11 +59,19 @@ multiline control flow; formatting-only passes preserved C++ tokens.
 
 ## Exact candidate and completed verification
 
-- Launcher code/build/test source: `c7749bfc00e47bdebf10d0d95d045e413ea2473d`.
+- Launcher MSI producer: `1202392c4aea7a682da81e63b8e41b6c98fbcc07`.
+- Normal runtime verification source: `9cc5505f3777050b75797474448e2ba153876a48`.
 - Native source: `58a87cbce73c8888c0df88cd6fa175fff2efbb16`.
 - Native tree: `9da30f68f7c6b71668b04c6557d198674352dc2a`.
 - Native base: `a7847eae82aaac32175c9a7d199673d5c9323bcd`.
-- [Full Windows run passed](https://github.com/wunderay/XXMI-Launcher/actions/runs/40231123585).
+- [Full Windows run passed](https://github.com/wunderay/XXMI-Launcher/actions/runs/40267680474).
+- [Original MSI run passed](https://github.com/wunderay/XXMI-Launcher/actions/runs/40268228471):
+  41 passed, two platform skips; inert install/upgrade/repair/uninstall;
+  real MSI default ICE and exact embedded hashes for all 1,801 files.
+
+The subsequent producer changes affect installer validation/tests only; launcher
+runtime source is unchanged from the full Windows run. The MSI and receipts
+were downloaded and their hashes checked again. The real MSI was never installed.
 
 All three jobs passed at that source:
 
@@ -100,8 +109,9 @@ acceptance bound to the complete paired evidence manifest.
 
 ## Remaining release gates
 
-1. Qualify the original compatible MSI builder, then use the authorized publisher
-   release/package-signing process for official updater delivery. The native metadata, DLLs
+1. Use the authorized publisher release/package-signing process for official
+   updater delivery. The original development MSI is built and qualified as
+   described above. The native metadata, DLLs
    and outer package must be authenticated through the existing signer before
    the launcher accepts support. No signing key or substitute trust path is
    created by this work.

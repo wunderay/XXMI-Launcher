@@ -1,0 +1,12 @@
+{
+    "payload": "install-payload",
+    "executable": "Resources/Bin/XXMI Launcher.exe",
+    "manifest_sha256": "accd61518d932ea37db5703da67d35256f0366d557f87d321cacee07ad84855d",
+    "smoke_test": "passed: staged installation exe; offline hidden GUI, Tcl/Tkhtml, imports, localization, image, version, file integrity; no bundle writes",
+    "normal_application_started": false,
+    "game_tested": false,
+    "self_test_result": {
+        "format": 1,
+        "passed": true
+    }
+}

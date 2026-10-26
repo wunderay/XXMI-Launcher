@@ -1,0 +1,39 @@
+{
+    "format": 1,
+    "source": "1202392c4aea7a682da81e63b8e41b6c98fbcc07",
+    "version": "2.4.10",
+    "msi": "XXMI-Launcher-Installer-Online-v2.4.10.msi",
+    "msi_sha256": "d6076f7200521a661b6f2d34d1759ab86a953dc7a2fb0e61343249d27e558781",
+    "msi_bytes": 54475945,
+    "artifact_id": 12626902908,
+    "artifact_zip_sha256": "02d0afca3f32f540697c133fa614217fcc14a60be7dfa655182a895360001937",
+    "installer_workflow": "https://github.com/wunderay/XXMI-Launcher/actions/runs/40268228471",
+    "normal_workflow": "https://github.com/wunderay/XXMI-Launcher/actions/runs/40267680474",
+    "normal_runtime_source": "9cc5505f3777050b75797474448e2ba153876a48",
+    "authoring_checkout_line_endings": "CRLF",
+    "embedded_file_hashes_verified": 1801,
+    "cabinet_folders": 51,
+    "cabinet_exact_span_aliases": 18,
+    "installer_tests": {
+        "run": 43,
+        "passed": 41,
+        "platform_skips": 2
+    },
+    "normal_tests": {
+        "lifecycle": 101,
+        "gui_and_distribution": 9,
+        "native": "all suites passed"
+    },
+    "source_inputs_clean": true,
+    "archive_digest_verified": true,
+    "receipt_digests_verified": true,
+    "payload_file_hash_maps_match": true,
+    "self_test_passed": true,
+    "real_msi_installed": false,
+    "fixture_lifecycle_passed": true,
+    "publisher_signed": false,
+    "game_launched": false,
+    "game_qualified": false,
+    "uac_triggered": false,
+    "qualification": "Unsigned development MSI; actual-game and authorized release acceptance remain separate."
+}

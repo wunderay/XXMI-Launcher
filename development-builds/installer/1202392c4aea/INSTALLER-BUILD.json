@@ -1,0 +1,31 @@
+{
+  "format": 1,
+  "msi": "XXMI-Launcher-Installer-Online-v2.4.10.msi",
+  "sha256": "d6076f7200521a661b6f2d34d1759ab86a953dc7a2fb0e61343249d27e558781",
+  "version": "2.4.10",
+  "product_code": "{2E7EC3D1-91BB-57A5-8E15-65CE8100C27A}",
+  "identity": {
+    "product_name": "XXMI Launcher (development)",
+    "manufacturer": "XXMI Launcher contributors",
+    "upgrade_code": "{5EBB1A78-20AD-47CF-95E8-78BCEDBB4D93}",
+    "registry_key": "SOFTWARE\\SpectrumQT\\XXMI Launcher",
+    "default_directory_name": "XXMI Launcher",
+    "shortcut_name": "XXMI Launcher",
+    "artifact_prefix": "XXMI-Launcher-Installer-Online"
+  },
+  "launcher_source": "1202392c4aea7a682da81e63b8e41b6c98fbcc07",
+  "payload_sha256": "849fbe73f3d9a77388afa48ac4ca28b5486ff126fe48d94b04998ca228a2ea84",
+  "authoring_receipt_sha256": "a1d39eb86aff80dd88ea1e4096e4044ce0513ecae3bedbc0536c1cfed607beee",
+  "candle": {
+    "path": "C:\\Program Files (x86)\\WiX Toolset v3.14\\bin\\candle.exe",
+    "version": "3.14.1.8722"
+  },
+  "light": {
+    "path": "C:\\Program Files (x86)\\WiX Toolset v3.14\\bin\\light.exe",
+    "version": "3.14.1.8722"
+  },
+  "database_validation_sha256": "07076b612cc920e8dcdc0405a3bdbc55e824914fbdca14df9d27e1aeca6e5d01",
+  "default_ice_validation": true,
+  "signed": false,
+  "qualification": "Development MSI build only; no automatic install, game launch, or runtime qualification."
+}

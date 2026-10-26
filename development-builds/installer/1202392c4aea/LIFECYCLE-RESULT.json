@@ -1,0 +1,26 @@
+{
+    "fixture_only": true,
+    "identity": {
+        "product_name": "XXMI Installer Fixture 11d7290be82342d3a9ba97c435048378",
+        "manufacturer": "XXMI Launcher contributors",
+        "upgrade_code": "{D71EBABB-C960-440D-AF3B-0B20565EA31E}",
+        "registry_key": "SOFTWARE\\XXMIInstallerTests\\11d7290be82342d3a9ba97c435048378",
+        "default_directory_name": "XXMI Fixture 11d7290be82342d3a9ba97c435048378",
+        "shortcut_name": "XXMI Fixture 11d7290be82342d3a9ba97c435048378",
+        "artifact_prefix": "XXMI-Fixture-11d7290be82342d3a9ba97c435048378"
+    },
+    "versions": [
+        "1.0.0",
+        "1.0.1"
+    ],
+    "upgrade": true,
+    "same_version_repair": true,
+    "unmanaged_files_retained_after_upgrade_and_uninstall": [
+        "Locale/active_locale.cfg",
+        "Mods/user.txt",
+        "Resources/Security/user.txt",
+        "Themes/user-theme.json",
+        "XXMI Launcher Config.json"
+    ],
+    "application_executed": false
+}
