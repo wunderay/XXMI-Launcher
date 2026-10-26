@@ -202,7 +202,7 @@ def generate_source(payload: Path, version: str, output_dir: Path, identity: Ide
              Name='DesktopShortcut', Type='raw', Win64='yes')
     previous_link = _element(product, 'Property', Id='PREVIOUSDESKTOPLINK', Secure='yes')
     link_directory = _element(previous_link, 'DirectorySearch', Id='ExistingDesktopDirectory', Path='[DesktopFolder]', Depth='0')
-    _element(link_directory, 'FileSearch', Id='ExistingDesktopLink', Name=identity.shortcut_name + '.lnk', Type='file')
+    _element(link_directory, 'FileSearch', Id='ExistingDesktopLink', Name=identity.shortcut_name + '.lnk')
     _element(product, 'Property', Id='WIXUI_INSTALLDIR', Value='APPDIR')
     _element(product, 'UIRef', Id='WixUI_InstallDir')
     license_path = output_dir / 'installer-license.rtf'

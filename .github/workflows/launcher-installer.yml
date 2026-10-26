@@ -45,6 +45,15 @@ jobs:
           New-Item -ItemType Directory -Force $fixtureTemp | Out-Null
           "TEMP=$fixtureTemp" >> $env:GITHUB_ENV
           "TMP=$fixtureTemp" >> $env:GITHUB_ENV
+      - name: Qualify original authoring with inert MSI fixtures
+        shell: pwsh
+        env:
+          XXMI_RUN_INSTALLER_FIXTURES: '1'
+        run: |
+          python -m unittest discover -s tests -p 'test_installer_authoring.py' -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -c 'import subprocess, sys; subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_installer_windows.py", "-v"], check=True, timeout=600)'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build and smoke test the normal launcher payload
         shell: pwsh
         run: |
@@ -58,14 +67,12 @@ jobs:
           $python = Join-Path $env:GITHUB_WORKSPACE 'work\launcher-package\build\venv\Scripts\python.exe'
           & ./tools/Installer/build-msi.ps1 -Payload ./work/launcher-package/install-payload -Version $env:INSTALLER_VERSION -OutputDirectory ./work/installer -Python $python
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Test updater and inert MSI install upgrade repair uninstall
+      - name: Test normal launcher MSI updater
         shell: pwsh
-        env:
-          XXMI_RUN_INSTALLER_FIXTURES: '1'
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'src\xxmi_launcher'
           $python = Join-Path $env:GITHUB_WORKSPACE 'work\launcher-package\build\venv\Scripts\python.exe'
-          & $python -c 'import subprocess, sys; subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_installer*.py", "-v"], check=True, timeout=600)'
+          & $python -c 'import subprocess, sys; subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_installer_update.py", "-v"], check=True, timeout=120)'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         if: always()

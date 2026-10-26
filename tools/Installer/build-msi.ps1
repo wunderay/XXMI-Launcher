@@ -28,6 +28,7 @@ $msi = Join-Path $out "XXMI-Launcher-Installer-Online-v$Version.msi"
 Remove-Item -LiteralPath $msi -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath "$msi.sha256" -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath (Join-Path $out 'INSTALLER-BUILD.json') -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $out 'INSTALLER-VALIDATION.json') -Force -ErrorAction SilentlyContinue
 Start-Transcript -Path (Join-Path $out 'installer-build.log') -Force | Out-Null
 try {
     & $Python $helper --payload $payloadPath --version $Version --output-directory $out
