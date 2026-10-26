@@ -202,6 +202,15 @@ ALLOWED_TABLES = set('''_Validation ActionText AdminExecuteSequence AdminUISeque
     RegLocator RemoveFile Shortcut Signature TextStyle UIText Upgrade'''.split())
 
 
+def validate_ui_binaries(rows):
+    # Official WiX 3.14.1 Common.wxs names the folder icons Bmp_New/Bmp_Up.
+    # https://github.com/wixtoolset/wix3/blob/wix3141rtm/src/ext/UIExtension/wixlib/Common.wxs
+    allowed = {'WixUIWixca', 'WixUI_Bmp_Banner', 'WixUI_Bmp_Dialog', 'WixUI_Ico_Info',
+               'WixUI_Ico_Exclam', 'WixUI_Bmp_New', 'WixUI_Bmp_Up'}
+    unexpected = sorted({row['Name'] for row in rows} - allowed)
+    require(not unexpected, f'Unexpected embedded action/UI binary IDs: {unexpected}')
+
+
 def validate_tables(tables, template, plan, identity):
     '''Validate a data-only snapshot, also usable by portable regression tests.'''
     for table, rows in tables.items():
@@ -300,7 +309,7 @@ def validate_tables(tables, template, plan, identity):
         if table == 'InstallExecuteSequence':
             require(not {'WixUIPrintEula', 'WixUIValidatePath'} & set(actions), 'UI DLL must not run in the execution sequence')
             require(int(actions['InstallInitialize']['Sequence']) < int(actions['RemoveExistingProducts']['Sequence']) < int(actions['ProcessComponents']['Sequence']), 'Major upgrade must remove the old product within the transaction')
-    require(all(row['Name'] in {'WixUIWixca', 'WixUI_Bmp_Banner', 'WixUI_Bmp_Dialog', 'WixUI_Ico_Info', 'WixUI_Ico_Exclam', 'WixUI_Ico_New', 'WixUI_Ico_Up'} for row in tables.get('Binary', [])), 'Unexpected embedded action/UI binary')
+    validate_ui_binaries(tables.get('Binary', []))
     require(tables.get('Upgrade') and all(row['UpgradeCode'] == identity.upgrade_code for row in tables['Upgrade']), 'Unexpected upgrade family')
     searches = tables.get('RegLocator', [])
     require(len(searches) == 2 and {(row['Root'], row['Key'], row['Name'], row['Type']) for row in searches} == {('2', identity.registry_key, 'Path', '18'), ('1', identity.registry_key, 'DesktopShortcut', '18')}, 'Unexpected registry search')

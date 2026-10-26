@@ -100,10 +100,8 @@ acceptance bound to the complete paired evidence manifest.
 
 ## Remaining release gates
 
-1. Obtain the upstream Advanced Installer project or implement a compatible fork
-   MSI builder using the public reference, then use the authorized publisher
-   release/package-signing process for official updater delivery. Installation
-   identity, registry and updater contracts require adaptation. The native metadata, DLLs
+1. Qualify the original compatible MSI builder, then use the authorized publisher
+   release/package-signing process for official updater delivery. The native metadata, DLLs
    and outer package must be authenticated through the existing signer before
    the launcher accepts support. No signing key or substitute trust path is
    created by this work.
@@ -114,7 +112,8 @@ acceptance bound to the complete paired evidence manifest.
    human acceptance and release qualification. The user launches Zenless
    manually; screenshots remain optional supporting evidence.
 
-No MSI installation, active DLL deployment, game launch, UAC, signing, release
+Only isolated inert fixture MSI installations are authorized in disposable CI;
+the real MSI is inspected without installation. No active DLL deployment, game launch, UAC, signing, release
 publication or merge was performed. Prior standalone portable development
 archives are retained as historical evidence and are not the current normal
 release delivery. The original Phase 0 patch remains unchanged.

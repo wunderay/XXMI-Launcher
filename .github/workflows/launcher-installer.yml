@@ -4,7 +4,10 @@ on:
     branches: [codex/prepared-mod-launcher]
     paths:
       - 'tools/Installer/**'
-      - 'tools/PreparedLoading/**'
+      - 'tools/PreparedLoading/*.py'
+      - 'tools/PreparedLoading/*.ps1'
+      - 'tools/PreparedLoading/launcher.spec'
+      - 'tools/PreparedLoading/launcher-version.txt'
       - 'tests/test_installer*.py'
       - 'src/xxmi_launcher/**'
       - 'requirements.txt'
@@ -89,4 +92,6 @@ jobs:
             work/launcher-package/build/launcher-build.log
             work/installer-fixtures/**/*.log
             work/installer-fixtures/**/INSTALLER-*.json
+            work/installer-fixtures/**/LIFECYCLE-RESULT.json
+            work/installer-fixtures/**/MSI-DATABASE.json
           if-no-files-found: warn

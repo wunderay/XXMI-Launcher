@@ -95,6 +95,14 @@ class InstallerStaticValidationTests(unittest.TestCase):
             with self.subTest(table=name), self.assertRaisesRegex(ValueError, 'side-effect table'):
                 validator.validate_tables({name: [{'anything': 'present'}]}, 'x64', {}, authoring.PRODUCTION_IDENTITY)
 
+    def test_official_wix3141_ui_binary_ids_and_unknown_id_diagnostic(self):
+        validator.validate_ui_binaries([{'Name': name} for name in (
+            'WixUIWixca', 'WixUI_Bmp_Banner', 'WixUI_Bmp_Dialog', 'WixUI_Ico_Info',
+            'WixUI_Ico_Exclam', 'WixUI_Bmp_New', 'WixUI_Bmp_Up')])
+        for name in ('WixUI_Ico_New', 'WixUI_Ico_Up', 'LaunchApplication'):
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, name):
+                validator.validate_ui_binaries([{'Name': name}])
+
     @unittest.skipIf(os.name == 'nt', 'Non-Windows fail-closed check')
     def test_compiled_database_validation_requires_windows(self):
         with self.assertRaisesRegex(RuntimeError, 'requires Windows'):
@@ -187,8 +195,26 @@ class WindowsInstallerFixtureTests(unittest.TestCase):
         fixture = {'payload': payload, 'version': version, 'msi': result['msi'],
                    'product_code': result['metadata']['product_code'], 'expected': expected}
         self.fixtures[fixture['product_code']] = fixture
+        self.write_database_diagnostic(fixture)
         self.verify_fixture(fixture)
         return fixture
+
+    @staticmethod
+    def write_database_diagnostic(fixture):
+        database = validator.ReadOnlyDatabase(fixture['msi'])
+        try:
+            names = {row['Name'] for row in database.rows('SELECT `Name` FROM `_Tables`')}
+            diagnostic = {'read_only': True, 'template': database.template(), 'table_names': sorted(names), 'tables': {}}
+            for name in ('Property', 'Directory', 'Component', 'Feature', 'FeatureComponents', 'File',
+                         'Registry', 'RemoveFile', 'Shortcut', 'CustomAction', 'InstallExecuteSequence',
+                         'InstallUISequence', 'Media', 'RegLocator', 'DrLocator', 'Signature', 'Upgrade'):
+                if name in names:
+                    diagnostic['tables'][name] = database.rows(f'SELECT * FROM `{name}`')
+            if 'Binary' in names:
+                diagnostic['tables']['Binary'] = database.rows('SELECT `Name` FROM `Binary`')
+        finally:
+            database.close()
+        (fixture['msi'].parent / 'MSI-DATABASE.json').write_text(json.dumps(diagnostic, indent=4), encoding='utf-8')
 
     def verify_fixture(self, fixture):
         self.assertTrue(self.directory.resolve().is_relative_to((ROOT / 'work/installer-fixtures').resolve()))
