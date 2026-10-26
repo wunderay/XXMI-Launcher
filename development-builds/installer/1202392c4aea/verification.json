@@ -35,5 +35,15 @@
     "game_launched": false,
     "game_qualified": false,
     "uac_triggered": false,
-    "qualification": "Unsigned development MSI; actual-game and authorized release acceptance remain separate."
+    "qualification": "Unsigned development MSI; actual-game and authorized release acceptance remain separate.",
+    "security_status": {
+        "status": "download_withdrawn_antivirus_investigation",
+        "reported_detector": "Microsoft Defender via Chrome download block",
+        "reported_detection": "Trojan:Script/Wacatac.B!ml",
+        "independently_reproduced": false,
+        "antivirus_acceptance_established": false,
+        "false_positive_established": false,
+        "affected_nested_file": "not yet supplied",
+        "download_recommended": false
+    }
 }
