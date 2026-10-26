@@ -1,0 +1,64 @@
+name: Collector Windows checks
+
+on:
+  push:
+    branches: [codex/xxmi-capture-collector]
+    paths:
+      - 'tools/ModLoadingCollector/src/**'
+      - 'tools/ModLoadingCollector/ModLoadingCollector.csproj'
+      - 'tools/ModLoadingCollector/app.manifest'
+      - 'tools/ModLoadingCollector/tests/windows-ui/**'
+      - 'tools/ModLoadingCollector/tests/windows-permissions/**'
+      - 'Themes/Default/window-icon.ico'
+      - '.github/workflows/collector-ui-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-ui:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build collector and UI smoke harness
+        id: build
+        shell: pwsh
+        run: |
+          dotnet build tools/ModLoadingCollector/ModLoadingCollector.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet build tools/ModLoadingCollector/tests/windows-ui/WindowsUiSmoke.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet build tools/ModLoadingCollector/tests/windows-permissions/WindowsPermissionsSmoke.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Assert restricted-process capture behavior
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force work/permissions-smoke | Out-Null
+          & tools/ModLoadingCollector/tests/windows-permissions/bin/Release/net48/WindowsPermissionsSmoke.exe work/permissions-smoke 2>&1 | Tee-Object work/permissions-smoke/console.log
+          exit $LASTEXITCODE
+      - name: Render synthetic UI and assert layout
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force work/ui-smoke | Out-Null
+          & tools/ModLoadingCollector/tests/windows-ui/bin/Release/net48/WindowsUiSmoke.exe tools/ModLoadingCollector/bin/Release/net48/XXMI.Capture.exe work/ui-smoke 2>&1 | Tee-Object work/ui-smoke/console.log
+          exit $LASTEXITCODE
+      - name: Upload synthetic UI screenshots and log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: collector-windows-ui-smoke
+          path: work/ui-smoke/
+          if-no-files-found: warn
+      - name: Upload synthetic permission-check evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: collector-windows-permission-smoke
+          path: work/permissions-smoke/
+          if-no-files-found: warn
