@@ -1,0 +1,10 @@
+{
+    "source": "e3c29e0cccfe98907156e0e74d8de9a61e65c627",
+    "workflow": "https://github.com/wunderay/XXMI-Launcher/actions/runs/40272769199",
+    "job_id": 121408985458,
+    "artifact_id": 12629255548,
+    "archive_sha256": "d4a2105a58ac3d6b950b9e728f94fe349bf532eb86bfa6b5ec4c47073cdf48c7",
+    "archive_digest_verified": true,
+    "independent_receipt_review": "no mismatch",
+    "scope": "Exact-original MSI custom scan; no installer/payload execution. CI real-time/cloud protection disabled before/after. Not reproduction or falsepositive clearance."
+}
