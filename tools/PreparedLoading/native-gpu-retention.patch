@@ -1,0 +1,577 @@
+--- a/DirectX11/ModLoading/PreparationPlanner.cpp
++++ b/DirectX11/ModLoading/PreparationPlanner.cpp
+@@ -491,11 +491,11 @@
+ 	const auto retainedShaderBytes = RetainedShaderBytecodeBytes(request);
+ 	if (retainedShaderBytes > maxShaderBytecodeBytes_ - queuedShaderBytecodeBytes_) return GpuQueueResult::BudgetBlocked;
+ 	if ((request.kind == GpuPreparationKind::EncodedDDS || request.kind == GpuPreparationKind::EncodedWIC || request.createDefaultShaderResourceView) &&
+-		resolvedKeys_.size() + queue_.size() >= (std::max)(size_t(1), maxQueued_ * 4)) {
++		resolvedKeys_.size() + queue_.size() >= 4096) {
+ 		for (auto alias = resolvedKeys_.begin(); alias != resolvedKeys_.end();) {
+ 			if (!cache_.Find(alias->second)) alias = resolvedKeys_.erase(alias); else ++alias;
+ 		}
+-		if (resolvedKeys_.size() + queue_.size() >= (std::max)(size_t(1), maxQueued_ * 4)) return GpuQueueResult::Full;
++		if (resolvedKeys_.size() + queue_.size() >= 4096) return GpuQueueResult::Full;
+ 	}
+ 	std::shared_ptr<const LiveGpuAllocationLedger::Lease> retainedReservation;
+ 	if (request.retainedBudget) {
+@@ -657,11 +657,12 @@
+ 		HRESULT hr = E_FAIL; auto object = Create(work.request, work.retainedReservation, work.cpuScratchReservation, hr);
+ 		if (object) {
+ 			const auto canonical = CanonicalKey(work.key, *object);
+-			if (cache_.Insert(canonical, std::move(object), work.request.estimatedBytes)) {
++			if (cache_.Insert(canonical, object, work.request.estimatedBytes)) {
+ 				// Never discard an active alias: it is also the handle needed
+ 				// to release a policy pin. Admission bounds the alias index.
+ 				if (canonical < work.key || work.key < canonical) resolvedKeys_[work.key] = canonical;
+ 				++result.created;
++				if (work.request.onReady) work.request.onReady(work.key, object);
+ 			} else ++result.failed;
+ 		} else {
+ 			++result.failed;
+--- a/DirectX11/ModLoading/PreparationPlanner.h
++++ b/DirectX11/ModLoading/PreparationPlanner.h
+@@ -60,6 +60,7 @@
+ 	PreparedShaderBundle(const PreparedShaderBundle&) = delete;
+ 	PreparedShaderBundle& operator=(const PreparedShaderBundle&) = delete;
+ };
++struct PreparedGpuObject;
+ struct GpuPreparationRequest {
+ 	SourceSnapshot snapshot;
+ 	// Queue ownership keeps CPU cache accounting live until upload finishes.
+@@ -95,6 +96,10 @@
+ 	// Effective stereo/resource creation policy, decoder/conversion/cache
+ 	// version etc.; opaque stable values, never addresses or structure padding.
+ 	std::vector<uint32_t> creationOptions;
++	// Called on the Pump owner after insertion, before another allocation can
++	// evict this object. Queue-only metadata, never part of resource identity.
++	// The caller must fence its source/config/device lifetime before retaining.
++	std::function<void(const DeviceResourceKey&, const std::shared_ptr<PreparedGpuObject>&)> onReady;
+ };
+ struct PreparedGpuObject {
+ 	ID3D11Resource* resource = nullptr;
+--- a/DirectX11/ModLoading/PreparationScheduler.cpp
++++ b/DirectX11/ModLoading/PreparationScheduler.cpp
+@@ -8,6 +8,13 @@
+ #endif
+ namespace ModLoading {
+ namespace {
++bool EncodedOnly(const std::wstring& path) {
++	const auto dot = path.find_last_of(L'.');
++	if (dot == std::wstring::npos) return false;
++	auto extension = path.substr(dot);
++	for (auto& c : extension) if (c >= L'A' && c <= L'Z') c += L'a' - L'A';
++	return extension == L".dds" || extension == L".buf" || extension == L".ib";
++}
+ size_t Reservation(const PreparationLimits &limits) {
+ 	return limits.maxAssetBytes <= limits.cpuBytes / 2 ? limits.maxAssetBytes * 2
+ 													   : limits.maxAssetBytes;
+@@ -15,6 +22,7 @@
+ } // namespace
+ PreparationScheduler::PreparationScheduler(const PreparationLimits &limits, SnapshotReader reader)
+ 	: limits_(limits), cache_(limits.cpuBytes), reservation_(Reservation(limits)),
++	  defaultReader_(!reader),
+ 	  reader_(reader ? std::move(reader) : SnapshotReader(ReadVerifiedSnapshot)) {
+ 	if (!limits.Valid())
+ 		throw std::invalid_argument("invalid preparation limits");
+@@ -42,17 +50,22 @@
+ 	if (cache_.Find(path, generation) || pending_.count(key))
+ 		return true;
+ 	if (speculative && (attempted_.count(key) || attempted_.size() >= 4096)) return false;
+-	if (pending_.size() >= limits_.maxQueued || !(speculative ? cache_.ReserveUnused(reservation_, minimum_) : cache_.Reserve(reservation_)))
++	// Raw buffers and DDS use their original bytes; they require no decoded
++	// copy. Reserve their verified handle size on a worker, without file I/O
++	// on the render thread or evicting another current-generation source.
++	const bool sizeAdmission = speculative && defaultReader_ && EncodedOnly(path);
++	const size_t reservation = sizeAdmission ? 0 : reservation_;
++	if (pending_.size() >= limits_.maxQueued || !(speculative ? cache_.ReserveUnused(reservation, minimum_) : cache_.Reserve(reservation)))
+ 		return false;
+ 	try {
+ 		if (speculative) attempted_.insert(key);
+ 		pending_.insert(key);
+ 		queue_.push_back(
+-			Job{path, generation, priority, ++order_, limits_.maxAssetBytes, reservation_});
++			Job{path, generation, priority, ++order_, limits_.maxAssetBytes, reservation, sizeAdmission});
+ 	} catch (...) {
+ 		pending_.erase(key);
+ 		if (speculative) attempted_.erase(key);
+-		cache_.ReleaseReservation(reservation_);
++		cache_.ReleaseReservation(reservation);
+ 		return false;
+ 	}
+ 	wake_.notify_one();
+@@ -152,6 +165,10 @@
+ size_t PreparationScheduler::PendingCount() {
+ 	std::lock_guard<std::mutex> lock(mutex_);
+ 	return pending_.size();
++}
++PreparationScheduler::Progress PreparationScheduler::WorkProgress() {
++	std::lock_guard<std::mutex> lock(mutex_);
++	return {pending_.size(), completed_};
+ }
+ void PreparationScheduler::Worker() {
+ #ifdef _WIN32
+@@ -183,14 +200,22 @@
+ 		try {
+ 			asset = std::make_shared<PreparedAsset>();
+ 			std::string error;
+-			if (!reader_(job.path, job.maxBytes, asset->snapshot, error) ||
++			const bool read = job.sizeAdmission ? ReadVerifiedSnapshotAdmitted(job.path, job.maxBytes,
++				asset->snapshot, error, [&](size_t bytes) {
++					std::lock_guard<std::mutex> lock(mutex_);
++					if (stopping_ || !limits_.cpuBytes || job.generation < minimum_ ||
++						!cache_.ReserveUnused(bytes, minimum_)) return false;
++					job.reservation = bytes;
++					return true;
++				}) : reader_(job.path, job.maxBytes, asset->snapshot, error);
++			if (!read ||
+                 !asset->snapshot.bytes || asset->snapshot.bytes->size() > job.maxBytes) {
+                 readFailure = error.empty() ? "source unavailable or exceeds preparation size limit" : error;
+                 asset.reset();
+             }
+ 			else {
+ 				asset->generation = job.generation;
+-				if (asset->snapshot.watchable) {
++				if (asset->snapshot.watchable && !job.sizeAdmission) {
+ 					size_t decodedBudget = job.reservation - asset->snapshot.bytes->size();
+ 					bool restored =
+ 						disk && disk->Load(asset->snapshot, decodedBudget, asset->decoded);
+@@ -227,6 +252,7 @@
+ 				cache_.Publish(std::move(asset), job.reservation);
+ 			else
+ 				cache_.ReleaseReservation(job.reservation);
++			++completed_;
+ 		}
+ 		wake_.notify_all();
+ 	}
+--- a/DirectX11/ModLoading/PreparationScheduler.h
++++ b/DirectX11/ModLoading/PreparationScheduler.h
+@@ -29,6 +29,9 @@
+ 	// End a startup pass without invalidating already verified snapshots.
+ 	void CancelPending();
+ 	size_t PendingCount();
++	struct Progress { size_t pending; uint64_t completed; };
++	// One coherent snapshot: an idle queue cannot hide a just-published source.
++	Progress WorkProgress();
+ 	void Stop();
+ 	size_t ResidentBytes() const {
+ 		return cache_.ResidentBytes();
+@@ -45,12 +48,14 @@
+ 		uint64_t order;
+ 		size_t maxBytes;
+ 		size_t reservation;
++		bool sizeAdmission;
+ 	};
+ 	void Worker();
+ 	void CancelQueued();
+ 	PreparationLimits limits_;
+ 	CpuAssetCache cache_;
+ 	size_t reservation_;
++	bool defaultReader_;
+ 	SnapshotReader reader_;
+ 	size_t active_ = 0;
+ 	std::shared_ptr<DiskAssetCache> disk_;
+@@ -63,6 +68,7 @@
+ 	std::map<std::pair<std::wstring, Generation>, std::string> compatibility_;
+ 	Generation minimum_ = 0;
+ 	uint64_t order_ = 0;
++	uint64_t completed_ = 0;
+ 	bool stopping_ = false;
+ };
+ } // namespace ModLoading
+--- a/DirectX11/ModLoading/PreparationStatus.cpp
++++ b/DirectX11/ModLoading/PreparationStatus.cpp
+@@ -13,6 +13,7 @@
+ #endif
+ namespace ModLoading {
+ namespace {
++std::array<std::atomic<uint64_t>, size_t(FirstUseResult::Count)> firstUseCounts{};
+ const char* Mode(PreparationMode mode) {
+ 	switch (mode) { case PreparationMode::Off: return "off"; case PreparationMode::Adaptive: return "adaptive";
+ 	case PreparationMode::PreparedProfile: return "prepared_profile"; } return nullptr;
+@@ -81,6 +82,7 @@
+ 			FixedStatus fixed;
+ 			{ std::lock_guard<std::mutex> lock(service->mutex); fixed = service->latest; }
+ 			PreparationStatus status; status.mode = fixed.mode; status.state = fixed.state;
++			status.firstUse = ReadFirstUseCounts();
+ 			status.totalAssets = fixed.total; status.cpuReady = fixed.cpu; status.gpuReady = fixed.gpu;
+ 			status.compatibilityAssets = fixed.compatibility; status.reason.assign(fixed.reason, fixed.reasonLength);
+ 			// Invalidation is nondroppable even if no renderer/update runs again.
+@@ -126,6 +128,15 @@
+ }
+ #endif
+ }
++void RecordFirstUseResult(FirstUseResult result) noexcept {
++	const auto index = size_t(result);
++	if (index < firstUseCounts.size()) firstUseCounts[index].fetch_add(1, std::memory_order_relaxed);
++}
++FirstUseCounts ReadFirstUseCounts() noexcept {
++	FirstUseCounts result{};
++	for (size_t i = 0; i < result.size(); ++i) result[i] = firstUseCounts[i].load(std::memory_order_relaxed);
++	return result;
++}
+ std::string SerializePreparationStatus(const PreparationStatus& status, uint32_t pid,
+ 	const std::string& digest, uint64_t updated) noexcept {
+ 	try {
+@@ -137,6 +148,12 @@
+ 			",\"mode\":\"" + mode + "\",\"state\":\"" + state + "\",\"total_assets\":" + std::to_string(status.totalAssets) +
+ 			",\"cpu_ready\":" + std::to_string(status.cpuReady) + ",\"gpu_ready\":" + std::to_string(status.gpuReady) +
+ 			",\"compatibility_assets\":" + std::to_string(status.compatibilityAssets) +
++			",\"first_use_gpu_hits\":" + std::to_string(status.firstUse[size_t(FirstUseResult::Hit)]) +
++			",\"first_use_cpu_misses\":" + std::to_string(status.firstUse[size_t(FirstUseResult::CpuMiss)]) +
++			",\"first_use_gpu_misses\":" + std::to_string(status.firstUse[size_t(FirstUseResult::GpuMiss)]) +
++			",\"first_use_unsupported\":" + std::to_string(status.firstUse[size_t(FirstUseResult::Unsupported)]) +
++			",\"first_use_invalidated\":" + std::to_string(status.firstUse[size_t(FirstUseResult::Invalidated)]) +
++			",\"first_use_unavailable\":" + std::to_string(status.firstUse[size_t(FirstUseResult::Unavailable)]) +
+ 			",\"reason\":\"" + EscapeReason(status.reason) + "\"}\n";
+ 		return json.size() <= 8192 ? json : std::string();
+ 	} catch (...) { return {}; }
+--- a/DirectX11/ModLoading/PreparationStatus.h
++++ b/DirectX11/ModLoading/PreparationStatus.h
+@@ -2,13 +2,21 @@
+ #include "PreparedTypes.h"
+ #include <string>
+ #include <atomic>
++#include <array>
+ 
+ namespace ModLoading {
+ enum class PreparationStatusState { Off, Preparing, Ready, Compatibility, Failed };
++enum class FirstUseResult { Hit, CpuMiss, GpuMiss, Unsupported, Invalidated, Unavailable, Count };
++using FirstUseCounts = std::array<uint64_t, size_t(FirstUseResult::Count)>;
++// Process-session counters for file-backed first-use attempts, including F10.
++// No file I/O or allocation on the resource-creation path.
++void RecordFirstUseResult(FirstUseResult result) noexcept;
++FirstUseCounts ReadFirstUseCounts() noexcept;
+ struct PreparationStatus {
+ 	PreparationMode mode = PreparationMode::Off;
+ 	PreparationStatusState state = PreparationStatusState::Off;
+ 	uint64_t totalAssets = 0, cpuReady = 0, gpuReady = 0, compatibilityAssets = 0;
++	FirstUseCounts firstUse{};
+ 	std::string reason;
+ };
+ // Opt-in loading boundary only, never DllMain. Pins the containing module and
+--- a/DirectX11/ModLoading/Runtime.cpp
++++ b/DirectX11/ModLoading/Runtime.cpp
+@@ -953,6 +953,29 @@
+ 	return state && state->enabled.load() && state->scheduler && state->monitor &&
+ 		state->monitor->IsCurrent(state->sourceToken.load());
+ }
++void RetainStartupCompletion(GpuPreparationRequest& request, const std::shared_ptr<RuntimeState>& state,
++	void* target, bool shader, DeviceEpoch epoch) {
++	if (!state->startupGpu || state->mode != PreparationMode::PreparedProfile) return;
++	request.onReady = [weak = std::weak_ptr<RuntimeState>(state), target, shader, epoch,
++		generation = state->generation.load()](const DeviceResourceKey& key,
++			const std::shared_ptr<PreparedGpuObject>& object) {
++		auto current = weak.lock();
++		if (!current || current != Current() || current->generation != generation ||
++			Services().epoch != epoch || !SourcesCurrent(current)) return;
++		// Pump is inside the global configuration and planner owner guards.
++		// No declaration is dereferenced until its generation/profile is fenced.
++		const auto entry = current->profile.find(target);
++		if (entry == current->profile.end() || entry->second.generation != generation ||
++			entry->second.epoch != epoch || !object) return;
++		if (shader ? !object->bundle :
++			!QualifiedResource(*static_cast<CustomResource*>(target), object)) {
++			entry->second.compatibility = true; return;
++		}
++		Services().profileGpuPins[target] = object;
++		entry->second.key = key;
++		entry->second.pinnedGpu = object; entry->second.observedGpu = object;
++	};
++}
+ }
+ 
+ #include "GeneralConfigPipeline.inl"
+@@ -1325,7 +1348,7 @@
+ 		state->loadingWindow = GetIniBool(L"ModLoading", L"preparation_loading_window", false, nullptr);
+ 		state->startupGpu = state->gpuEnabled && !state->generalEnabled && !state->refreshEnabled &&
+ 			GetIniBool(L"ModLoading", L"startup_gpu_preload", false, nullptr);
+-		state->startupSeconds = Setting(L"startup_preload_seconds", 30, 1, 60);
++		state->startupSeconds = Setting(L"startup_preload_seconds", 30, 1, 120);
+ 		// The explicit startup boundary owns this gate. Never leave it open
+ 		// for ordinary gameplay, even if an old INI set loading_window=true.
+ 		if (state->startupGpu) state->loadingWindow = false;
+@@ -1699,6 +1722,7 @@
+ 		if (tracked == state->profile.end()) continue;
+ 		auto& progress = tracked->second;
+ 		ResetProfileEntry(progress, state->generation, epoch);
++		if (state->startupGpu && progress.pinnedGpu.lock()) continue;
+ 		auto asset = progress.source ? progress.source : state->scheduler->TryGet(resource.filename, state->generation);
+ 		if (!asset) {
+ 			const auto reason = state->scheduler->CompatibilityReason(resource.filename, state->generation);
+@@ -1724,6 +1748,7 @@
+ 			service.profileGpuPins.erase(&resource); progress.pinnedGpu.reset(); pin.reset();
+ 		}
+ 		if (!pin) {
++			RetainStartupCompletion(prepared, state, &resource, false, epoch);
+ 			const auto queued = service.planner->Enqueue(prepared, &key);
+ 			if (queued == GpuQueueResult::CompatibilityOnly) { progress.compatibility = true; continue; }
+ 		}
+@@ -1749,6 +1774,7 @@
+ 		}
+ 		progress.cpuReady = true;
+ 		DeviceResourceKey key;
++		RetainStartupCompletion(prepared, state, &shader, true, epoch);
+ 		const auto queued = service.planner->Enqueue(prepared, &key);
+ 		if (queued == GpuQueueResult::CompatibilityOnly) { progress.compatibility = true; continue; }
+ 		auto object = service.planner->TryAcquire(key);
+@@ -1813,6 +1839,11 @@
+ }
+ static bool TryUsePreparedResourceImpl(CustomResource& target, ID3D11Device* device) {
+ 	auto state = Current();
++	struct FirstUseAttempt {
++		bool enabled;
++		FirstUseResult result = FirstUseResult::Unavailable;
++		~FirstUseAttempt() { if (enabled) RecordFirstUseResult(result); }
++	} attempt{state && state->startupGpu && !runtimeBusy};
+ 	auto& service = Services();
+ 	if (runtimeBusy || service.retirementRequested.load()) return false;
+ 	TryGlobalConfigGuard configGuard;
+@@ -1820,27 +1851,29 @@
+ 	std::unique_lock<std::recursive_mutex> lock(service.plannerMutex, std::try_to_lock);
+ 	if (!lock.owns_lock() || service.owner != std::this_thread::get_id()) return false;
+ 	RuntimeOwnerScope ownerScope(lock);
+-	if (!SourcesCurrent(state) || (!state->resourceSharingProven && !state->startupGpu) || !service.planner || service.device != device ||
++	if (!SourcesCurrent(state)) { attempt.result = FirstUseResult::Invalidated; return false; }
++	if ((!state->resourceSharingProven && !state->startupGpu) || !service.planner || service.device != device ||
+ 		service.plannerGeneration != state->generation) return false;
+ 	const auto tracked = state->profile.find(&target);
+ 	ProfileEntry* progress = tracked != state->profile.end() ? &tracked->second : nullptr;
+ 	const bool currentPin = progress && progress->generation == state->generation && progress->epoch == service.epoch;
+ 	auto asset = currentPin && progress->source ? progress->source :
+ 		state->scheduler->TryGet(target.filename, state->generation);
+-	if (!asset) return false;
++	if (!asset) { attempt.result = FirstUseResult::CpuMiss; return false; }
+ 	GpuPreparationRequest request;
+ 	if (!RequestFor(target, *asset, device, request, state->detectColorSpace) ||
+-		!IsolateStartupRequest(*state, target, request)) return false;
++		!IsolateStartupRequest(*state, target, request)) { attempt.result = FirstUseResult::Unsupported; return false; }
+ 	request.sourceOwner = asset;
+ 	DeviceResourceKey key;
+-	if (!service.planner->ComputeKey(request, key)) return false;
++	if (!service.planner->ComputeKey(request, key)) { attempt.result = FirstUseResult::Unsupported; return false; }
+ 	auto prepared = currentPin && SameKey(progress->key, key) ? progress->pinnedGpu.lock() : nullptr;
+ 	if (!prepared) {
+ 		if (!state->startupGpu && service.planner->Enqueue(request, &key) != GpuQueueResult::AlreadyReady) return false;
+-		if (!SourcesCurrent(state)) return false;
++		if (!SourcesCurrent(state)) { attempt.result = FirstUseResult::Invalidated; return false; }
+ 		prepared = service.planner->TryAcquire(key);
+ 	}
+-	if (!prepared || !prepared->resource || !SourcesCurrent(state)) return false;
++	if (!SourcesCurrent(state)) { attempt.result = FirstUseResult::Invalidated; return false; }
++	if (!prepared || !prepared->resource) { attempt.result = FirstUseResult::GpuMiss; return false; }
+ 	if (prepared->shaderResourceView && service.activeResources.size() < 4096)
+ 		service.activeResources[prepared->resource] = prepared;
+ 	prepared->resource->AddRef();
+@@ -1856,6 +1889,7 @@
+ 	// remain lazily created by the existing target-specific legacy view code.
+ 	LoadTrace::Get().RecordInstant(LoadStage::ReadinessWait,
+ 		reinterpret_cast<uintptr_t>(&target), request.estimatedBytes, 0);
++	attempt.result = FirstUseResult::Hit;
+ 	return true;
+ }
+ static bool TryUsePreparedShaderBundleImpl(CustomShader& target, ID3D11Device* device) {
+@@ -1982,6 +2016,8 @@
+ 			// objects cannot be made in the external launcher and handed across.
+ 			state->startupStarted = true;
+ 			const auto start = GetTickCount64(); auto lastCreation = start;
++			auto lastCpuCompletion = state->scheduler->WorkProgress().completed;
++			size_t scanAfterCompletion = 0;
+ 			state->loadingWindow = true;
+ 			state->gpuLimits.operations = 16;
+ 			state->gpuLimits.milliseconds = 10;
+@@ -1991,10 +2027,16 @@
+ 				PumpRuntimeImpl(device, epoch, realContext);
+ 				const auto now = GetTickCount64();
+ 				if (state->startupCreated != before) lastCreation = now;
++				const auto cpu = state->scheduler->WorkProgress();
++				if (cpu.completed != lastCpuCompletion) {
++					lastCpuCompletion = cpu.completed;
++					scanAfterCompletion = state->resourceCursor;
++				}
+ 				if (now - start >= uint64_t(state->startupSeconds) * 1000 || FAILED(device->GetDeviceRemovedReason())) break;
+ 				if (state->resourceCursor >= state->resources.size() * 2 &&
++					state->resourceCursor >= scanAfterCompletion + state->resources.size() &&
+ 					state->shaderCursor >= state->shaders.size() * 2 &&
+-					state->cursor >= state->files.size() && state->scheduler->PendingCount() == 0 &&
++					state->cursor >= state->files.size() && cpu.pending == 0 &&
+ 					(!Services().planner || Services().planner->Queued() == 0) && now - lastCreation >= 150) break;
+ 				Sleep(1); // Yield to CPU snapshot workers; never busy-spin on disk.
+ 			}
+@@ -2238,7 +2280,11 @@
+             startup->cpuLimits.cpuBytes = 16 * MiB;
+             startup->cpuLimits.maxAssetBytes = MiB;
+             startup->gpuBytes = 4 * MiB;
+-            startup->scheduler = std::make_shared<PreparationScheduler>(startup->cpuLimits);
++            startup->scheduler = std::make_shared<PreparationScheduler>(startup->cpuLimits,
++                [](const std::wstring& path, size_t maximum, SourceSnapshot& snapshot, std::string& error) {
++                    Sleep(200); // CPU readiness arrives after early descriptor scans.
++                    return ReadVerifiedSnapshot(path, maximum, snapshot, error);
++                });
+             startup->monitor.reset(new ChangeMonitor());
+             if (!startup->monitor->Start({root}, {}, [owned = startup.get()](const ReconcileRequest& request) {
+                 std::lock_guard<std::mutex> lock(owned->pendingMutex);
+@@ -2302,6 +2348,60 @@
+             startup->enabled = false; startup->monitor->Stop(); startup->scheduler->Stop();
+             std::atomic_store(&Services().state, previous);
+             fprintf(stderr, "Startup GPU fixture: two distinct resources; first-use reuses exact objects with file locked; alias mutation isolated; 100 subsequent Presents create zero objects\n");
++        }
++        {
++            // A profile four times larger than its GPU cache must retain its
++            // first completed allocations rather than churn through both scans.
++            auto previous = Current();
++            auto startup = std::make_shared<RuntimeState>();
++            startup->mode = PreparationMode::PreparedProfile;
++            startup->startupGpu = true; startup->startupSeconds = 2;
++            startup->generation = ++Services().nextGeneration;
++            startup->cpuLimits.cpuBytes = 16 * MiB;
++            startup->cpuLimits.maxAssetBytes = MiB;
++            startup->gpuBytes = 16 * (65536 + 16);
++            startup->scheduler = std::make_shared<PreparationScheduler>(startup->cpuLimits);
++            startup->monitor.reset(new ChangeMonitor());
++            if (!startup->monitor->Start({root}, {}, [owned = startup.get()](const ReconcileRequest& request) {
++                std::lock_guard<std::mutex> lock(owned->pendingMutex);
++                owned->pending = request; owned->hasPending = true;
++            })) return __LINE__;
++            startup->enabled = true;
++            std::array<CustomResource, 64> resources;
++            for (size_t i = 0; i < resources.size(); ++i) {
++                auto& resource = resources[i];
++                resource.filename = root + L"runtime-buffer.bin";
++                resource.override_type = CustomResourceType::BUFFER;
++                resource.bind_flags = D3D11_BIND_VERTEX_BUFFER;
++                resource.preparation_known_read = true;
++                startup->resources.push_back(&resource);
++                startup->profile.emplace(&resource, ProfileEntry());
++                startup->resourceIds[&resource] = L"ResourceBounded" + std::to_wstring(i);
++            }
++            startup->files = {resources[0].filename}; startup->totalAssets = resources.size();
++            std::atomic_store(&Services().state, startup);
++            const auto epoch = AllocateDeviceEpoch();
++            PumpRuntime(device.get(), epoch, context.get());
++            size_t pinned = 0, reused = 0;
++            const auto firstUseBefore = ReadFirstUseCounts();
++            for (auto& resource : resources) {
++                if (startup->profile.at(&resource).pinnedGpu.lock()) ++pinned;
++                if (TryUsePreparedResource(resource, device.get())) ++reused;
++            }
++            if (!startup->startupFinished || startup->startupCreated != 16 || pinned != 16 || reused != 16) {
++                fprintf(stderr, "Bounded startup failure: created=%llu pinned=%zu reused=%zu\n",
++                    (unsigned long long)startup->startupCreated, pinned, reused);
++                return __LINE__;
++            }
++            const auto firstUseAfter = ReadFirstUseCounts();
++            if (firstUseAfter[size_t(FirstUseResult::Hit)] - firstUseBefore[size_t(FirstUseResult::Hit)] != 16 ||
++                firstUseAfter[size_t(FirstUseResult::GpuMiss)] - firstUseBefore[size_t(FirstUseResult::GpuMiss)] != 48) return __LINE__;
++            for (unsigned frame = 0; frame < 100; ++frame) PumpRuntime(device.get(), epoch, context.get());
++            if (startup->startupCreated != 16 || Services().planner->Queued()) return __LINE__;
++            RetireRuntimeDevice(device.get());
++            startup->enabled = false; startup->monitor->Stop(); startup->scheduler->Stop();
++            std::atomic_store(&Services().state, previous);
++            fprintf(stderr, "Bounded startup fixture: 64 declarations, capacity16, created16, retained16, reused16; 100 later Presents create zero objects\n");
+         }
+         {
+             // Invalid encoded bytes deliberately make any accidental WIC decode
+--- a/DirectX11/ModLoading/SnapshotIO.cpp
++++ b/DirectX11/ModLoading/SnapshotIO.cpp
+@@ -263,6 +263,10 @@
+ }
+ bool ReadVerifiedSnapshot(const std::wstring &path, size_t maxBytes, SourceSnapshot &result,
+ 						  std::string &error) {
++	return ReadVerifiedSnapshotAdmitted(path, maxBytes, result, error, {});
++}
++bool ReadVerifiedSnapshotAdmitted(const std::wstring &path, size_t maxBytes, SourceSnapshot &result,
++	std::string &error, const std::function<bool(size_t)>& admit) {
+ 	Handle h;
+ 	FileIdentity before, after;
+ 	if (!h.Open(path) || !h.Identity(before)) {
+@@ -275,6 +279,10 @@
+ 		return false;
+ 	}
+ 	try {
++		if (admit && !admit(size_t(before.size))) {
++			error = "source reservation unavailable";
++			return false;
++		}
+ 		std::string compatibilityReason;
+ 		const bool watchableBefore = h.SingleLink() && WatchablePath(path, &compatibilityReason);
+ 		auto bytes = std::make_shared<std::vector<uint8_t>>(size_t(before.size));
+--- a/DirectX11/ModLoading/SnapshotIO.h
++++ b/DirectX11/ModLoading/SnapshotIO.h
+@@ -1,9 +1,14 @@
+ #pragma once
+ #include "PreparedTypes.h"
++#include <functional>
+ namespace ModLoading {
+ SourceDigest HashBytes(const uint8_t* bytes, size_t size);
+ // Reads using one stable handle. Failure never publishes partial bytes.
+ bool ReadVerifiedSnapshot(const std::wstring& path, size_t maxBytes, SourceSnapshot& result, std::string& error);
++// Worker-only admission after handle size validation, before allocating bytes.
++// The caller owns and releases any reservation, including on read failure.
++bool ReadVerifiedSnapshotAdmitted(const std::wstring& path, size_t maxBytes, SourceSnapshot& result,
++	std::string& error, const std::function<bool(size_t)>& admit);
+ // Exact common WIC subset; unsupported layouts remain source-ready. Worker must initialize COM.
+ bool DecodeSnapshot(const SourceSnapshot& source, size_t maxDecodedBytes, std::shared_ptr<const DecodedImage>& result, std::string& error);
+ }
+--- a/tests/preparation_cpu/main.cpp
++++ b/tests/preparation_cpu/main.cpp
+@@ -146,6 +146,31 @@
+  assert(speculativeReads==4);bounded.CancelBefore(2);assert(bounded.Enqueue(L"bounded-0",2,0,true));
+  for(int i=0;i<1000&&!bounded.TryGet(L"bounded-0",2);++i)std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  assert(bounded.TryGet(L"bounded-0",2));assert(speculativeReads==5);bounded.Stop();
++ // Exact handle-size reservations fill a bounded raw-source cache without
++ // reserving max_asset_bytes twice for every four-byte source. Current pins
++ // are never displaced to admit a fifth source; oversized input stays rejected.
++ {
++  PreparationLimits rawLimits;rawLimits.cpuBytes=16;rawLimits.maxAssetBytes=8;rawLimits.workers=2;rawLimits.maxQueued=8;
++  PreparationScheduler raw(rawLimits);
++  std::vector<std::shared_ptr<const PreparedAsset>> pins;
++  for(unsigned i=0;i<5;++i){
++   const auto name="size-admission-"+std::to_string(i)+".buf";Write(name.c_str(),"abcd");
++   const auto wideName=std::wstring(name.begin(),name.end());assert(raw.Enqueue(wideName,1,0,true));
++   auto end=std::chrono::steady_clock::now()+std::chrono::seconds(5);
++   while(raw.PendingCount()&&std::chrono::steady_clock::now()<end)std::this_thread::yield();
++   assert(!raw.PendingCount());auto value=raw.TryGet(wideName,1);
++   if(i<4){assert(value&&value->snapshot.bytes->size()==4&&!value->decoded);pins.push_back(value);}
++   else{assert(!value&&!raw.CompatibilityReason(wideName,1).empty());}
++   assert(raw.ResidentBytes()==4*pins.size()&&raw.ReservedBytes()==0);
++   std::remove(name.c_str());
++  }
++  assert(pins.size()==4);raw.Stop();
++  Write("admission-check.buf","abcd");SourceSnapshot untouched;std::string why;unsigned calls=0;
++  assert(!ReadVerifiedSnapshotAdmitted(L"admission-check.buf",3,untouched,why,[&](size_t){++calls;return true;}));
++  assert(calls==0&&!untouched.bytes);
++  assert(!ReadVerifiedSnapshotAdmitted(L"admission-check.buf",4,untouched,why,[&](size_t n){++calls;assert(n==4);return false;}));
++  assert(calls==1&&!untouched.bytes);std::remove("admission-check.buf");
++ }
+  bool rejected=false;try{limits.workers=0;PreparationScheduler invalid(limits);}catch(const std::invalid_argument&){rejected=true;}assert(rejected);
+  std::cout<<"CPU preparation checks passed\n";
+ }
+--- a/tests/preparation_status/status_publisher_windows_test.cpp
++++ b/tests/preparation_status/status_publisher_windows_test.cpp
+@@ -48,11 +48,17 @@
+         PreparationStatus status; status.mode = PreparationMode::Adaptive;
+         status.state = PreparationStatusState::Preparing; status.totalAssets = 3;
+         status.cpuReady = 2; status.gpuReady = 1; status.reason = "fixture preparing";
++        RecordFirstUseResult(FirstUseResult::Hit);
++        RecordFirstUseResult(FirstUseResult::GpuMiss);
++        RecordFirstUseResult(FirstUseResult::CpuMiss);
+         UpdatePreparationStatus(status, ReservePreparationStatusTicket());
+         Require(GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES, "Update before Initialize wrote a file");
+         Require(InitializePreparationStatusForTesting(reinterpret_cast<const void*>(&InitializePreparationStatus), output), "initialize publisher");
+         UpdatePreparationStatus(status, ReservePreparationStatusTicket());
+         const auto first = Wait(path, "preparing", &status);
++        Require(first.find("\"first_use_gpu_hits\":1,") != std::string::npos &&
++            first.find("\"first_use_gpu_misses\":1,") != std::string::npos &&
++            first.find("\"first_use_cpu_misses\":1,") != std::string::npos, "first-use counters missing");
+         Require(first.find("\"total_assets\":3,") != std::string::npos && first.find("\"cpu_ready\":2,") != std::string::npos &&
+             first.find("\"gpu_ready\":1,") != std::string::npos, "real supplied counts not published");
+         // A heartbeat must refresh even when no new Runtime snapshot arrives.
+@@ -64,6 +70,8 @@
+         InvalidatePreparationStatus();
+         UpdatePreparationStatus(status, obsolete); // Delayed Ready must be rejected.
+         const auto invalidated = Wait(path, "preparing", nullptr); // No future authoritative updates.
++        Require(invalidated.find("\"first_use_gpu_hits\":1,") != std::string::npos,
++            "invalidation erased session first-use history");
+         Require(invalidated.find("preparation status invalidated") != std::string::npos &&
+             invalidated.find("\"gpu_ready\":0,") != std::string::npos &&
+             invalidated.find("\"cpu_ready\":0,") != std::string::npos, "invalidation left fresh cached Ready");

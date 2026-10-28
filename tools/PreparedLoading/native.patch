@@ -1,5 +1,5 @@
 diff --git a/.github/workflows/zip-release.yml b/.github/workflows/zip-release.yml
-index 98d27a1af9bc14abafca5e5eb0d7b910025e27ed..923c85b5a6e650173438bf66dbbc0050b6b6c256 100644
+index 98d27a1..923c85b 100644
 --- a/.github/workflows/zip-release.yml
 +++ b/.github/workflows/zip-release.yml
 @@ -24,11 +24,13 @@ jobs:
@@ -58,7 +58,7 @@ index 98d27a1af9bc14abafca5e5eb0d7b910025e27ed..923c85b5a6e650173438bf66dbbc0050
      - name: Create GitHub Release
        id: create_release
 diff --git a/DirectX11/CommandList.cpp b/DirectX11/CommandList.cpp
-index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..3f0da229747015b5980c5e46138e34b581d527e3 100644
+index b0fa8a2..0472e0e 100644
 --- a/DirectX11/CommandList.cpp
 +++ b/DirectX11/CommandList.cpp
 @@ -14,22 +14,27 @@
@@ -630,7 +630,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..3f0da229747015b5980c5e46138e34b5
  		LogOverlayW(LOG_WARNING, L"Error reading custom buffer from file %ls\n", filename.c_str());
  		goto out_delete;
  	}
-@@ -6588,8 +6734,25 @@ void CustomResource::LoadFromFile(ID3D11Device *mOrigDevice1)
+@@ -6588,8 +6734,26 @@ void CustomResource::LoadFromFile(ID3D11Device *mOrigDevice1)
  	// Needs to be called at some point before CreateXXXTextureFromFile:
  	EnsureCOM();
  
@@ -649,7 +649,8 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..3f0da229747015b5980c5e46138e34b5
 +			hr = DirectX::CreateDDSTextureFromMemoryEx(mOrigDevice1,
 +				bytes.data(), bytes.size(), 0, D3D11_USAGE_DEFAULT, bind_flags, 0,
 +				misc_flags, override_color_space == CustomColorSpace::SRGB, &resource, NULL, NULL);
-+		else
++		else if (!ModLoading::TryCreateDecodedTexture(*prepared, *this, mOrigDevice1,
++            bind_flags, misc_flags, G->gForceDetectColorSpace, hr))
 +			hr = DirectX::CreateWICTextureFromMemoryEx(mOrigDevice1,
 +				bytes.data(), bytes.size(), 0, D3D11_USAGE_DEFAULT, bind_flags, 0,
 +				misc_flags, ModLoading::PreparedWICFlags(bytes, override_color_space,
@@ -658,7 +659,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..3f0da229747015b5980c5e46138e34b5
  		LogInfoW(L"Loading custom resource %s as DDS, bind_flags=0x%03x\n", filename.c_str(), bind_flags);
  		hr = DirectX::CreateDDSTextureFromFileEx(mOrigDevice1,
  				filename.c_str(), 0,
-@@ -6602,6 +6765,7 @@ void CustomResource::LoadFromFile(ID3D11Device *mOrigDevice1)
+@@ -6602,6 +6766,7 @@ void CustomResource::LoadFromFile(ID3D11Device *mOrigDevice1)
  				D3D11_USAGE_DEFAULT, bind_flags, 0, misc_flags,
  				GetWICFlags(filename), &resource, NULL);
  	}
@@ -666,7 +667,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..3f0da229747015b5980c5e46138e34b5
  	if (SUCCEEDED(hr)) {
  		device = mOrigDevice1;
  		is_null = false;
-@@ -6664,7 +6828,13 @@ void CustomResource::SubstantiateBuffer(ID3D11Device *mOrigDevice1, void **buf,
+@@ -6664,7 +6829,13 @@ void CustomResource::SubstantiateBuffer(ID3D11Device *mOrigDevice1, void **buf,
  		pInitialData = &data;
  	}
  
@@ -681,7 +682,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..3f0da229747015b5980c5e46138e34b5
  	if (SUCCEEDED(hr)) {
  		LogInfo("Substantiated custom %S [%S], bind_flags=0x%03x\n",
  				lookup_enum_name(CustomResourceTypeNames, override_type), name.c_str(), desc.BindFlags);
-@@ -6692,7 +6862,12 @@ void CustomResource::SubstantiateTexture1D(ID3D11Device *mOrigDevice1)
+@@ -6692,7 +6863,12 @@ void CustomResource::SubstantiateTexture1D(ID3D11Device *mOrigDevice1)
  	desc.MiscFlags = misc_flags;
  	OverrideTexDesc(&desc);
  
@@ -695,7 +696,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..3f0da229747015b5980c5e46138e34b5
  	if (SUCCEEDED(hr)) {
  		LogInfo("Substantiated custom %S [%S], bind_flags=0x%03x\n",
  				lookup_enum_name(CustomResourceTypeNames, override_type), name.c_str(), desc.BindFlags);
-@@ -6719,7 +6894,12 @@ void CustomResource::SubstantiateTexture2D(ID3D11Device *mOrigDevice1)
+@@ -6719,7 +6895,12 @@ void CustomResource::SubstantiateTexture2D(ID3D11Device *mOrigDevice1)
  	desc.MiscFlags = misc_flags;
  	OverrideTexDesc(&desc);
  
@@ -709,7 +710,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..3f0da229747015b5980c5e46138e34b5
  	if (SUCCEEDED(hr)) {
  		LogInfo("Substantiated custom %S [%S], bind_flags=0x%03x\n",
  				lookup_enum_name(CustomResourceTypeNames, override_type), name.c_str(), desc.BindFlags);
-@@ -6746,7 +6926,12 @@ void CustomResource::SubstantiateTexture3D(ID3D11Device *mOrigDevice1)
+@@ -6746,7 +6927,12 @@ void CustomResource::SubstantiateTexture3D(ID3D11Device *mOrigDevice1)
  	desc.MiscFlags = misc_flags;
  	OverrideTexDesc(&desc);
  
@@ -723,7 +724,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..3f0da229747015b5980c5e46138e34b5
  	if (SUCCEEDED(hr)) {
  		LogInfo("Substantiated custom %S [%S], bind_flags=0x%03x\n",
  				lookup_enum_name(CustomResourceTypeNames, override_type), name.c_str(), desc.BindFlags);
-@@ -6871,6 +7056,7 @@ void CustomResource::OverrideOutOfBandInfo(DXGI_FORMAT *format, UINT *stride)
+@@ -6871,6 +7057,7 @@ void CustomResource::OverrideOutOfBandInfo(DXGI_FORMAT *format, UINT *stride)
  
  void CustomResource::ResetRuntimeState()
  {
@@ -731,7 +732,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..3f0da229747015b5980c5e46138e34b5
  	if (resource) {
  		resource->Release();
  		resource = nullptr;
-@@ -6895,6 +7081,10 @@ void CustomResource::CopyMetadataFrom(const CustomResource& src)
+@@ -6895,6 +7082,10 @@ void CustomResource::CopyMetadataFrom(const CustomResource& src)
  	max_copies_per_frame = src.max_copies_per_frame;
  
  	filename = src.filename;
@@ -742,7 +743,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..3f0da229747015b5980c5e46138e34b5
  
  	override_type = src.override_type;
  	override_format = src.override_format;
-@@ -7691,6 +7881,7 @@ void CustomResourcePool::ResetPool(bool reset_elements)
+@@ -7691,6 +7882,7 @@ void CustomResourcePool::ResetPool(bool reset_elements)
  
  void CustomResourcePool::InitializeResource(size_t pool_index)
  {
@@ -750,7 +751,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..3f0da229747015b5980c5e46138e34b5
  	PoolElement& element = elements[pool_index];
  
  	if (!element.resource) {
-@@ -8192,6 +8383,7 @@ IniParserResult ResourceCopyTarget::ParseTargetMember(
+@@ -8192,6 +8384,7 @@ IniParserResult ResourceCopyTarget::ParseTargetMember(
  
  IniParserResult ResourceCopyTarget::ParseTargetCustomResource(const wchar_t*& target, size_t length, const wstring* ini_namespace, CommandListScope* scope)
  {
@@ -758,7 +759,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..3f0da229747015b5980c5e46138e34b5
  	//LogInfo("ParseTargetCustomResource: target=%ls, length=%d\n", target, length);
  	if (length < 9 || wcsncmp(target, L"resource", 8))
  		return IniParserResult::TOKEN_NOT_FOUND;
-@@ -8241,6 +8433,7 @@ bool ResourceCopyTarget::ParseRangeBounds(const wstring& text, size_t colon, con
+@@ -8241,6 +8434,7 @@ bool ResourceCopyTarget::ParseRangeBounds(const wstring& text, size_t colon, con
  
  IniParserResult ResourceCopyTarget::ParseTargetPool(const wchar_t*& target, size_t length, const wstring* ini_namespace, CommandListScope* scope, bool is_source)
  {
@@ -766,7 +767,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..3f0da229747015b5980c5e46138e34b5
  	if (length < 5 || wcsncmp(target, L"pool", 4))
  		return IniParserResult::TOKEN_NOT_FOUND;
  
-@@ -8629,8 +8822,15 @@ bool ResourceCopyTarget::ParseTarget(const wchar_t *target, bool is_source, cons
+@@ -8629,8 +8823,15 @@ bool ResourceCopyTarget::ParseTarget(const wchar_t *target, bool is_source, cons
  		// Parse the remainder as a custom resource (e.g. `ResourceFoo`).
  		ret = ParseTargetCustomResource(target, length, ini_namespace, scope);
  		//LogInfo("ParseTarget: %d at ParseTargetCustomResource\n", ret);
@@ -783,7 +784,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..3f0da229747015b5980c5e46138e34b5
  
  		// Parse the remainder as a resource pool (e.g. `PoolFoo`).
  		ret = ParseTargetPool(target, length, ini_namespace, scope, is_source);
-@@ -8656,7 +8856,7 @@ bool ResourceCopyTarget::ParseTarget(const wchar_t *target, bool is_source, cons
+@@ -8656,7 +8857,7 @@ bool ResourceCopyTarget::ParseTarget(const wchar_t *target, bool is_source, cons
  
  // (src, dst) pairs of custom resources linked by a reference copy during the
  // current config load. src must eventually carry every bind flag dst carries.
@@ -792,7 +793,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..3f0da229747015b5980c5e46138e34b5
  
  static void DeferBindFlagsPropagation(CustomResource* src, CustomResource* dst)
  {
-@@ -8859,6 +9059,30 @@ static CommandListCommand* parse_resource_copy_operation(
+@@ -8859,6 +9060,30 @@ static CommandListCommand* parse_resource_copy_operation(
  			options |= ResourceCopyOptions::COPY;
  	}
  
@@ -823,7 +824,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..3f0da229747015b5980c5e46138e34b5
  	// FIXME: If custom resources are copied to other custom resources by
  	// reference that are in turn bound to the pipeline we may not
  	// propagate all the bind flags correctly depending on the order
-@@ -9001,10 +9225,11 @@ CommandListCommand* parse_pool_variable_operation(
+@@ -9001,10 +9226,11 @@ CommandListCommand* parse_pool_variable_operation(
  	const wchar_t *section, ResourceCopyTarget& dst, wstring *val, CommandList *command_list, const wstring *ini_namespace, const wchar_t* key
  )
  {
@@ -836,7 +837,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..3f0da229747015b5980c5e46138e34b5
  
  	// Persistent user config may only assign pool variables if pool still has persistent variables enabled.
  	// Treat variables of pool that lost "pool_persist_variables" option since the previous config load
-@@ -9417,6 +9642,7 @@ IfCommand::IfCommand(const wchar_t *section) :
+@@ -9417,6 +9643,7 @@ IfCommand::IfCommand(const wchar_t *section) :
  	has_nested_else_if(false),
  	section(section)
  {
@@ -844,7 +845,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..3f0da229747015b5980c5e46138e34b5
  	true_commands_pre = std::make_shared<CommandList>();
  	true_commands_post = std::make_shared<CommandList>();
  	false_commands_pre = std::make_shared<CommandList>();
-@@ -9556,15 +9782,20 @@ StaticT* ResourceCopyTarget::GetPoolObject(StaticT* static_object, CommandListSt
+@@ -9556,15 +9783,20 @@ StaticT* ResourceCopyTarget::GetPoolObject(StaticT* static_object, CommandListSt
  
  CustomResource* ResourceCopyTarget::GetCustomResource(CommandListState* state, bool is_assignment)
  {
@@ -868,7 +869,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..3f0da229747015b5980c5e46138e34b5
  }
  
  CommandListVariable* ResourceCopyTarget::GetPoolVariable(CommandListState* state, bool is_assignment)
-@@ -9864,12 +10095,12 @@ ID3D11Resource *ResourceCopyTarget::GetResource(
+@@ -9864,12 +10096,12 @@ ID3D11Resource *ResourceCopyTarget::GetResource(
  		}
  
  	case ResourceCopyTargetType::INI_PARAMS:
@@ -887,7 +888,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..3f0da229747015b5980c5e46138e34b5
  
  	case ResourceCopyTargetType::CURSOR_MASK:
  		UpdateCursorResources(state);
-@@ -10178,6 +10409,7 @@ void ResourceCopyTarget::SetResource(
+@@ -10178,6 +10410,7 @@ void ResourceCopyTarget::SetResource(
  		if (custom_resource->resource != res) {
  			if (custom_resource->resource)
  				custom_resource->resource->Release();
@@ -895,7 +896,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..3f0da229747015b5980c5e46138e34b5
  			custom_resource->resource = res;
  			custom_resource->device = state->mOrigDevice1;
  			if (custom_resource->resource)
-@@ -10318,8 +10550,8 @@ void ResourceCopyTarget::FindTextureOverrides(CommandListState *state, bool *res
+@@ -10318,8 +10551,8 @@ void ResourceCopyTarget::FindTextureOverrides(CommandListState *state, bool *res
  		}
  
  		// Originally, 3dmigoto has 2 methods of TextureOverride matching:
@@ -906,7 +907,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..3f0da229747015b5980c5e46138e34b5
  		// Those methods cannot be used for SAME TextureOverride - if hash is defined, fuzzy match options will be ignored by INI parser.
  		if (!region_size) 
  		{
-@@ -10333,7 +10565,7 @@ void ResourceCopyTarget::FindTextureOverrides(CommandListState *state, bool *res
+@@ -10333,7 +10566,7 @@ void ResourceCopyTarget::FindTextureOverrides(CommandListState *state, bool *res
  			// For region hashes we need another method - prefilter by call_info, filter by hash.
  			// This path has higher CPU cost than Hash Matching, but it's still WAY cheaper than to region-hash every IB or VB.
  
@@ -915,7 +916,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..3f0da229747015b5980c5e46138e34b5
  			TextureOverrideFuzzyMatches* draw_info_matches = get_fuzzy_matches_by_draw_info(state->call_info);
  
  			uint32_t region_hash = 0;
-@@ -11892,6 +12124,17 @@ static D3D11_UNORDERED_ACCESS_VIEW_DESC* FillOutTex3DDesc(
+@@ -11892,6 +12125,17 @@ static D3D11_UNORDERED_ACCESS_VIEW_DESC* FillOutTex3DDesc(
  #pragma endregion FillOutDesc
  
  
@@ -933,7 +934,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..3f0da229747015b5980c5e46138e34b5
  template <typename ViewType,
  	 typename DescType,
  	 HRESULT (__stdcall ID3D11Device::*CreateView)(THIS_
-@@ -11966,7 +12209,19 @@ static ID3D11View* _CreateCompatibleView(
+@@ -11966,7 +12210,19 @@ static ID3D11View* _CreateCompatibleView(
  			break;
  	}
  
@@ -954,7 +955,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..3f0da229747015b5980c5e46138e34b5
  	if (FAILED(hr)) {
  		LogInfo("Resource copy CreateCompatibleView failed: %x\n", hr);
  		if (pDesc)
-@@ -13543,3 +13798,201 @@ void SlotRangeCopyOperation::run(CommandListState *state)
+@@ -13543,3 +13799,201 @@ void SlotRangeCopyOperation::run(CommandListState *state)
  
  #pragma endregion SlotRangeCopyOperation
  
@@ -1157,7 +1158,7 @@ index b0fa8a26a75e3b9a25f48ddce658f8d22a3f1ae8..3f0da229747015b5980c5e46138e34b5
 +        ? config.ownedIniView.get() : device->mIniResourceView;
 +}
 diff --git a/DirectX11/CommandList.h b/DirectX11/CommandList.h
-index d893ac4db9feec6625fb2dfd652f9eacf02eee61..c5754d8715f476569a491825588181f657472941 100644
+index d893ac4..c5754d8 100644
 --- a/DirectX11/CommandList.h
 +++ b/DirectX11/CommandList.h
 @@ -11,6 +11,7 @@
@@ -1312,7 +1313,7 @@ index d893ac4db9feec6625fb2dfd652f9eacf02eee61..c5754d8715f476569a491825588181f6
 +ID3D11Texture1D* ConfigurationIniTexture(HackerDevice* device);
 +ID3D11ShaderResourceView* ConfigurationIniView(HackerDevice* device);
 diff --git a/DirectX11/D3D11Wrapper.cpp b/DirectX11/D3D11Wrapper.cpp
-index ff97ce8960f6a1b9e55849b8fd281137792d85b7..cf2f04a1e13f6ef438e293e06ddcbb9c81f13f41 100644
+index ff97ce8..cf2f04a 100644
 --- a/DirectX11/D3D11Wrapper.cpp
 +++ b/DirectX11/D3D11Wrapper.cpp
 @@ -698,6 +698,7 @@ static bool ForceDX11(D3D_FEATURE_LEVEL *featureLevels)
@@ -1333,7 +1334,7 @@ index ff97ce8960f6a1b9e55849b8fd281137792d85b7..cf2f04a1e13f6ef438e293e06ddcbb9c
  	}
  
 diff --git a/DirectX11/DirectX11.vcxproj b/DirectX11/DirectX11.vcxproj
-index 4c0ba1f6c35b27895a6fc5f50d1a53abe84acfa7..b4d232249b5e9808dc710793545821b1b0caef78 100644
+index 4c0ba1f..b4d2322 100644
 --- a/DirectX11/DirectX11.vcxproj
 +++ b/DirectX11/DirectX11.vcxproj
 @@ -1,4 +1,4 @@
@@ -1432,7 +1433,7 @@ index 4c0ba1f6c35b27895a6fc5f50d1a53abe84acfa7..b4d232249b5e9808dc710793545821b1
 \ No newline at end of file
 +</Project>
 diff --git a/DirectX11/DirectX11.vcxproj.filters b/DirectX11/DirectX11.vcxproj.filters
-index efb38dd02fe71b57d8ad549f274aceb3e8bb620f..88ef8be0301f5311cee96d03a9e608be388e2f83 100644
+index efb38dd..88ef8be 100644
 --- a/DirectX11/DirectX11.vcxproj.filters
 +++ b/DirectX11/DirectX11.vcxproj.filters
 @@ -1,4 +1,4 @@
@@ -1458,7 +1459,7 @@ index efb38dd02fe71b57d8ad549f274aceb3e8bb620f..88ef8be0301f5311cee96d03a9e608be
      <ClInclude Include="HookedContext.h" />
      <ClInclude Include="HookedDevice.h" />
 diff --git a/DirectX11/DrawCallInfo.h b/DirectX11/DrawCallInfo.h
-index fff4922991e2141defa130eb0f1bd83742ab0d55..3dabd9ae6f9024aea07b0317dfb62843ae706e41 100644
+index fff4922..3dabd9a 100644
 --- a/DirectX11/DrawCallInfo.h
 +++ b/DirectX11/DrawCallInfo.h
 @@ -1,6 +1,8 @@
@@ -1481,7 +1482,7 @@ index fff4922991e2141defa130eb0f1bd83742ab0d55..3dabd9ae6f9024aea07b0317dfb62843
  	DrawCallInfo() :
  		type(DrawCall::Invalid),
 diff --git a/DirectX11/FrameAnalysis.h b/DirectX11/FrameAnalysis.h
-index 9fde55e52b3b9c5b6bfae884348cd2e08c00656f..2a21a551325afb29f3f023a055967abc10d68ca4 100644
+index 9fde55e..2a21a55 100644
 --- a/DirectX11/FrameAnalysis.h
 +++ b/DirectX11/FrameAnalysis.h
 @@ -47,7 +47,11 @@ struct FrameAnalysisDeferredDumpBufferArgs {
@@ -1498,7 +1499,7 @@ index 9fde55e52b3b9c5b6bfae884348cd2e08c00656f..2a21a551325afb29f3f023a055967abc
  struct FrameAnalysisDeferredDumpTex2DArgs {
  	FrameAnalysisOptions analyse_options;
 diff --git a/DirectX11/HackerContext.cpp b/DirectX11/HackerContext.cpp
-index 4ea47c87db3a0e17d301d753f7bbec4b79e71b3f..0cf3a6457e53f3ac7783b8dae88c04e267bd559e 100644
+index 4ea47c8..0cf3a64 100644
 --- a/DirectX11/HackerContext.cpp
 +++ b/DirectX11/HackerContext.cpp
 @@ -65,6 +65,7 @@ HackerContext* HackerContextFactory(ID3D11Device1 *pDevice1, ID3D11DeviceContext
@@ -3049,7 +3050,7 @@ index 4ea47c87db3a0e17d301d753f7bbec4b79e71b3f..0cf3a6457e53f3ac7783b8dae88c04e2
  	mOrigContext1->DiscardView1(pResourceView, pRects, NumRects);
  }
 diff --git a/DirectX11/HackerContext.h b/DirectX11/HackerContext.h
-index 9905629cc6711788c4c51738eb20e1d12ac27a54..ab7c8fdf375ac3a6134d8fde773c4422758b9453 100644
+index 9905629..ab7c8fd 100644
 --- a/DirectX11/HackerContext.h
 +++ b/DirectX11/HackerContext.h
 @@ -236,6 +236,8 @@ public:
@@ -3062,7 +3063,7 @@ index 9905629cc6711788c4c51738eb20e1d12ac27a54..ab7c8fdf375ac3a6134d8fde773c4422
  	ID3D11DeviceContext1* GetPossiblyHookedOrigContext1();
  	ID3D11DeviceContext1* GetPassThroughOrigContext1();
 diff --git a/DirectX11/HackerDXGI.cpp b/DirectX11/HackerDXGI.cpp
-index 37fc24fae6e4335b7ce17d189aa3bc75e755e5bd..61656cb9fb2b5a136cf207d4cd6db8de4864c18f 100644
+index 37fc24f..61656cb 100644
 --- a/DirectX11/HackerDXGI.cpp
 +++ b/DirectX11/HackerDXGI.cpp
 @@ -70,6 +70,8 @@
@@ -3206,7 +3207,7 @@ index 37fc24fae6e4335b7ce17d189aa3bc75e755e5bd..61656cb9fb2b5a136cf207d4cd6db8de
  		if (profiling)
  			Profiling::end(&profiling_state, &Profiling::present_overhead);
 diff --git a/DirectX11/HackerDXGI.h b/DirectX11/HackerDXGI.h
-index 05a2b14ff227e0f11f6e1b8c4f4f8e87138f0953..aeff9d4fe5c6801124e7146a6d08734a78771569 100644
+index 05a2b14..aeff9d4 100644
 --- a/DirectX11/HackerDXGI.h
 +++ b/DirectX11/HackerDXGI.h
 @@ -32,7 +32,7 @@ public:
@@ -3219,7 +3220,7 @@ index 05a2b14ff227e0f11f6e1b8c4f4f8e87138f0953..aeff9d4fe5c6801124e7146a6d08734a
  
  
 diff --git a/DirectX11/HackerDevice.cpp b/DirectX11/HackerDevice.cpp
-index 067e4923b5e4347b50985c6f958c3d30d83e337f..4f22c01b9d6c2716e04d8eded60bbe08e099381f 100644
+index 067e492..4f22c01 100644
 --- a/DirectX11/HackerDevice.cpp
 +++ b/DirectX11/HackerDevice.cpp
 @@ -13,6 +13,8 @@
@@ -3815,7 +3816,7 @@ index 067e4923b5e4347b50985c6f958c3d30d83e337f..4f22c01b9d6c2716e04d8eded60bbe08
  }
  
 diff --git a/DirectX11/HackerDevice.h b/DirectX11/HackerDevice.h
-index fdd2296d422408816f9ff68a69a174af5ff8647e..dbc87e4b345818faddbe8ae28395b1d0029f0405 100644
+index fdd2296..dbc87e4 100644
 --- a/DirectX11/HackerDevice.h
 +++ b/DirectX11/HackerDevice.h
 @@ -1,6 +1,7 @@
@@ -3843,7 +3844,7 @@ index fdd2296d422408816f9ff68a69a174af5ff8647e..dbc87e4b345818faddbe8ae28395b1d0
  	ID3D11Texture1D *mIniTexture;
  	ID3D11ShaderResourceView *mIniResourceView;
 diff --git a/DirectX11/Hunting.cpp b/DirectX11/Hunting.cpp
-index 15618bf79c715b42d74450b7d0d8e4ffcee63d28..ee4607654c9676fe781e3994b4822111bdaf563a 100644
+index 15618bf..ee46076 100644
 --- a/DirectX11/Hunting.cpp
 +++ b/DirectX11/Hunting.cpp
 @@ -677,6 +677,7 @@ static bool RegenerateShader(wchar_t *shaderFixPath, wchar_t *fileName, const ch
@@ -3876,7 +3877,7 @@ index 15618bf79c715b42d74450b7d0d8e4ffcee63d28..ee4607654c9676fe781e3994b4822111
  
  	if (Profiling::mode == Profiling::Mode::INVALID)
 diff --git a/DirectX11/IniHandler.cpp b/DirectX11/IniHandler.cpp
-index a69e79dade0b489a7aa3ed670ce624f39ed39c3c..2480dd0ab76969b36ca553a9d60199257764ee9f 100644
+index a69e79d..2480dd0 100644
 --- a/DirectX11/IniHandler.cpp
 +++ b/DirectX11/IniHandler.cpp
 @@ -1,4 +1,12 @@
@@ -5661,7 +5662,7 @@ index a69e79dade0b489a7aa3ed670ce624f39ed39c3c..2480dd0ab76969b36ca553a9d6019925
 +	ModLoading::RetainRetiredConfiguration(configuration_write.Previous());
  }
 diff --git a/DirectX11/IniHandler.h b/DirectX11/IniHandler.h
-index 6e75eeb2fcc0ee41244e88ad3ef42fa017be5453..d6da01f99faa15fded22ceeab994dc10d7c9e1ab 100644
+index 6e75eeb..d6da01f 100644
 --- a/DirectX11/IniHandler.h
 +++ b/DirectX11/IniHandler.h
 @@ -1,8 +1,35 @@
@@ -5712,7 +5713,7 @@ index 6e75eeb2fcc0ee41244e88ad3ef42fa017be5453..d6da01f99faa15fded22ceeab994dc10
  		first(key),
 diff --git a/DirectX11/ModLoading/AssetCatalog.cpp b/DirectX11/ModLoading/AssetCatalog.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..d81195420000653b77443b4dfe36dc078908b0f4
+index 0000000..d811954
 --- /dev/null
 +++ b/DirectX11/ModLoading/AssetCatalog.cpp
 @@ -0,0 +1,42 @@
@@ -5760,7 +5761,7 @@ index 0000000000000000000000000000000000000000..d81195420000653b77443b4dfe36dc07
 +} // namespace ModLoading
 diff --git a/DirectX11/ModLoading/AssetCatalog.h b/DirectX11/ModLoading/AssetCatalog.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..acf7cb7aa75d9346ee6f70ea0c6e4473888d68b0
+index 0000000..acf7cb7
 --- /dev/null
 +++ b/DirectX11/ModLoading/AssetCatalog.h
 @@ -0,0 +1,29 @@
@@ -5795,10 +5796,10 @@ index 0000000000000000000000000000000000000000..acf7cb7aa75d9346ee6f70ea0c6e4473
 +}
 diff --git a/DirectX11/ModLoading/ChangeMonitor.cpp b/DirectX11/ModLoading/ChangeMonitor.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..af69dc968705be555e4d30908b79b6bd0fd6c89b
+index 0000000..74f7752
 --- /dev/null
 +++ b/DirectX11/ModLoading/ChangeMonitor.cpp
-@@ -0,0 +1,333 @@
+@@ -0,0 +1,375 @@
 +#include "ChangeMonitor.h"
 +#include <atomic>
 +#include <chrono>
@@ -5912,6 +5913,32 @@ index 0000000000000000000000000000000000000000..af69dc968705be555e4d30908b79b6bd
 +{
 +	return _wcsicmp(left.c_str(), right.c_str()) == 0;
 +}
++struct NotificationPath {
++	std::wstring path;
++	bool unresolved;
++};
++NotificationPath ResolveNotificationPath(const std::wstring& path)
++{
++	// Removed/old-rename entries may no longer have a resolvable short name.
++	// Expand the closest surviving ancestor so exclusions still apply, then
++	// conservatively invalidate the complete source closure for the unknown tail.
++	std::vector<wchar_t> buffer(32768);
++	std::wstring prefix = path;
++	for (;;) {
++		const DWORD count = GetLongPathNameW(prefix.c_str(), buffer.data(), DWORD(buffer.size()));
++		if (count && count < buffer.size())
++			return {std::wstring(buffer.data(), count) + path.substr(prefix.size()), prefix.size() != path.size()};
++		const auto slash = prefix.find_last_of(L"\\/");
++		if (slash == std::wstring::npos || slash <= 2)
++			return {path, true};
++		prefix.resize(slash);
++	}
++}
++void NotifyFile(ChangeReconciler& state, ChangeKind kind, const std::wstring& path, uint64_t now)
++{
++	const auto resolved = ResolveNotificationPath(path);
++	state.Notify(resolved.unresolved ? ChangeKind::UnresolvedName : kind, resolved.path, now);
++}
 +struct RootWatch {
 +	std::wstring root;
 +	std::wstring parent;
@@ -5994,7 +6021,8 @@ index 0000000000000000000000000000000000000000..af69dc968705be555e4d30908b79b6bd
 +						}
 +						const std::wstring path = ptr->directory + (ptr->directory.back() == L'\\' ? L"" : L"\\") + std::wstring(event->FileName, event->FileNameLength / sizeof(wchar_t));
 +						if (parent) {
-+							if (event->Action != FILE_ACTION_MODIFIED && Same(path, root.root)) {
++							const auto resolved = ResolveNotificationPath(path);
++							if (event->Action != FILE_ACTION_MODIFIED && (resolved.unresolved || Same(resolved.path, root.root))) {
 +								replaced = true;
 +								state.Notify(ChangeKind::RootReplaced, root.root, Now());
 +							}
@@ -6008,7 +6036,7 @@ index 0000000000000000000000000000000000000000..af69dc968705be555e4d30908b79b6bd
 +							case FILE_ACTION_MODIFIED: break;
 +							default: kind = ChangeKind::Overflow; break;
 +							}
-+							state.Notify(kind, path, Now());
++							NotifyFile(state, kind, path, Now());
 +						}
 +						if (!event->NextEntryOffset)
 +							break;
@@ -6088,6 +6116,14 @@ index 0000000000000000000000000000000000000000..af69dc968705be555e4d30908b79b6bd
 +}
 +bool ChangeMonitor::IsCurrent(uint64_t token) const
 +{
++#ifdef _WIN32
++	// A completed native event invalidates cache hits immediately, including
++	// the interval before the notification worker updates the generation token.
++	std::unique_lock<std::mutex> lock(impl_->watchMutex, std::try_to_lock);
++	if (!lock.owns_lock() || !impl_->watching.load()) return false;
++	for (const auto event : impl_->watchEvents)
++		if (WaitForSingleObject(event, 0) != WAIT_TIMEOUT) return false;
++#endif
 +	return impl_->state.IsCurrent(token);
 +}
 +bool ChangeMonitor::CommitIfCurrent(uint64_t token, const std::function<bool()>& publish) noexcept
@@ -6124,6 +6160,13 @@ index 0000000000000000000000000000000000000000..af69dc968705be555e4d30908b79b6bd
 +}
 +void ChangeMonitor::Inject(ChangeKind kind, const std::wstring& path)
 +{
++#ifdef _WIN32
++	if (kind == ChangeKind::Created || kind == ChangeKind::Modified || kind == ChangeKind::Deleted ||
++		kind == ChangeKind::RenamedOld || kind == ChangeKind::RenamedNew) {
++		NotifyFile(impl_->state, kind, path, Now());
++		return;
++	}
++#endif
 +	impl_->state.Notify(kind, path, Now());
 +}
 +}
@@ -6134,7 +6177,7 @@ index 0000000000000000000000000000000000000000..af69dc968705be555e4d30908b79b6bd
 +}
 diff --git a/DirectX11/ModLoading/ChangeMonitor.h b/DirectX11/ModLoading/ChangeMonitor.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..eb29f56ab8c19ff2ba1470934a485768ae8b364e
+index 0000000..eb29f56
 --- /dev/null
 +++ b/DirectX11/ModLoading/ChangeMonitor.h
 @@ -0,0 +1,35 @@
@@ -6175,10 +6218,10 @@ index 0000000000000000000000000000000000000000..eb29f56ab8c19ff2ba1470934a485768
 +}
 diff --git a/DirectX11/ModLoading/ChangeReconciler.cpp b/DirectX11/ModLoading/ChangeReconciler.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..51d6ac75350236699937a01cc2394c49612b4ea1
+index 0000000..86fc69a
 --- /dev/null
 +++ b/DirectX11/ModLoading/ChangeReconciler.cpp
-@@ -0,0 +1,231 @@
+@@ -0,0 +1,232 @@
 +#include "ChangeReconciler.h"
 +#include <algorithm>
 +#include <cwctype>
@@ -6252,6 +6295,7 @@ index 0000000000000000000000000000000000000000..51d6ac75350236699937a01cc2394c49
 +	if (cancelled_)
 +		return;
 +	const bool force = kind == ChangeKind::Overflow || kind == ChangeKind::Unsupported || kind == ChangeKind::RootReplaced;
++	const bool unresolved = kind == ChangeKind::UnresolvedName;
 +	const auto normal = Normal(path);
 +	const bool ini = normal.size() >= 4 && normal.substr(normal.size() - 4) == L".ini";
 +	if (!force) {
@@ -6268,7 +6312,7 @@ index 0000000000000000000000000000000000000000..51d6ac75350236699937a01cc2394c49
 +			return;
 +		if (std::binary_search(options_.excludedSourceFiles.begin(), options_.excludedSourceFiles.end(), normal))
 +			return;
-+		if (options_.filterDependencies && !ini) {
++		if (options_.filterDependencies && !ini && !unresolved) {
 +			bool dependency = std::binary_search(options_.dependencyFiles.begin(), options_.dependencyFiles.end(), normal);
 +			// Directory rename/removal notifications do not enumerate descendants.
 +			// Keep ancestor changes so a moved dependency cannot stay reusable.
@@ -6284,9 +6328,9 @@ index 0000000000000000000000000000000000000000..51d6ac75350236699937a01cc2394c49
 +	if (ini)
 +		ini_ = true;
 +	// Unknown lost notifications may contain INI changes, so retain reload intent.
-+	if (force)
++	if (force || unresolved)
 +		ini_ = true;
-+	Dirty(now, force);
++	Dirty(now, force || unresolved);
 +}
 +bool ChangeReconciler::TrackDependencyFile(const std::wstring& path)
 +{
@@ -6412,7 +6456,7 @@ index 0000000000000000000000000000000000000000..51d6ac75350236699937a01cc2394c49
 +}
 diff --git a/DirectX11/ModLoading/ChangeReconciler.h b/DirectX11/ModLoading/ChangeReconciler.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..7d11991c95beb742d308962fb96f502578d75b7d
+index 0000000..657f91f
 --- /dev/null
 +++ b/DirectX11/ModLoading/ChangeReconciler.h
 @@ -0,0 +1,66 @@
@@ -6424,7 +6468,7 @@ index 0000000000000000000000000000000000000000..7d11991c95beb742d308962fb96f5025
 +#include <vector>
 +
 +namespace ModLoading {
-+enum class ChangeKind { Created, Modified, Deleted, RenamedOld, RenamedNew, Overflow, Unsupported, RootReplaced };
++enum class ChangeKind { Created, Modified, Deleted, RenamedOld, RenamedNew, Overflow, Unsupported, RootReplaced, UnresolvedName };
 +struct ChangeOptions {
 +	size_t maxRoots = 128;
 +	size_t maxQueuedEvents = 1024;
@@ -6484,7 +6528,7 @@ index 0000000000000000000000000000000000000000..7d11991c95beb742d308962fb96f5025
 +}
 diff --git a/DirectX11/ModLoading/ConfigCompiler.cpp b/DirectX11/ModLoading/ConfigCompiler.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..72b5bd685f893b3e76df2b610de6f5d54f9e99fa
+index 0000000..72b5bd6
 --- /dev/null
 +++ b/DirectX11/ModLoading/ConfigCompiler.cpp
 @@ -0,0 +1,120 @@
@@ -6610,7 +6654,7 @@ index 0000000000000000000000000000000000000000..72b5bd685f893b3e76df2b610de6f5d5
 +}
 diff --git a/DirectX11/ModLoading/ConfigCompiler.h b/DirectX11/ModLoading/ConfigCompiler.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..f3b947eaa3bccee250c6ae88e659db30865ee262
+index 0000000..f3b947e
 --- /dev/null
 +++ b/DirectX11/ModLoading/ConfigCompiler.h
 @@ -0,0 +1,146 @@
@@ -6762,7 +6806,7 @@ index 0000000000000000000000000000000000000000..f3b947eaa3bccee250c6ae88e659db30
 +}
 diff --git a/DirectX11/ModLoading/ConfigurationOwnership.h b/DirectX11/ModLoading/ConfigurationOwnership.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..afb5e8d1172a3d88b6eecac159cec5edc1dff7cb
+index 0000000..afb5e8d
 --- /dev/null
 +++ b/DirectX11/ModLoading/ConfigurationOwnership.h
 @@ -0,0 +1,68 @@
@@ -6836,7 +6880,7 @@ index 0000000000000000000000000000000000000000..afb5e8d1172a3d88b6eecac159cec5ed
 +};
 diff --git a/DirectX11/ModLoading/CpuAssetCache.cpp b/DirectX11/ModLoading/CpuAssetCache.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..6715acf52a75c4292fcda64f663cdbc250b3e420
+index 0000000..6715acf
 --- /dev/null
 +++ b/DirectX11/ModLoading/CpuAssetCache.cpp
 @@ -0,0 +1,86 @@
@@ -6928,7 +6972,7 @@ index 0000000000000000000000000000000000000000..6715acf52a75c4292fcda64f663cdbc2
 +} // namespace ModLoading
 diff --git a/DirectX11/ModLoading/CpuAssetCache.h b/DirectX11/ModLoading/CpuAssetCache.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..c3974bb12160e1c54f58f39596f071b59d916cb2
+index 0000000..c3974bb
 --- /dev/null
 +++ b/DirectX11/ModLoading/CpuAssetCache.h
 @@ -0,0 +1,30 @@
@@ -6964,7 +7008,7 @@ index 0000000000000000000000000000000000000000..c3974bb12160e1c54f58f39596f071b5
 +}
 diff --git a/DirectX11/ModLoading/DeviceResourceCache.cpp b/DirectX11/ModLoading/DeviceResourceCache.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..b377abcbf58eb5b543e1ae7e2aed68886c7343b8
+index 0000000..b377abc
 --- /dev/null
 +++ b/DirectX11/ModLoading/DeviceResourceCache.cpp
 @@ -0,0 +1,65 @@
@@ -7035,7 +7079,7 @@ index 0000000000000000000000000000000000000000..b377abcbf58eb5b543e1ae7e2aed6888
 +}
 diff --git a/DirectX11/ModLoading/DeviceResourceCache.h b/DirectX11/ModLoading/DeviceResourceCache.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..a4896f9b98e1c969ceadff991a92e1e6de316392
+index 0000000..a4896f9
 --- /dev/null
 +++ b/DirectX11/ModLoading/DeviceResourceCache.h
 @@ -0,0 +1,55 @@
@@ -7096,7 +7140,7 @@ index 0000000000000000000000000000000000000000..a4896f9b98e1c969ceadff991a92e1e6
 +}
 diff --git a/DirectX11/ModLoading/DiskAssetCache.cpp b/DirectX11/ModLoading/DiskAssetCache.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..a8a9048772e7bf528625420d4a20ed7b61b266fa
+index 0000000..a8a9048
 --- /dev/null
 +++ b/DirectX11/ModLoading/DiskAssetCache.cpp
 @@ -0,0 +1,519 @@
@@ -7621,7 +7665,7 @@ index 0000000000000000000000000000000000000000..a8a9048772e7bf528625420d4a20ed7b
 +} // namespace ModLoading
 diff --git a/DirectX11/ModLoading/DiskAssetCache.h b/DirectX11/ModLoading/DiskAssetCache.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..05093b8b9e083a9c4dce003503d5589f62dc2a3f
+index 0000000..05093b8
 --- /dev/null
 +++ b/DirectX11/ModLoading/DiskAssetCache.h
 @@ -0,0 +1,23 @@
@@ -7650,7 +7694,7 @@ index 0000000000000000000000000000000000000000..05093b8b9e083a9c4dce003503d5589f
 +} // namespace ModLoading
 diff --git a/DirectX11/ModLoading/GeneralConfigPipeline.inl b/DirectX11/ModLoading/GeneralConfigPipeline.inl
 new file mode 100644
-index 0000000000000000000000000000000000000000..b09bc8191461752bd7d8b31628c7964b0d7bcb1f
+index 0000000..b09bc81
 --- /dev/null
 +++ b/DirectX11/ModLoading/GeneralConfigPipeline.inl
 @@ -0,0 +1,904 @@
@@ -8560,7 +8604,7 @@ index 0000000000000000000000000000000000000000..b09bc8191461752bd7d8b31628c7964b
 +} // namespace
 diff --git a/DirectX11/ModLoading/GenerationManager.cpp b/DirectX11/ModLoading/GenerationManager.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..1ec970156abae13eafd3b57c4e24c319fed8df08
+index 0000000..1ec9701
 --- /dev/null
 +++ b/DirectX11/ModLoading/GenerationManager.cpp
 @@ -0,0 +1,55 @@
@@ -8621,7 +8665,7 @@ index 0000000000000000000000000000000000000000..1ec970156abae13eafd3b57c4e24c319
 +}
 diff --git a/DirectX11/ModLoading/GenerationManager.h b/DirectX11/ModLoading/GenerationManager.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..176a3d1907dd00dd6ee61ebde32a813ebf3b445b
+index 0000000..176a3d1
 --- /dev/null
 +++ b/DirectX11/ModLoading/GenerationManager.h
 @@ -0,0 +1,43 @@
@@ -8670,7 +8714,7 @@ index 0000000000000000000000000000000000000000..176a3d1907dd00dd6ee61ebde32a813e
 +}
 diff --git a/DirectX11/ModLoading/IncrementalConfigCache.cpp b/DirectX11/ModLoading/IncrementalConfigCache.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..0d1704b36440b418c6d8d5d945ae5bde497dd590
+index 0000000..0d1704b
 --- /dev/null
 +++ b/DirectX11/ModLoading/IncrementalConfigCache.cpp
 @@ -0,0 +1,339 @@
@@ -9015,7 +9059,7 @@ index 0000000000000000000000000000000000000000..0d1704b36440b418c6d8d5d945ae5bde
 +}
 diff --git a/DirectX11/ModLoading/IncrementalConfigCache.h b/DirectX11/ModLoading/IncrementalConfigCache.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..c3b173ad43cb0fad5bc8d496f86d3709f7e512e3
+index 0000000..c3b173a
 --- /dev/null
 +++ b/DirectX11/ModLoading/IncrementalConfigCache.h
 @@ -0,0 +1,52 @@
@@ -9073,7 +9117,7 @@ index 0000000000000000000000000000000000000000..c3b173ad43cb0fad5bc8d496f86d3709
 +}
 diff --git a/DirectX11/ModLoading/LoadTrace.cpp b/DirectX11/ModLoading/LoadTrace.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..b66ff9c55b3bef3296861b94d1ac415a5de40631
+index 0000000..b66ff9c
 --- /dev/null
 +++ b/DirectX11/ModLoading/LoadTrace.cpp
 @@ -0,0 +1,348 @@
@@ -9427,7 +9471,7 @@ index 0000000000000000000000000000000000000000..b66ff9c55b3bef3296861b94d1ac415a
 +} // namespace ModLoading
 diff --git a/DirectX11/ModLoading/LoadTrace.h b/DirectX11/ModLoading/LoadTrace.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..b321ba3429f640fcf954cc3c876d5a61db8443d3
+index 0000000..b321ba3
 --- /dev/null
 +++ b/DirectX11/ModLoading/LoadTrace.h
 @@ -0,0 +1,151 @@
@@ -9584,7 +9628,7 @@ index 0000000000000000000000000000000000000000..b321ba3429f640fcf954cc3c876d5a61
 +} // namespace ModLoading
 diff --git a/DirectX11/ModLoading/MemoryBudgetController.cpp b/DirectX11/ModLoading/MemoryBudgetController.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..4fe08c84e009b5a0cb0df435ac07c0890f1bfe58
+index 0000000..4fe08c8
 --- /dev/null
 +++ b/DirectX11/ModLoading/MemoryBudgetController.cpp
 @@ -0,0 +1,64 @@
@@ -9654,7 +9698,7 @@ index 0000000000000000000000000000000000000000..4fe08c84e009b5a0cb0df435ac07c089
 +}
 diff --git a/DirectX11/ModLoading/MemoryBudgetController.h b/DirectX11/ModLoading/MemoryBudgetController.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..64157107ad1bd7c5cbc635c17c37dd5223232035
+index 0000000..6415710
 --- /dev/null
 +++ b/DirectX11/ModLoading/MemoryBudgetController.h
 @@ -0,0 +1,57 @@
@@ -9717,10 +9761,10 @@ index 0000000000000000000000000000000000000000..64157107ad1bd7c5cbc635c17c37dd52
 +}
 diff --git a/DirectX11/ModLoading/PreparationPlanner.cpp b/DirectX11/ModLoading/PreparationPlanner.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..38942ecb3adf716d6c6f3fc283b9b3d2099315a1
+index 0000000..ec88c01
 --- /dev/null
 +++ b/DirectX11/ModLoading/PreparationPlanner.cpp
-@@ -0,0 +1,713 @@
+@@ -0,0 +1,711 @@
 +#include "PreparationPlanner.h"
 +#ifdef _WIN32
 +#include <dxgi1_4.h>
@@ -10338,15 +10382,13 @@ index 0000000000000000000000000000000000000000..38942ecb3adf716d6c6f3fc283b9b3d2
 +	const auto start = std::chrono::steady_clock::now(); uint64_t processedBytes = 0;
 +	while (!queue_.empty() && result.created + result.failed + result.compatibilitySkipped < limits.operations) {
 +		const auto& next = queue_.front();
-+		if (next.request.estimatedBytes > limits.bytes) {
-+			budget_.Complete(next.request.estimatedBytes + next.request.pendingGenerationOverlap);
-+			queuedBytes_ -= next.request.estimatedBytes;
-+			queuedShaderBytecodeBytes_ -= RetainedShaderBytecodeBytes(next.request);
-+			queue_.pop_front(); ++result.compatibilitySkipped;
-+			continue;
-+		}
-+		if (next.request.estimatedBytes > limits.bytes - processedBytes ||
-+			std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count() >= limits.milliseconds) break;
++        // D3D creation is indivisible. Admit one already memory-budgeted object
++        // even if it exceeds the per-Present byte target, only in an explicit
++        // loading window. Never underflow the remaining budget or start another
++        // object after the first has exhausted it.
++        if ((processedBytes && (processedBytes >= limits.bytes ||
++             next.request.estimatedBytes > limits.bytes - processedBytes)) ||
++            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count() >= limits.milliseconds) break;
 +		// Recheck process budget at execution, excluding this request's own
 +		// reservation. Queue estimates are not a promise of driver residency.
 +		budget_.Complete(next.request.estimatedBytes + next.request.pendingGenerationOverlap);
@@ -10436,7 +10478,7 @@ index 0000000000000000000000000000000000000000..38942ecb3adf716d6c6f3fc283b9b3d2
 +#endif
 diff --git a/DirectX11/ModLoading/PreparationPlanner.h b/DirectX11/ModLoading/PreparationPlanner.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..784b57fda1959fd8ecaa11e4a77ffe28dc8323d8
+index 0000000..784b57f
 --- /dev/null
 +++ b/DirectX11/ModLoading/PreparationPlanner.h
 @@ -0,0 +1,177 @@
@@ -10619,10 +10661,10 @@ index 0000000000000000000000000000000000000000..784b57fda1959fd8ecaa11e4a77ffe28
 +#endif
 diff --git a/DirectX11/ModLoading/PreparationScheduler.cpp b/DirectX11/ModLoading/PreparationScheduler.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..51e3595b863cc2d67ba076ddfe0221a11a744341
+index 0000000..d3e59be
 --- /dev/null
 +++ b/DirectX11/ModLoading/PreparationScheduler.cpp
-@@ -0,0 +1,220 @@
+@@ -0,0 +1,223 @@
 +#include "PreparationScheduler.h"
 +#include "SnapshotIO.h"
 +#include "DiskAssetCache.h"
@@ -10662,7 +10704,7 @@ index 0000000000000000000000000000000000000000..51e3595b863cc2d67ba076ddfe0221a1
 +	if (stopping_ || !limits_.cpuBytes || generation < minimum_)
 +		return false;
 +	auto key = std::make_pair(path, generation);
-+	if (compatibility_.count(key))
++	if (compatibility_.count(key) || compatibility_.size() >= 4096)
 +		return false;
 +	if (cache_.Find(path, generation) || pending_.count(key))
 +		return true;
@@ -10789,12 +10831,15 @@ index 0000000000000000000000000000000000000000..51e3595b863cc2d67ba076ddfe0221a1
 +			disk = disk_;
 +		}
 +		std::shared_ptr<PreparedAsset> asset;
++		std::string readFailure;
 +		try {
 +			asset = std::make_shared<PreparedAsset>();
 +			std::string error;
 +			if (!reader_(job.path, job.maxBytes, asset->snapshot, error) ||
-+				!asset->snapshot.bytes || asset->snapshot.bytes->size() > job.maxBytes)
-+				asset.reset();
++                !asset->snapshot.bytes || asset->snapshot.bytes->size() > job.maxBytes) {
++                readFailure = error.empty() ? "source unavailable or exceeds preparation size limit" : error;
++                asset.reset();
++            }
 +			else {
 +				asset->generation = job.generation;
 +				if (asset->snapshot.watchable) {
@@ -10816,20 +10861,20 @@ index 0000000000000000000000000000000000000000..51e3595b863cc2d67ba076ddfe0221a1
 +			std::lock_guard<std::mutex> lock(mutex_);
 +			pending_.erase({job.path, job.generation});
 +			--active_;
-+			if (asset && !asset->snapshot.watchable) {
-+				if (!stopping_ && job.generation >= minimum_) {
-+					try {
-+						if (compatibility_.size() >= limits_.maxQueued)
-+							compatibility_.erase(compatibility_.begin());
-+						compatibility_[{job.path, job.generation}] =
-+							asset->snapshot.compatibilityReason.empty()
-+								? "source alias dependencies require legacy loading"
-+								: asset->snapshot.compatibilityReason;
-+					} catch (const std::bad_alloc &) {
-+					}
-+				}
-+				asset.reset();
-+			}
++            if ((asset && !asset->snapshot.watchable) || !readFailure.empty()) {
++                // Remember unsupported sources for this source generation. The
++                // queue size is a concurrency limit, not a negative-cache size:
++                // cycling a larger profile must not re-read every rejected file.
++                // File notifications / periodic reconciliation advance generation.
++                if (!stopping_ && job.generation >= minimum_ && compatibility_.size() < 4096) {
++                    try {
++                        compatibility_[{job.path, job.generation}] = !readFailure.empty() ? readFailure :
++                            asset->snapshot.compatibilityReason.empty() ? "source aliases require legacy loading" :
++                            asset->snapshot.compatibilityReason;
++                    } catch (const std::bad_alloc&) {}
++                }
++                asset.reset();
++            }
 +			if (asset && !stopping_ && limits_.cpuBytes && job.generation >= minimum_)
 +				cache_.Publish(std::move(asset), job.reservation);
 +			else
@@ -10845,7 +10890,7 @@ index 0000000000000000000000000000000000000000..51e3595b863cc2d67ba076ddfe0221a1
 +} // namespace ModLoading
 diff --git a/DirectX11/ModLoading/PreparationScheduler.h b/DirectX11/ModLoading/PreparationScheduler.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..458e2a5df6f91051c2e3ee04377978400726ae3d
+index 0000000..458e2a5
 --- /dev/null
 +++ b/DirectX11/ModLoading/PreparationScheduler.h
 @@ -0,0 +1,64 @@
@@ -10915,7 +10960,7 @@ index 0000000000000000000000000000000000000000..458e2a5df6f91051c2e3ee0437797840
 +} // namespace ModLoading
 diff --git a/DirectX11/ModLoading/PreparationStatus.cpp b/DirectX11/ModLoading/PreparationStatus.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..6e559f24b549dcb7086749db5ffd2b49020fd31f
+index 0000000..6e559f2
 --- /dev/null
 +++ b/DirectX11/ModLoading/PreparationStatus.cpp
 @@ -0,0 +1,177 @@
@@ -11098,7 +11143,7 @@ index 0000000000000000000000000000000000000000..6e559f24b549dcb7086749db5ffd2b49
 +}
 diff --git a/DirectX11/ModLoading/PreparationStatus.h b/DirectX11/ModLoading/PreparationStatus.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..c415e699caea1db526017b0ad8ad88c5f8518027
+index 0000000..c415e69
 --- /dev/null
 +++ b/DirectX11/ModLoading/PreparationStatus.h
 @@ -0,0 +1,49 @@
@@ -11153,7 +11198,7 @@ index 0000000000000000000000000000000000000000..c415e699caea1db526017b0ad8ad88c5
 +}
 diff --git a/DirectX11/ModLoading/PreparedTypes.h b/DirectX11/ModLoading/PreparedTypes.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..2549a5703ec5a9a64bd213383fa8d6129405c89d
+index 0000000..2549a57
 --- /dev/null
 +++ b/DirectX11/ModLoading/PreparedTypes.h
 @@ -0,0 +1,84 @@
@@ -11243,7 +11288,7 @@ index 0000000000000000000000000000000000000000..2549a5703ec5a9a64bd213383fa8d612
 +}
 diff --git a/DirectX11/ModLoading/QuiescentGenerationRegistry.h b/DirectX11/ModLoading/QuiescentGenerationRegistry.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..e21e4c185745a28c79bd769c730c53a10eea3a75
+index 0000000..e21e4c1
 --- /dev/null
 +++ b/DirectX11/ModLoading/QuiescentGenerationRegistry.h
 @@ -0,0 +1,107 @@
@@ -11356,7 +11401,7 @@ index 0000000000000000000000000000000000000000..e21e4c185745a28c79bd769c730c53a1
 +};
 diff --git a/DirectX11/ModLoading/RefreshCpuBudget.cpp b/DirectX11/ModLoading/RefreshCpuBudget.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..e1153d74bb97145bed3f9b60f25432eb6d9a1161
+index 0000000..e1153d7
 --- /dev/null
 +++ b/DirectX11/ModLoading/RefreshCpuBudget.cpp
 @@ -0,0 +1,136 @@
@@ -11498,7 +11543,7 @@ index 0000000000000000000000000000000000000000..e1153d74bb97145bed3f9b60f25432eb
 +}
 diff --git a/DirectX11/ModLoading/RefreshCpuBudget.h b/DirectX11/ModLoading/RefreshCpuBudget.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..e846299fd5ebd418094ecd9063e7f4ba189e8388
+index 0000000..e846299
 --- /dev/null
 +++ b/DirectX11/ModLoading/RefreshCpuBudget.h
 @@ -0,0 +1,33 @@
@@ -11537,7 +11582,7 @@ index 0000000000000000000000000000000000000000..e846299fd5ebd418094ecd9063e7f4ba
 +}
 diff --git a/DirectX11/ModLoading/ResourceRefresh.cpp b/DirectX11/ModLoading/ResourceRefresh.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..f0e6821972e8dbbd2ff110ee56079d14e24699b3
+index 0000000..f0e6821
 --- /dev/null
 +++ b/DirectX11/ModLoading/ResourceRefresh.cpp
 @@ -0,0 +1,224 @@
@@ -11767,7 +11812,7 @@ index 0000000000000000000000000000000000000000..f0e6821972e8dbbd2ff110ee56079d14
 +}
 diff --git a/DirectX11/ModLoading/ResourceRefresh.h b/DirectX11/ModLoading/ResourceRefresh.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..ce1dcd44408c2425340b5ca019d2a2a2a710b259
+index 0000000..ce1dcd4
 --- /dev/null
 +++ b/DirectX11/ModLoading/ResourceRefresh.h
 @@ -0,0 +1,90 @@
@@ -11863,10 +11908,10 @@ index 0000000000000000000000000000000000000000..ce1dcd44408c2425340b5ca019d2a2a2
 +}
 diff --git a/DirectX11/ModLoading/ResourceRefreshClosure.cpp b/DirectX11/ModLoading/ResourceRefreshClosure.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..6098aa288b4d77767fef88e9982999e844a8f8f8
+index 0000000..66315a0
 --- /dev/null
 +++ b/DirectX11/ModLoading/ResourceRefreshClosure.cpp
-@@ -0,0 +1,210 @@
+@@ -0,0 +1,205 @@
 +#include "ResourceRefresh.h"
 +#include <algorithm>
 +#ifdef _WIN32
@@ -11903,13 +11948,8 @@ index 0000000000000000000000000000000000000000..6098aa288b4d77767fef88e9982999e8
 +	if (!longCount || longCount >= buffer.size() ||
 +		CompareStringOrdinal(full.c_str(), static_cast<int>(full.size()), buffer.data(),
 +			static_cast<int>(longCount), TRUE) != CSTR_EQUAL) return false;
-+	// Directory notifications may use a distinct 8.3 spelling even when the
-+	// watch and loaded source use long names. Exact dependency filters cannot
-+	// prove identity until both spellings are tracked, including ancestors.
-+	const DWORD shortCount = GetShortPathNameW(full.c_str(), buffer.data(), static_cast<DWORD>(buffer.size()));
-+	if (!shortCount || shortCount >= buffer.size() ||
-+		CompareStringOrdinal(full.c_str(), static_cast<int>(full.size()), buffer.data(),
-+			static_cast<int>(shortCount), TRUE) != CSTR_EQUAL) return false;
++	// ChangeMonitor resolves existing short-name notifications and forces a full
++	// reconciliation for names that disappeared before they could be resolved.
 +	for (size_t i = 3; i <= full.size(); ++i) {
 +		if (i != full.size() && full[i] != L'\\' && full[i] != L'/') continue;
 +		const DWORD attributes = GetFileAttributesW(full.substr(0, i).c_str());
@@ -12079,7 +12119,7 @@ index 0000000000000000000000000000000000000000..6098aa288b4d77767fef88e9982999e8
 +}
 diff --git a/DirectX11/ModLoading/ResourceRefreshOverlay.cpp b/DirectX11/ModLoading/ResourceRefreshOverlay.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..fdc9759f73b2846c533b021de9968ec9b62bcc35
+index 0000000..fdc9759
 --- /dev/null
 +++ b/DirectX11/ModLoading/ResourceRefreshOverlay.cpp
 @@ -0,0 +1,21 @@
@@ -12106,7 +12146,7 @@ index 0000000000000000000000000000000000000000..fdc9759f73b2846c533b021de9968ec9
 +}
 diff --git a/DirectX11/ModLoading/ResourceRefreshOverlay.h b/DirectX11/ModLoading/ResourceRefreshOverlay.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..4cb127af8c62c3855dded4805a97ecc7f34e23b3
+index 0000000..4cb127a
 --- /dev/null
 +++ b/DirectX11/ModLoading/ResourceRefreshOverlay.h
 @@ -0,0 +1,33 @@
@@ -12145,10 +12185,10 @@ index 0000000000000000000000000000000000000000..4cb127af8c62c3855dded4805a97ecc7
 +}
 diff --git a/DirectX11/ModLoading/Runtime.cpp b/DirectX11/ModLoading/Runtime.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..b4778ae5bfb93a52e14afb8cf28ed33d496049e5
+index 0000000..2deefea
 --- /dev/null
 +++ b/DirectX11/ModLoading/Runtime.cpp
-@@ -0,0 +1,2334 @@
+@@ -0,0 +1,2395 @@
 +// Resource creation mode uses global NVAPI state; keep every preparation call
 +// on the Present owner under the same lock as the compatibility resource path.
 +#include "../lock.h"
@@ -14080,6 +14120,32 @@ index 0000000000000000000000000000000000000000..b4778ae5bfb93a52e14afb8cf28ed33d
 +		LogInfo("ModLoading preparation failed; retaining last-good refresh and compatible loading\n");
 +	}
 +}
++bool TryCreateDecodedTexture(const PreparedAsset& asset, CustomResource& target,
++    ID3D11Device* device, unsigned bindFlags, unsigned miscFlags,
++    bool detectColorSpace, long& result) {
++    try {
++        if (!asset.snapshot.bytes || target.resource) return false;
++        GpuPreparationRequest request;
++        request.loaderBindFlags = bindFlags;
++        request.loaderMiscFlags = miscFlags;
++        if (!UseDecoded(asset, device, target, request, detectColorSpace)) return false;
++        const auto& image = *asset.decoded;
++        if (image.pixels->size() > UINT_MAX || !image.rowPitch ||
++            uint64_t(image.rowPitch) * image.height > image.pixels->size()) return false;
++        D3D11_SUBRESOURCE_DATA data = {};
++        data.pSysMem = image.pixels->data();
++        data.SysMemPitch = image.rowPitch;
++        data.SysMemSlicePitch = static_cast<UINT>(image.pixels->size());
++        ID3D11Texture2D* texture = nullptr;
++        ScopedLoadTrace trace(LoadStage::GpuCreation);
++        trace.SetBytes(image.pixels->size());
++        result = device->CreateTexture2D(&request.texture, &data, &texture);
++        trace.SetResult(result);
++        target.resource = texture;
++        return true;
++    } catch (...) { return false; }
++}
++
 +bool TryUsePreparedResource(CustomResource& target, ID3D11Device* device) {
 +	try { return TryUsePreparedResourceImpl(target, device); }
 +	catch (...) { return false; }
@@ -14255,6 +14321,34 @@ index 0000000000000000000000000000000000000000..b4778ae5bfb93a52e14afb8cf28ed33d
 +			return __LINE__;
 +		std::shared_ptr<ID3D11Device> device(rawDevice, [](ID3D11Device* p) { p->Release(); });
 +		std::shared_ptr<ID3D11DeviceContext> context(rawContext, [](ID3D11DeviceContext* p) { p->Release(); });
++        {
++            // Invalid encoded bytes deliberately make any accidental WIC decode
++            // fail. The private texture must contain the prepared pixel instead.
++            PreparedAsset asset;
++            asset.snapshot.bytes = std::make_shared<const std::vector<uint8_t>>(4, 0);
++            auto decoded = std::make_shared<DecodedImage>();
++            decoded->width = decoded->height = 1; decoded->rowPitch = 4;
++            decoded->format = DXGI_FORMAT_R8G8B8A8_UNORM; decoded->decoderVersion = 1;
++            decoded->pixels = std::make_shared<const std::vector<uint8_t>>(std::initializer_list<uint8_t>{255, 0, 0, 255});
++            asset.decoded = decoded;
++            CustomResource texture;
++            long result = E_FAIL;
++            if (!TryCreateDecodedTexture(asset, texture, rawDevice, D3D11_BIND_SHADER_RESOURCE, 0, false, result) || FAILED(result)) return __LINE__;
++            D3D11_TEXTURE2D_DESC desc = {};
++            static_cast<ID3D11Texture2D*>(texture.resource)->GetDesc(&desc);
++            desc.Usage = D3D11_USAGE_STAGING; desc.BindFlags = 0; desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
++            ID3D11Texture2D* staging = nullptr;
++            if (FAILED(rawDevice->CreateTexture2D(&desc, nullptr, &staging))) return __LINE__;
++            std::shared_ptr<ID3D11Texture2D> staged(staging, [](ID3D11Texture2D* p) { p->Release(); });
++            rawContext->CopyResource(staging, texture.resource);
++            D3D11_MAPPED_SUBRESOURCE mapped = {};
++            if (FAILED(rawContext->Map(staging, 0, D3D11_MAP_READ, 0, &mapped))) return __LINE__;
++            const bool exact = memcmp(mapped.pData, decoded->pixels->data(), 4) == 0;
++            rawContext->Unmap(staging, 0);
++            if (!exact) return __LINE__;
++            CustomResource fallback;
++            if (TryCreateDecodedTexture(asset, fallback, rawDevice, D3D11_BIND_RENDER_TARGET, 0, false, result)) return __LINE__;
++        }
 +		{
 +			ID3D11Device* rawSingleThreaded = nullptr;
 +			ID3D11DeviceContext* rawSingleContext = nullptr;
@@ -14456,7 +14550,14 @@ index 0000000000000000000000000000000000000000..b4778ae5bfb93a52e14afb8cf28ed33d
 +		HANDLE denyRead = CreateFileW((root + L"runtime-buffer.bin").c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, 0, nullptr);
 +		if (denyRead == INVALID_HANDLE_VALUE) return __LINE__;
 +		const auto creations = Profiling::resources_created;
++        LARGE_INTEGER begin = {}, end = {}, frequency = {};
++        QueryPerformanceFrequency(&frequency); QueryPerformanceCounter(&begin);
 +		{ ConfigReadScope read(active); resource.Substantiate(device.get(), D3D11_BIND_VERTEX_BUFFER, D3D11_RESOURCE_MISC_FLAG(0)); }
++        QueryPerformanceCounter(&end);
++        fprintf(stdout, "Prepared first-use fixture: %.6f ms; source reads denied; new resources=%llu\n",
++            double(end.QuadPart - begin.QuadPart) * 1000.0 / double(frequency.QuadPart),
++            static_cast<unsigned long long>(Profiling::resources_created - creations));
++        fflush(stdout);
 +		CloseHandle(denyRead);
 +		if (resource.resource != prepared || Profiling::resources_created != creations) return __LINE__;
 +		// A semantically invalid replacement must never publish over last-good.
@@ -14485,10 +14586,10 @@ index 0000000000000000000000000000000000000000..b4778ae5bfb93a52e14afb8cf28ed33d
 +}
 diff --git a/DirectX11/ModLoading/Runtime.h b/DirectX11/ModLoading/Runtime.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..a3d065027a66748ceda84ae5dc953473755236ff
+index 0000000..bca5c01
 --- /dev/null
 +++ b/DirectX11/ModLoading/Runtime.h
-@@ -0,0 +1,46 @@
+@@ -0,0 +1,51 @@
 +#pragma once
 +#include "PreparedTypes.h"
 +#include "ConfigurationOwnership.h"
@@ -14528,6 +14629,11 @@ index 0000000000000000000000000000000000000000..a3d065027a66748ceda84ae5dc953473
 +// Acquires an actual prepared GPU resource only after descriptor/proof matching.
 +// False always preserves the legacy creation path.
 +bool TryUsePreparedResource(CustomResource& target, ID3D11Device* realDevice);
++// Creates a private texture from worker-decoded pixels. False selects the exact
++// legacy memory loader for formats/flags requiring conversion or resizing.
++bool TryCreateDecodedTexture(const PreparedAsset& asset, CustomResource& target,
++    ID3D11Device* device, unsigned bindFlags, unsigned miscFlags,
++    bool detectColorSpace, long& result);
 +bool TryUsePreparedShaderBundle(CustomShader& target, ID3D11Device* realDevice);
 +// Returns an AddRef-owned exact compatible SRV, or nullptr for the legacy path.
 +ID3D11ShaderResourceView* TryGetPreparedShaderResourceView(ID3D11Resource* resource,
@@ -14537,7 +14643,7 @@ index 0000000000000000000000000000000000000000..a3d065027a66748ceda84ae5dc953473
 +}
 diff --git a/DirectX11/ModLoading/RuntimePolicy.h b/DirectX11/ModLoading/RuntimePolicy.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..d76bfb9b9a285685a716c961d517d764c8d89791
+index 0000000..d76bfb9
 --- /dev/null
 +++ b/DirectX11/ModLoading/RuntimePolicy.h
 @@ -0,0 +1,48 @@
@@ -14591,10 +14697,10 @@ index 0000000000000000000000000000000000000000..d76bfb9b9a285685a716c961d517d764
 +}
 diff --git a/DirectX11/ModLoading/ShaderSourceCache.cpp b/DirectX11/ModLoading/ShaderSourceCache.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..36ee8fdc7ff150d82882a25e167f3d399874fb5c
+index 0000000..679163c
 --- /dev/null
 +++ b/DirectX11/ModLoading/ShaderSourceCache.cpp
-@@ -0,0 +1,931 @@
+@@ -0,0 +1,930 @@
 +#include "ShaderSourceCache.h"
 +#include "SnapshotIO.h"
 +#include <algorithm>
@@ -15081,8 +15187,7 @@ index 0000000000000000000000000000000000000000..36ee8fdc7ff150d82882a25e167f3d39
 +				if(!(attributes&FILE_ATTRIBUTE_DIRECTORY)||(attributes&FILE_ATTRIBUTE_REPARSE_POINT))return false;
 +				DWORD n=GetLongPathNameW(part.c_str(),buffer.data(),DWORD(buffer.size()));
 +				if(!n||n>=buffer.size()||CompareStringOrdinal(part.c_str(),int(part.size()),buffer.data(),int(n),TRUE)!=CSTR_EQUAL)return false;
-+				n=GetShortPathNameW(part.c_str(),buffer.data(),DWORD(buffer.size()));
-+				if(!n||n>=buffer.size()||CompareStringOrdinal(part.c_str(),int(part.size()),buffer.data(),int(n),TRUE)!=CSTR_EQUAL)return false;
++				// Existing long ancestors remain observable through normalized notifications.
 +			}
 +#else
 +			std::string full=Native(path);
@@ -15528,7 +15633,7 @@ index 0000000000000000000000000000000000000000..36ee8fdc7ff150d82882a25e167f3d39
 +#endif
 diff --git a/DirectX11/ModLoading/ShaderSourceCache.h b/DirectX11/ModLoading/ShaderSourceCache.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..9f80e5cfca2b167efdc240b50bd4696eca123b53
+index 0000000..9f80e5c
 --- /dev/null
 +++ b/DirectX11/ModLoading/ShaderSourceCache.h
 @@ -0,0 +1,140 @@
@@ -15674,10 +15779,10 @@ index 0000000000000000000000000000000000000000..9f80e5cfca2b167efdc240b50bd4696e
 +}
 diff --git a/DirectX11/ModLoading/SnapshotIO.cpp b/DirectX11/ModLoading/SnapshotIO.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..23a4b393686224e269c4b30a01c39c6fcf28075f
+index 0000000..dd56ca3
 --- /dev/null
 +++ b/DirectX11/ModLoading/SnapshotIO.cpp
-@@ -0,0 +1,452 @@
+@@ -0,0 +1,442 @@
 +#include "SnapshotIO.h"
 +#include <algorithm>
 +#include <cstring>
@@ -15882,20 +15987,10 @@ index 0000000000000000000000000000000000000000..23a4b393686224e269c4b30a01c39c6f
 +		CompareStringOrdinal(full.c_str(), int(full.size()), buffer.data(), int(longCount), TRUE) !=
 +			CSTR_EQUAL)
 +		return false;
-+	// A long lexical name may itself have a distinct 8.3 notification identity.
-+	// Until notifications are matched by file identity, neither spelling is ready.
-+	DWORD shortCount = GetShortPathNameW(full.c_str(), buffer.data(), DWORD(buffer.size()));
-+	if (!shortCount || shortCount >= buffer.size()) {
-+		if (reason)
-+			*reason = "source short-name notification identity could not be verified";
-+		return false;
-+	}
-+	if (CompareStringOrdinal(full.c_str(), int(full.size()), buffer.data(), int(shortCount),
-+							 TRUE) != CSTR_EQUAL) {
-+		if (reason)
-+			*reason = "source has an alternate short-name notification identity";
-+		return false;
-+	}
++	// Long paths with 8.3 aliases are watchable: ChangeMonitor expands existing
++	// notifications and forces reconciliation when a deleted/renamed alias can
++	// no longer be resolved. Snapshot identity and content are still verified
++	// before and after reading. Reparse points and hard links remain unsupported.
 +	for (size_t i = 0; i <= full.size(); ++i) {
 +		if (i != full.size() && full[i] != L'\\' && full[i] != L'/')
 +			continue;
@@ -16132,7 +16227,7 @@ index 0000000000000000000000000000000000000000..23a4b393686224e269c4b30a01c39c6f
 +#endif
 diff --git a/DirectX11/ModLoading/SnapshotIO.h b/DirectX11/ModLoading/SnapshotIO.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..4927143ae1c7086c3f792a3e13c9bc4f793d28a6
+index 0000000..4927143
 --- /dev/null
 +++ b/DirectX11/ModLoading/SnapshotIO.h
 @@ -0,0 +1,9 @@
@@ -16147,7 +16242,7 @@ index 0000000000000000000000000000000000000000..4927143ae1c7086c3f792a3e13c9bc4f
 +}
 diff --git a/DirectX11/ModLoading/TraceControl.cpp b/DirectX11/ModLoading/TraceControl.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..f81af8bccf392811e39ff383ad3d4e4bf27f96e8
+index 0000000..f81af8b
 --- /dev/null
 +++ b/DirectX11/ModLoading/TraceControl.cpp
 @@ -0,0 +1,194 @@
@@ -16347,7 +16442,7 @@ index 0000000000000000000000000000000000000000..f81af8bccf392811e39ff383ad3d4e4b
 +}
 diff --git a/DirectX11/ModLoading/TraceControl.h b/DirectX11/ModLoading/TraceControl.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..6ed414aa9a842bb227d46585275a1fa0a9508fe6
+index 0000000..6ed414a
 --- /dev/null
 +++ b/DirectX11/ModLoading/TraceControl.h
 @@ -0,0 +1,27 @@
@@ -16380,7 +16475,7 @@ index 0000000000000000000000000000000000000000..6ed414aa9a842bb227d46585275a1fa0
 +}
 diff --git a/DirectX11/ModLoading/WorkingSetPolicy.cpp b/DirectX11/ModLoading/WorkingSetPolicy.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..1431cbb31a6fd03c8323b84c7eea99d4c2c8637a
+index 0000000..1431cbb
 --- /dev/null
 +++ b/DirectX11/ModLoading/WorkingSetPolicy.cpp
 @@ -0,0 +1,180 @@
@@ -16566,7 +16661,7 @@ index 0000000000000000000000000000000000000000..1431cbb31a6fd03c8323b84c7eea99d4
 +}
 diff --git a/DirectX11/ModLoading/WorkingSetPolicy.h b/DirectX11/ModLoading/WorkingSetPolicy.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..9163c6cfd43352a4fd8ce679c12fc03926ca0bb0
+index 0000000..9163c6c
 --- /dev/null
 +++ b/DirectX11/ModLoading/WorkingSetPolicy.h
 @@ -0,0 +1,100 @@
@@ -16671,7 +16766,7 @@ index 0000000000000000000000000000000000000000..9163c6cfd43352a4fd8ce679c12fc039
 +};
 +}
 diff --git a/DirectX11/Overlay.cpp b/DirectX11/Overlay.cpp
-index 0889b544ba06e23bf0d1c51795fb0309f6c5b43c..16626a03fcba9ce8276003c54b392cdcb83a1740 100644
+index 0889b54..16626a0 100644
 --- a/DirectX11/Overlay.cpp
 +++ b/DirectX11/Overlay.cpp
 @@ -871,6 +871,10 @@ void ClearNotices()
@@ -16697,7 +16792,7 @@ index 0889b544ba06e23bf0d1c51795fb0309f6c5b43c..16626a03fcba9ce8276003c54b392cdc
  
  	if (!show_overlay_message && gLogVerbosity < LogVerbosity::WARNING)
 diff --git a/DirectX11/Override.cpp b/DirectX11/Override.cpp
-index 34d96922c96047df09520d32a0abf1194a537cfc..e79c9cda61c63e33923c1c0f176c3b3ef75dc748 100644
+index 34d9692..e79c9cd 100644
 --- a/DirectX11/Override.cpp
 +++ b/DirectX11/Override.cpp
 @@ -9,10 +9,10 @@
@@ -16878,7 +16973,7 @@ index 34d96922c96047df09520d32a0abf1194a537cfc..e79c9cda61c63e33923c1c0f176c3b3e
  		preset->mSavedParams[i->first] = val;
  		params[i->first].Save(val);
 diff --git a/DirectX11/Override.h b/DirectX11/Override.h
-index fb25d9da6e8b5bf620ec2d00fbf5a59d96215848..423221c93d2c32cf1dcf5413a3601b0b457d6ec2 100644
+index fb25d9d..423221c 100644
 --- a/DirectX11/Override.h
 +++ b/DirectX11/Override.h
 @@ -212,7 +212,8 @@ public:
@@ -16902,7 +16997,7 @@ index fb25d9da6e8b5bf620ec2d00fbf5a59d96215848..423221c93d2c32cf1dcf5413a3601b0b
 +OverrideGlobalSave& ConfigOverrideSave();
 +#define OverrideSave ConfigOverrideSave()
 diff --git a/DirectX11/ResourceHash.cpp b/DirectX11/ResourceHash.cpp
-index 76987cfbfeb2123d691d992fe23897502a4299fe..e4cfb46498aba252dde7801fc70d5af09d1d5a06 100644
+index 76987cf..e4cfb46 100644
 --- a/DirectX11/ResourceHash.cpp
 +++ b/DirectX11/ResourceHash.cpp
 @@ -1659,11 +1659,12 @@ static bool matches_draw_info(TextureOverride *tex_override, DrawCallInfo *call_
@@ -17033,7 +17128,7 @@ index 76987cfbfeb2123d691d992fe23897502a4299fe..e4cfb46498aba252dde7801fc70d5af0
  
  	Profiling::State profiling_state;
 diff --git a/DirectX11/ResourceHash.h b/DirectX11/ResourceHash.h
-index 2097f910a892d098519f2a97f1b4a3dc2cb2a4a7..1fbb41ef304a1b5fc0d72e255981c3dc1680a5a0 100644
+index 2097f91..1fbb41e 100644
 --- a/DirectX11/ResourceHash.h
 +++ b/DirectX11/ResourceHash.h
 @@ -396,14 +396,16 @@ private:
@@ -17056,7 +17151,7 @@ index 2097f910a892d098519f2a97f1b4a3dc2cb2a4a7..1fbb41ef304a1b5fc0d72e255981c3dc
  	std::vector<TextureOverride*> fuzzy_matches;
  };
 diff --git a/DirectX11/ShaderRegex.cpp b/DirectX11/ShaderRegex.cpp
-index 49d3e2fe77959238d58ac03521bd1a6838186182..b73e82c1cc19fd5eaf5966892224abdcb7dabda0 100644
+index 49d3e2f..b73e82c 100644
 --- a/DirectX11/ShaderRegex.cpp
 +++ b/DirectX11/ShaderRegex.cpp
 @@ -1,4 +1,5 @@
@@ -17177,7 +17272,7 @@ index 49d3e2fe77959238d58ac03521bd1a6838186182..b73e82c1cc19fd5eaf5966892224abdc
  	ShaderRegexGroup *group;
  	bool patched = false;
 diff --git a/DirectX11/ShaderRegex.h b/DirectX11/ShaderRegex.h
-index ab81d43311a29ee317acb3c60974092b2af87c27..7e10d3a2ce40d70a45b43c5cabced266f1ff79fe 100644
+index ab81d43..7e10d3a 100644
 --- a/DirectX11/ShaderRegex.h
 +++ b/DirectX11/ShaderRegex.h
 @@ -120,9 +120,12 @@ public:
@@ -17198,7 +17293,7 @@ index ab81d43311a29ee317acb3c60974092b2af87c27..7e10d3a2ce40d70a45b43c5cabced266
 +#define shader_regex_hash ConfigRegexHash()
 diff --git a/DirectX11/ShaderRegexCache.h b/DirectX11/ShaderRegexCache.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..0c6506f8ef2e628293a7a4a4443a96f8d131cf43
+index 0000000..0c6506f
 --- /dev/null
 +++ b/DirectX11/ShaderRegexCache.h
 @@ -0,0 +1,33 @@
@@ -17236,7 +17331,7 @@ index 0000000000000000000000000000000000000000..0c6506f8ef2e628293a7a4a4443a96f8
 +		&& matches_size / sizeof(uint32_t) == header.num_matches;
 +}
 diff --git a/DirectX11/globals.h b/DirectX11/globals.h
-index 7667daec284911c21e1c5ac4defad1fea12ba06d..086aedd81d0a08ae275a608b577c9b76efd9519a 100644
+index 7667dae..086aedd 100644
 --- a/DirectX11/globals.h
 +++ b/DirectX11/globals.h
 @@ -417,6 +417,94 @@ static EnumName_t<const wchar_t*, InputDisableScope> InputDisableScopeNames[] =
@@ -17424,7 +17519,7 @@ index 7667daec284911c21e1c5ac4defad1fea12ba06d..086aedd81d0a08ae275a608b577c9b76
 +	return Profiling::lookup_map(ConfigState().mTextureOverrideMap, hash, &Profiling::textureoverride_lookup_overhead);
  }
 diff --git a/DirectX11/input.cpp b/DirectX11/input.cpp
-index 54157c66ed945968b0904e64d0cd85f0aa9d040d..47a1587fbad7b1f052c157d4bd96716048ad9274 100644
+index 54157c6..47a1587 100644
 --- a/DirectX11/input.cpp
 +++ b/DirectX11/input.cpp
 @@ -22,6 +22,11 @@ static tXInputGetState _XInputGetState = XInputGetState;
@@ -17520,7 +17615,7 @@ index 54157c66ed945968b0904e64d0cd85f0aa9d040d..47a1587fbad7b1f052c157d4bd967160
 +    return result;
 +}
 diff --git a/DirectX11/input.h b/DirectX11/input.h
-index 94835e6d154225f92ba06d756788830ba54c7d4f..ed94a47cf35a4f954c82b306bf935dc4ae2e20bc 100644
+index 94835e6..ed94a47 100644
 --- a/DirectX11/input.h
 +++ b/DirectX11/input.h
 @@ -118,6 +118,7 @@ public:
@@ -17547,7 +17642,7 @@ index 94835e6d154225f92ba06d756788830ba54c7d4f..ed94a47cf35a4f954c82b306bf935dc4
 +
 +std::vector<std::shared_ptr<InputAction>> CaptureSystemInputActions();
 diff --git a/DirectX11/profiling.cpp b/DirectX11/profiling.cpp
-index c4db6df452202acdb082bb4d4c59cc83c9b7ba7f..4b8d5b3a1a078da9892e45b508d1a37f9d33fdb2 100644
+index c4db6df..4b8d5b3 100644
 --- a/DirectX11/profiling.cpp
 +++ b/DirectX11/profiling.cpp
 @@ -98,6 +98,7 @@ static void cto_warn_post_commands(CommandList *command_list)
@@ -17614,7 +17709,7 @@ index c4db6df452202acdb082bb4d4c59cc83c9b7ba7f..4b8d5b3a1a078da9892e45b508d1a37f
  	wchar_t buf[256];
 diff --git a/docs/mod-loading/phase0-baseline-readiness.md b/docs/mod-loading/phase0-baseline-readiness.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..601e6941f5b1984921bc02caeb3915038ae3a78e
+index 0000000..601e694
 --- /dev/null
 +++ b/docs/mod-loading/phase0-baseline-readiness.md
 @@ -0,0 +1,65 @@
@@ -17685,7 +17780,7 @@ index 0000000000000000000000000000000000000000..601e6941f5b1984921bc02caeb391503
 +**Exit gate remains blocked** until the Windows build and real game data above exist. This report provides audit leads and a repeatable collection procedure only; it contains no measured baseline, no verified artifact, and no gate verdict.
 diff --git a/docs/mod-loading/prepared-loading.md b/docs/mod-loading/prepared-loading.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..a5f4a964b4a32216f7dac6868cab0696183b18ef
+index 0000000..a5f4a96
 --- /dev/null
 +++ b/docs/mod-loading/prepared-loading.md
 @@ -0,0 +1,161 @@
@@ -17852,7 +17947,7 @@ index 0000000000000000000000000000000000000000..a5f4a964b4a32216f7dac6868cab0696
 +independent visual/timing review and authorized signing as separate requirements.
 diff --git a/docs/mod-loading/trace-capture.md b/docs/mod-loading/trace-capture.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..ddcc553f62db5e4b61c1d79cf5328685eb5426c4
+index 0000000..ddcc553
 --- /dev/null
 +++ b/docs/mod-loading/trace-capture.md
 @@ -0,0 +1,75 @@
@@ -17933,7 +18028,7 @@ index 0000000000000000000000000000000000000000..ddcc553f62db5e4b61c1d79cf5328685
 +`../../tests/d3d11_fixture/README.md` for the separate synthetic fixture.
 diff --git a/tests/d3d11_fixture/CMakeLists.txt b/tests/d3d11_fixture/CMakeLists.txt
 new file mode 100644
-index 0000000000000000000000000000000000000000..ed1f4431d4a1d5e2a42bfb4c00da51bc5c5263b0
+index 0000000..ed1f443
 --- /dev/null
 +++ b/tests/d3d11_fixture/CMakeLists.txt
 @@ -0,0 +1,17 @@
@@ -17956,7 +18051,7 @@ index 0000000000000000000000000000000000000000..ed1f4431d4a1d5e2a42bfb4c00da51bc
 +endif()
 diff --git a/tests/d3d11_fixture/README.md b/tests/d3d11_fixture/README.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..9c1963915240e571ba505f564710df3d42e3b5cc
+index 0000000..9c19639
 --- /dev/null
 +++ b/tests/d3d11_fixture/README.md
 @@ -0,0 +1,61 @@
@@ -18023,7 +18118,7 @@ index 0000000000000000000000000000000000000000..9c1963915240e571ba505f564710df3d
 +4. Preserve phase traces, capture provenance, frame-time rows, image comparisons against the known-correct game baseline, cache coverage/misses, bytes read, CPU/RAM/VRAM use and failures. Attribute each delay to a measured stage or label it unresolved. Do not infer successful first-use activation from resource-ready flags.
 diff --git a/tests/d3d11_fixture/main.cpp b/tests/d3d11_fixture/main.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..2e112c1ad5b1a27ab98c297e6bd88789d6c2d56c
+index 0000000..2e112c1
 --- /dev/null
 +++ b/tests/d3d11_fixture/main.cpp
 @@ -0,0 +1,242 @@
@@ -18271,7 +18366,7 @@ index 0000000000000000000000000000000000000000..2e112c1ad5b1a27ab98c297e6bd88789
 +}
 diff --git a/tests/d3d11_fixture/oracle.h b/tests/d3d11_fixture/oracle.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..6fdcfa0c12efa7713f4c07c6a0ad510a80533277
+index 0000000..6fdcfa0
 --- /dev/null
 +++ b/tests/d3d11_fixture/oracle.h
 @@ -0,0 +1,46 @@
@@ -18323,7 +18418,7 @@ index 0000000000000000000000000000000000000000..6fdcfa0c12efa7713f4c07c6a0ad510a
 +}
 diff --git a/tests/d3d11_fixture/oracle_test.cpp b/tests/d3d11_fixture/oracle_test.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..74d2d737b73b206da47b8c67f4b62d8ec157d869
+index 0000000..74d2d73
 --- /dev/null
 +++ b/tests/d3d11_fixture/oracle_test.cpp
 @@ -0,0 +1,34 @@
@@ -18363,7 +18458,7 @@ index 0000000000000000000000000000000000000000..74d2d737b73b206da47b8c67f4b62d8e
 +}
 diff --git a/tests/mod_loading/README.md b/tests/mod_loading/README.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..2706950f15859dc524ff6f6406ccdea51fb24bca
+index 0000000..2706950
 --- /dev/null
 +++ b/tests/mod_loading/README.md
 @@ -0,0 +1,33 @@
@@ -18402,7 +18497,7 @@ index 0000000000000000000000000000000000000000..2706950f15859dc524ff6f6406ccdea5
 +collector's ABI, rendered correctness, game performance or release qualification.
 diff --git a/tests/mod_loading/load_trace_streaming_test.cpp b/tests/mod_loading/load_trace_streaming_test.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..4456a73ad99bcb438dff43fa82f73ee7dff078ee
+index 0000000..4456a73
 --- /dev/null
 +++ b/tests/mod_loading/load_trace_streaming_test.cpp
 @@ -0,0 +1,214 @@
@@ -18622,7 +18717,7 @@ index 0000000000000000000000000000000000000000..4456a73ad99bcb438dff43fa82f73ee7
 +}
 diff --git a/tests/mod_loading/load_trace_streaming_windows_fixture.cpp b/tests/mod_loading/load_trace_streaming_windows_fixture.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..8cf301691d162a97d5622b22959be7ac35ad312c
+index 0000000..8cf3016
 --- /dev/null
 +++ b/tests/mod_loading/load_trace_streaming_windows_fixture.cpp
 @@ -0,0 +1,142 @@
@@ -18770,7 +18865,7 @@ index 0000000000000000000000000000000000000000..8cf301691d162a97d5622b22959be7ac
 +#endif
 diff --git a/tests/mod_loading/load_trace_test.cpp b/tests/mod_loading/load_trace_test.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..0826f07ab912acd23542c815d3302ba4844c30db
+index 0000000..0826f07
 --- /dev/null
 +++ b/tests/mod_loading/load_trace_test.cpp
 @@ -0,0 +1,232 @@
@@ -19008,14 +19103,14 @@ index 0000000000000000000000000000000000000000..0826f07ab912acd23542c815d3302ba4
 +}
 diff --git a/tests/preparation_capabilities/.gitignore b/tests/preparation_capabilities/.gitignore
 new file mode 100644
-index 0000000000000000000000000000000000000000..c18dd8d83ceed1806b50b0aaa46beb7e335fff13
+index 0000000..c18dd8d
 --- /dev/null
 +++ b/tests/preparation_capabilities/.gitignore
 @@ -0,0 +1 @@
 +__pycache__/
 diff --git a/tests/preparation_capabilities/test_cli.py b/tests/preparation_capabilities/test_cli.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..01161ed71520f10c933d24e6e51594f563e2015b
+index 0000000..01161ed
 --- /dev/null
 +++ b/tests/preparation_capabilities/test_cli.py
 @@ -0,0 +1,99 @@
@@ -19120,7 +19215,7 @@ index 0000000000000000000000000000000000000000..01161ed71520f10c933d24e6e51594f5
 +    unittest.main()
 diff --git a/tests/preparation_changes/README.md b/tests/preparation_changes/README.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..5631c7fe3e221ca17fbdc00642fcbc41657a30ad
+index 0000000..5631c7f
 --- /dev/null
 +++ b/tests/preparation_changes/README.md
 @@ -0,0 +1,66 @@
@@ -19192,10 +19287,10 @@ index 0000000000000000000000000000000000000000..5631c7fe3e221ca17fbdc00642fcbc41
 +for previously unknown INIs inside newly renamed-in directories.
 diff --git a/tests/preparation_changes/change_monitor_windows_test.cpp b/tests/preparation_changes/change_monitor_windows_test.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..1c459aaa56acb095f2d50636743c1ddbdefb3013
+index 0000000..c06a007
 --- /dev/null
 +++ b/tests/preparation_changes/change_monitor_windows_test.cpp
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,174 @@
 +// Actual Windows filesystem smoke fixture. No game/process interaction.
 +#ifndef _WIN32
 +#error This fixture requires Windows and the Windows SDK.
@@ -19328,6 +19423,20 @@ index 0000000000000000000000000000000000000000..1c459aaa56acb095f2d50636743c1ddb
 +        before = queue->Count(); Write(cache + L"\\own-cache.bin", "cache");
 +        std::this_thread::sleep_for(std::chrono::milliseconds(700));
 +        Require(queue->Count() == before && monitor.IsCurrent(request.token), "excluded cache creates no invalidation");
++        const auto longAsset = root + L"\\long-texture-name-for-notifications.bin";
++        before = queue->Count(); Write(longAsset, "ALIAS");
++        queue->WaitAfter(before, "long dependency create"); queue->Quiet();
++        wchar_t shortAsset[32768] = {};
++        Require(GetShortPathNameW(longAsset.c_str(), shortAsset, 32768) > 0, "short dependency name");
++        before = queue->Count();
++        monitor.Inject(ChangeKind::Modified, shortAsset);
++        queue->WaitAfter(before, "short-name notification"); queue->Quiet();
++        Require(monitor.IsCurrent(queue->Latest().token), "resolved alias notification current");
++        before = queue->Count(); Require(DeleteFileW(longAsset.c_str()) != FALSE, "delete alias");
++        monitor.Inject(ChangeKind::Deleted, shortAsset);
++        queue->WaitAfter(before, "unresolved deleted alias"); queue->Quiet();
++        Require(queue->Latest().iniChanged && queue->Latest().fullReconcile, "unresolved alias forces full proof");
++        request = queue->Latest();
 +        before = queue->Count();
 +        Require(MoveFileExW(root.c_str(), old.c_str(), MOVEFILE_WRITE_THROUGH) != FALSE, "rename watched root");
 +        Directory(root); Directory(cache);
@@ -19358,10 +19467,10 @@ index 0000000000000000000000000000000000000000..1c459aaa56acb095f2d50636743c1ddb
 +}
 diff --git a/tests/preparation_changes/change_reconciler_test.cpp b/tests/preparation_changes/change_reconciler_test.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..cd9e5f9f66c23747f6de8d9bca66289814db5c7b
+index 0000000..0145362
 --- /dev/null
 +++ b/tests/preparation_changes/change_reconciler_test.cpp
-@@ -0,0 +1,166 @@
+@@ -0,0 +1,173 @@
 +#include "ChangeReconciler.h"
 +#include "ChangeMonitor.h"
 +#include <cassert>
@@ -19448,6 +19557,13 @@ index 0000000000000000000000000000000000000000..cd9e5f9f66c23747f6de8d9bca662898
 +    assert(filtered.SetRoots({L"C:/Mods"}, {}, 8)); assert(filtered.TakeReady(8, request));
 +    filtered.Notify(ChangeKind::RootReplaced, L"C:/Mods", 9);
 +    assert(filtered.TakeReady(9, request) && request.iniChanged && request.fullReconcile);
++    assert(filtered.SetRoots({L"C:/Mods"}, {L"C:/Mods/cache"}, 10)); assert(filtered.TakeReady(10, request));
++    filteredToken = request.token;
++    filtered.Notify(ChangeKind::UnresolvedName, L"C:/Mods/cache/DECODE~1.bin", 11);
++    assert(filtered.IsCurrent(filteredToken));
++    filtered.Notify(ChangeKind::UnresolvedName, L"C:/Mods/TEXTUR~1.bin", 12);
++    assert(!filtered.IsCurrent(filteredToken));
++    assert(filtered.TakeReady(12, request) && request.iniChanged && request.fullReconcile);
 +    ChangeOptions dynamicOptions; dynamicOptions.filterDependencies = true;
 +    dynamicOptions.debounceMs = 0; dynamicOptions.maxDependencyFiles = 2;
 +    dynamicOptions.dependencyFiles = {L"C:/Mods/Assets/A.buf"};
@@ -19530,7 +19646,7 @@ index 0000000000000000000000000000000000000000..cd9e5f9f66c23747f6de8d9bca662898
 +}
 diff --git a/tests/preparation_changes/run_tests.py b/tests/preparation_changes/run_tests.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..88f21c64ee9f8a66a9ec6cd4efa3787529da231a
+index 0000000..88f21c6
 --- /dev/null
 +++ b/tests/preparation_changes/run_tests.py
 @@ -0,0 +1,19 @@
@@ -19555,7 +19671,7 @@ index 0000000000000000000000000000000000000000..88f21c64ee9f8a66a9ec6cd4efa37875
 +print("preparation_changes: portable state and worker checks passed")
 diff --git a/tests/preparation_cpu/disk.cpp b/tests/preparation_cpu/disk.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..6108b1f992e05d6066925adccbcb09236a581500
+index 0000000..6108b1f
 --- /dev/null
 +++ b/tests/preparation_cpu/disk.cpp
 @@ -0,0 +1,75 @@
@@ -19636,14 +19752,15 @@ index 0000000000000000000000000000000000000000..6108b1f992e05d6066925adccbcb0923
 +}
 diff --git a/tests/preparation_cpu/main.cpp b/tests/preparation_cpu/main.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..c90e29412065acd8ef638c29a9f4c63bb8b7bd63
+index 0000000..152abf7
 --- /dev/null
 +++ b/tests/preparation_cpu/main.cpp
-@@ -0,0 +1,131 @@
+@@ -0,0 +1,138 @@
 +#include "AssetCatalog.h"
 +#include "PreparationScheduler.h"
 +#include "SnapshotIO.h"
 +#include <cassert>
++#include <atomic>
 +#include <chrono>
 +#include <condition_variable>
 +#include <cstdio>
@@ -19737,8 +19854,8 @@ index 0000000000000000000000000000000000000000..c90e29412065acd8ef638c29a9f4c63b
 + wchar_t shortName[32768]{};DWORD shortCount=GetShortPathNameW(longName,shortName,DWORD(sizeof(shortName)/sizeof(shortName[0])));
 + if(shortCount&&shortCount<sizeof(shortName)/sizeof(shortName[0])&&CompareStringOrdinal(longName,-1,shortName,-1,TRUE)!=CSTR_EQUAL){
 +  // Both the long dependency and its short spelling can receive alternate notifications.
-+  SourceSnapshot longSnapshot;std::string shortReason;assert(ReadVerifiedSnapshot(longName,4,longSnapshot,shortReason));assert(!longSnapshot.watchable);assert(longSnapshot.compatibilityReason.find("short-name")!=std::string::npos);
-+  CheckAlias(longName,"alias-long-file-name-for-short-path.bin");Write("alias-long-file-name-for-short-path.bin","abcd");CheckAlias(shortName,"alias-long-file-name-for-short-path.bin");
++  SourceSnapshot longSnapshot;std::string shortReason;assert(ReadVerifiedSnapshot(longName,4,longSnapshot,shortReason));assert(longSnapshot.watchable);assert(longSnapshot.compatibilityReason.empty());
++  CheckAlias(shortName,"alias-long-file-name-for-short-path.bin");
 + }
 + else std::cout<<"8.3 alias fixture skipped: short names unavailable\n";
 + assert(DeleteFileW(longName));
@@ -19768,12 +19885,18 @@ index 0000000000000000000000000000000000000000..c90e29412065acd8ef638c29a9f4c63b
 + {std::lock_guard<std::mutex> lock(blockMutex);release=true;}blockWake.notify_all();
 + auto drained=std::chrono::steady_clock::now()+std::chrono::seconds(5);while(blocked.ReservedBytes()&&std::chrono::steady_clock::now()<drained){std::this_thread::yield();}assert(blocked.ReservedBytes()==0);assert(blocked.ResidentBytes()==0);
 + assert(blocked.Reconfigure(blockedLimits,2));assert(blocked.Enqueue(L"fresh",2));auto freshUntil=std::chrono::steady_clock::now()+std::chrono::seconds(5);while(!blocked.TryGet(L"fresh",2)&&std::chrono::steady_clock::now()<freshUntil){std::this_thread::yield();}assert(blocked.TryGet(L"fresh",2));blocked.Stop();
++ // More rejected files than concurrent queue slots must not cause repeated IO.
++ std::atomic<unsigned> rejectedReads{0};
++ PreparationScheduler negative(blockedLimits,[&](const std::wstring&,size_t,SourceSnapshot&,std::string& error){++rejectedReads;error="over size limit";return false;});
++ for(unsigned i=0;i<12;++i){auto name=L"oversized-"+std::to_wstring(i);assert(negative.Enqueue(name,1));auto end=std::chrono::steady_clock::now()+std::chrono::seconds(5);while(negative.CompatibilityReason(name,1).empty()&&std::chrono::steady_clock::now()<end)std::this_thread::yield();assert(!negative.CompatibilityReason(name,1).empty());}
++ for(unsigned i=0;i<12;++i)assert(!negative.Enqueue(L"oversized-"+std::to_wstring(i),1));
++ assert(rejectedReads==12);negative.CancelBefore(2);assert(negative.Enqueue(L"oversized-0",2));negative.Stop();
 + bool rejected=false;try{limits.workers=0;PreparationScheduler invalid(limits);}catch(const std::invalid_argument&){rejected=true;}assert(rejected);
 + std::cout<<"CPU preparation checks passed\n";
 +}
 diff --git a/tests/preparation_cpu/run.sh b/tests/preparation_cpu/run.sh
 new file mode 100755
-index 0000000000000000000000000000000000000000..d2e674ce1bf9f5efabc5cf0b873b82329b58c56d
+index 0000000..d2e674c
 --- /dev/null
 +++ b/tests/preparation_cpu/run.sh
 @@ -0,0 +1,15 @@
@@ -19794,7 +19917,7 @@ index 0000000000000000000000000000000000000000..d2e674ce1bf9f5efabc5cf0b873b8232
 +./test
 diff --git a/tests/preparation_generations/README.md b/tests/preparation_generations/README.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..2026c12f537b787cdcc9a16d4a373586e6bf7792
+index 0000000..2026c12
 --- /dev/null
 +++ b/tests/preparation_generations/README.md
 @@ -0,0 +1,7 @@
@@ -19807,7 +19930,7 @@ index 0000000000000000000000000000000000000000..2026c12f537b787cdcc9a16d4a373586
 +Native integration captures the exact snapshots consumed by the legacy parser (including actual include order, namespaces, and persistent settings). Missing, changing, invalid-UTF-8, or overbudget inputs disable the verified baseline while preserving the upstream fallback. Directory membership and commit-time source currency remain the monitor/runtime owner's responsibility. No cache cost reduction or Windows/D3D11 live activation result is claimed by this portable suite.
 diff --git a/tests/preparation_generations/main.cpp b/tests/preparation_generations/main.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..5d4ea69952ec5451f2b892d70dc886f33fb6c49b
+index 0000000..5d4ea69
 --- /dev/null
 +++ b/tests/preparation_generations/main.cpp
 @@ -0,0 +1,321 @@
@@ -20134,7 +20257,7 @@ index 0000000000000000000000000000000000000000..5d4ea69952ec5451f2b892d70dc886f3
 +}
 diff --git a/tests/preparation_generations/run.sh b/tests/preparation_generations/run.sh
 new file mode 100755
-index 0000000000000000000000000000000000000000..97138f6a4460f9237ed9f66d2086d8dbf9c17dc9
+index 0000000..97138f6
 --- /dev/null
 +++ b/tests/preparation_generations/run.sh
 @@ -0,0 +1,12 @@
@@ -20152,7 +20275,7 @@ index 0000000000000000000000000000000000000000..97138f6a4460f9237ed9f66d2086d8db
 +"$build/test"
 diff --git a/tests/preparation_gpu/run.sh b/tests/preparation_gpu/run.sh
 new file mode 100755
-index 0000000000000000000000000000000000000000..b45911e21704f40247acaa919d98e683817cf06c
+index 0000000..b45911e
 --- /dev/null
 +++ b/tests/preparation_gpu/run.sh
 @@ -0,0 +1,10 @@
@@ -20168,10 +20291,10 @@ index 0000000000000000000000000000000000000000..b45911e21704f40247acaa919d98e683
 +"$build/test"
 diff --git a/tests/preparation_gpu/test_gpu_device.cpp b/tests/preparation_gpu/test_gpu_device.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..3a694f8e8bee59137cbb7b101045518d79b2122e
+index 0000000..c8664bb
 --- /dev/null
 +++ b/tests/preparation_gpu/test_gpu_device.cpp
-@@ -0,0 +1,440 @@
+@@ -0,0 +1,466 @@
 +// Standalone Windows regression host. WARP is this fixture's real rendering
 +// device, never a device used to prepare resources for another game device.
 +#include "PreparationPlanner.h"
@@ -20217,6 +20340,28 @@ index 0000000000000000000000000000000000000000..3a694f8e8bee59137cbb7b101045518d
 +    GpuPumpLimits limits; limits.operations = 8; limits.bytes = 16 * 1024 * 1024; limits.milliseconds = 1000;
 +    const auto pumped = planner.Pump(true, limits);
 +    assert(pumped.created == 1 && !pumped.failed && !pumped.deviceRemoved && !pumped.compatibilitySkipped);
++}
++void TestIndivisiblePumpBudget() {
++    ComPtr<ID3D11DeviceContext> context; auto device = Device(0, context);
++    PreparationPlanner planner(1024 * 1024);
++    assert(planner.BeginDevice(device.Get(), AllocateDeviceEpoch()));
++    GpuPreparationRequest request;
++    request.snapshot = Snapshot(std::vector<uint8_t>(16, 1));
++    request.buffer.ByteWidth = 16; request.buffer.Usage = D3D11_USAGE_IMMUTABLE;
++    request.buffer.BindFlags = D3D11_BIND_VERTEX_BUFFER;
++    request.estimatedBytes = 65552; request.dependencyReadOnly = true;
++    request.reserveCpuScratch = [](uint64_t) { return std::make_shared<int>(0); };
++    DeviceResourceKey first, second;
++    assert(planner.Enqueue(request, &first) == GpuQueueResult::Queued);
++    request.snapshot = Snapshot(std::vector<uint8_t>(16, 2));
++    assert(planner.Enqueue(request, &second) == GpuQueueResult::Queued);
++    GpuPumpLimits limits; limits.operations = 8; limits.bytes = 1; limits.milliseconds = 1000;
++    assert(!planner.Pump(false, limits).created && planner.Queued() == 2);
++    assert(planner.Pump(true, limits).created == 1 && planner.Queued() == 1);
++    assert(planner.TryAcquire(first) && !planner.TryAcquire(second));
++    assert(planner.Pump(true, limits).created == 1 && !planner.Queued());
++    assert(planner.TryAcquire(second));
++    planner.RetireDevice();
 +}
 +void TestAggregateRefreshBudget() {
 +    ComPtr<ID3D11DeviceContext> context; auto device = Device(0, context);
@@ -20283,6 +20428,7 @@ index 0000000000000000000000000000000000000000..3a694f8e8bee59137cbb7b101045518d
 +}
 +int main() {
 +    Apartment apartment;
++    TestIndivisiblePumpBudget();
 +    TestAggregateRefreshBudget();
 +    // Unique compiled-blob ownership is bounded across queue/profile/generation
 +    // aliases; retaining the same blob twice never charges its payload twice.
@@ -20356,7 +20502,10 @@ index 0000000000000000000000000000000000000000..3a694f8e8bee59137cbb7b101045518d
 +    GpuQueueResult workerResult = GpuQueueResult::Queued;
 +    std::thread worker([&] { workerResult = planner.Enqueue(buffer); assert(planner.Pump(true).created == 0); });
 +    worker.join(); assert(workerResult == GpuQueueResult::WrongThread);
-+    Created(planner);
++    GpuPumpLimits smallPump; smallPump.operations = 8; smallPump.bytes = 1;
++    smallPump.milliseconds = 1000;
++    auto single = planner.Pump(true, smallPump);
++    assert(single.created == 1 && !single.compatibilitySkipped && !single.failed);
 +    assert(!scratch.used);
 +    assert(ProcessGpuAllocationLedger().Bytes() == buffer.estimatedBytes);
 +    auto prepared = planner.TryAcquire(bufferKey);
@@ -20614,7 +20763,7 @@ index 0000000000000000000000000000000000000000..3a694f8e8bee59137cbb7b101045518d
 +}
 diff --git a/tests/preparation_gpu/test_gpu_policy.cpp b/tests/preparation_gpu/test_gpu_policy.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..2bddbf3619c4378eb2c40e4efa72cbfdd1d8980a
+index 0000000..2bddbf3
 --- /dev/null
 +++ b/tests/preparation_gpu/test_gpu_policy.cpp
 @@ -0,0 +1,120 @@
@@ -20740,7 +20889,7 @@ index 0000000000000000000000000000000000000000..2bddbf3619c4378eb2c40e4efa72cbfd
 +int main() { TestBudget(); TestLiveAllocationLedger(); TestAtomicRetainedBudget(); TestOwnershipAndIdentity(); TestInactiveLRU(); std::cout << "gpu policy: 5 groups passed\n"; }
 diff --git a/tests/preparation_native_integration/host.cpp b/tests/preparation_native_integration/host.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..b5ec02cfe11ebcd4e39a0cef928c7acc6592eed1
+index 0000000..b5ec02c
 --- /dev/null
 +++ b/tests/preparation_native_integration/host.cpp
 @@ -0,0 +1,46 @@
@@ -20792,7 +20941,7 @@ index 0000000000000000000000000000000000000000..b5ec02cfe11ebcd4e39a0cef928c7acc
 +}
 diff --git a/tests/preparation_native_integration/run_windows_fixture.py b/tests/preparation_native_integration/run_windows_fixture.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..69f7305df924d2993948643496870cd502930d39
+index 0000000..69f7305
 --- /dev/null
 +++ b/tests/preparation_native_integration/run_windows_fixture.py
 @@ -0,0 +1,36 @@
@@ -20834,7 +20983,7 @@ index 0000000000000000000000000000000000000000..69f7305df924d2993948643496870cd5
 +        raise
 diff --git a/tests/preparation_ownership/README.md b/tests/preparation_ownership/README.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..ef369e4706bb6ea31aa54ab27e6d1b7b348b216c
+index 0000000..ef369e4
 --- /dev/null
 +++ b/tests/preparation_ownership/README.md
 @@ -0,0 +1,9 @@
@@ -20849,7 +20998,7 @@ index 0000000000000000000000000000000000000000..ef369e4706bb6ea31aa54ab27e6d1b7b
 +retirement require the Windows build and D3D fixture separately.
 diff --git a/tests/preparation_ownership/main.cpp b/tests/preparation_ownership/main.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..72870bf441c2e197ce0c6c99e25a3b1dacc81a6f
+index 0000000..72870bf
 --- /dev/null
 +++ b/tests/preparation_ownership/main.cpp
 @@ -0,0 +1,78 @@
@@ -20933,7 +21082,7 @@ index 0000000000000000000000000000000000000000..72870bf441c2e197ce0c6c99e25a3b1d
 +}
 diff --git a/tests/preparation_ownership/run.sh b/tests/preparation_ownership/run.sh
 new file mode 100755
-index 0000000000000000000000000000000000000000..d1f91f273931c31d3ba0b7f1e94bf9df99b1fcd7
+index 0000000..d1f91f2
 --- /dev/null
 +++ b/tests/preparation_ownership/run.sh
 @@ -0,0 +1,7 @@
@@ -20946,7 +21095,7 @@ index 0000000000000000000000000000000000000000..d1f91f273931c31d3ba0b7f1e94bf9df
 +"$out/ownership"
 diff --git a/tests/preparation_refresh/README.md b/tests/preparation_refresh/README.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..1c8f97c301f1a1a041e28be13307f0969d594452
+index 0000000..1c8f97c
 --- /dev/null
 +++ b/tests/preparation_refresh/README.md
 @@ -0,0 +1,41 @@
@@ -20993,7 +21142,7 @@ index 0000000000000000000000000000000000000000..1c8f97c301f1a1a041e28be13307f096
 +configuration linking and migration remain outside this bounded feature.
 diff --git a/tests/preparation_refresh/main.cpp b/tests/preparation_refresh/main.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..8529b048cf29e4aef6785fca6381ecbe1241da52
+index 0000000..6011c9d
 --- /dev/null
 +++ b/tests/preparation_refresh/main.cpp
 @@ -0,0 +1,349 @@
@@ -21030,7 +21179,7 @@ index 0000000000000000000000000000000000000000..8529b048cf29e4aef6785fca6381ecbe
 +    if (alternateCount && alternateCount < 32768 &&
 +        CompareStringOrdinal(directory.c_str(), static_cast<int>(directory.size()),
 +            alternate, static_cast<int>(alternateCount), TRUE) != CSTR_EQUAL) {
-+        assert(!IsResourceRefreshDirectoryWatchable(directory));
++        assert(IsResourceRefreshDirectoryWatchable(directory));
 +        assert(!IsResourceRefreshDirectoryWatchable(alternate));
 +        std::cout << "Directory 8.3 alias regression passed\n";
 +    } else {
@@ -21348,7 +21497,7 @@ index 0000000000000000000000000000000000000000..8529b048cf29e4aef6785fca6381ecbe
 +}
 diff --git a/tests/preparation_refresh/run.sh b/tests/preparation_refresh/run.sh
 new file mode 100644
-index 0000000000000000000000000000000000000000..3cf7c3cb3e0f167a947bf295170bae209408132a
+index 0000000..3cf7c3c
 --- /dev/null
 +++ b/tests/preparation_refresh/run.sh
 @@ -0,0 +1,13 @@
@@ -21367,7 +21516,7 @@ index 0000000000000000000000000000000000000000..3cf7c3cb3e0f167a947bf295170bae20
 +"$build/test" "$build/snapshot-fixture" "$build/closure-fixture"
 diff --git a/tests/preparation_refresh/run_windows_fixture.py b/tests/preparation_refresh/run_windows_fixture.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..b566eee0a6606f090c4436f03ffb2d03956fd922
+index 0000000..b566eee
 --- /dev/null
 +++ b/tests/preparation_refresh/run_windows_fixture.py
 @@ -0,0 +1,13 @@
@@ -21386,7 +21535,7 @@ index 0000000000000000000000000000000000000000..b566eee0a6606f090c4436f03ffb2d03
 +print('preparation_refresh: actual config snapshots and recursive membership verified')
 diff --git a/tests/preparation_refresh/test_refresh_device.cpp b/tests/preparation_refresh/test_refresh_device.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..1f96ee7982d4a844ef43b0459bd9a61b3cf9d119
+index 0000000..1f96ee7
 --- /dev/null
 +++ b/tests/preparation_refresh/test_refresh_device.cpp
 @@ -0,0 +1,213 @@
@@ -21605,7 +21754,7 @@ index 0000000000000000000000000000000000000000..1f96ee7982d4a844ef43b0459bd9a61b
 +}
 diff --git a/tests/preparation_runtime/README.md b/tests/preparation_runtime/README.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..135e361092d320be574b509d9f968a9539e2f02a
+index 0000000..135e361
 --- /dev/null
 +++ b/tests/preparation_runtime/README.md
 @@ -0,0 +1,3 @@
@@ -21614,7 +21763,7 @@ index 0000000000000000000000000000000000000000..135e361092d320be574b509d9f968a95
 +These portable checks do not exercise D3D11 creation, real Present integration, command parsing, or visible rendering. Windows build/WARP and representative game qualification remain separate required evidence.
 diff --git a/tests/preparation_runtime/main.cpp b/tests/preparation_runtime/main.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..1523d96f98fcf38dd3e0ed05612e9aa7ba348233
+index 0000000..1523d96
 --- /dev/null
 +++ b/tests/preparation_runtime/main.cpp
 @@ -0,0 +1,35 @@
@@ -21655,7 +21804,7 @@ index 0000000000000000000000000000000000000000..1523d96f98fcf38dd3e0ed05612e9aa7
 +}
 diff --git a/tests/preparation_runtime/run.sh b/tests/preparation_runtime/run.sh
 new file mode 100644
-index 0000000000000000000000000000000000000000..5be7cb731804fb8ad4d8359f32631e432c7cc974
+index 0000000..5be7cb7
 --- /dev/null
 +++ b/tests/preparation_runtime/run.sh
 @@ -0,0 +1,8 @@
@@ -21669,7 +21818,7 @@ index 0000000000000000000000000000000000000000..5be7cb731804fb8ad4d8359f32631e43
 +"$build/test"
 diff --git a/tests/preparation_shader_cache/README.md b/tests/preparation_shader_cache/README.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..a19ecee5bc10d51ba9a1a2f0ce29c16466983b35
+index 0000000..a19ecee
 --- /dev/null
 +++ b/tests/preparation_shader_cache/README.md
 @@ -0,0 +1,56 @@
@@ -21731,7 +21880,7 @@ index 0000000000000000000000000000000000000000..a19ecee5bc10d51ba9a1a2f0ce29c164
 +not qualify game appearance, device-driver behavior, or frame timing.
 diff --git a/tests/preparation_shader_cache/main.cpp b/tests/preparation_shader_cache/main.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..25517a0507a0e05789cacb3b5daf023244371827
+index 0000000..25517a0
 --- /dev/null
 +++ b/tests/preparation_shader_cache/main.cpp
 @@ -0,0 +1,63 @@
@@ -21800,7 +21949,7 @@ index 0000000000000000000000000000000000000000..25517a0507a0e05789cacb3b5daf0232
 +}
 diff --git a/tests/preparation_shader_cache/run.sh b/tests/preparation_shader_cache/run.sh
 new file mode 100755
-index 0000000000000000000000000000000000000000..2a2c37dca86e58cf7e5b1399b0daad394f961741
+index 0000000..2a2c37d
 --- /dev/null
 +++ b/tests/preparation_shader_cache/run.sh
 @@ -0,0 +1,12 @@
@@ -21818,7 +21967,7 @@ index 0000000000000000000000000000000000000000..2a2c37dca86e58cf7e5b1399b0daad39
 +"$build/test" "$build/fixture"
 diff --git a/tests/preparation_shader_cache/run_windows_fixture.py b/tests/preparation_shader_cache/run_windows_fixture.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..8fca1f2591a66e6e407f571d689416880f49caaa
+index 0000000..8fca1f2
 --- /dev/null
 +++ b/tests/preparation_shader_cache/run_windows_fixture.py
 @@ -0,0 +1,9 @@
@@ -21833,7 +21982,7 @@ index 0000000000000000000000000000000000000000..8fca1f2591a66e6e407f571d68941688
 +    subprocess.run([str(executable), str(Path(temporary).resolve())], check=True, timeout=90)
 diff --git a/tests/preparation_shader_cache/standard_probe.cpp b/tests/preparation_shader_cache/standard_probe.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..10c7883dbe5c743ffa7d568f4c4face3aa7186aa
+index 0000000..10c7883
 --- /dev/null
 +++ b/tests/preparation_shader_cache/standard_probe.cpp
 @@ -0,0 +1,9 @@
@@ -21848,7 +21997,7 @@ index 0000000000000000000000000000000000000000..10c7883dbe5c743ffa7d568f4c4face3
 +int main(int argc,char** argv){assert(argc==2);std::string root=argv[1];assert(CreateDirectoryA((root+"/mod").c_str(),nullptr));assert(CreateDirectoryA((root+"/mod/sub").c_str(),nullptr));assert(CreateDirectoryA((root+"/cwd").c_str(),nullptr));assert(SetCurrentDirectoryA((root+"/cwd").c_str()));Put(root+"/mod/pick.hls","ROOT_MARKER\n");Put(root+"/mod/sub/pick.hls","PARENT_MARKER\n");Put(root+"/cwd/pick.hls","CWD_MARKER\n");std::string sourceName=root+"/mod/main.hls";Probe("top-local","#include \"pick.hls\"\n",sourceName);Probe("top-system","#include <pick.hls>\n",sourceName);Put(root+"/mod/sub/one.hls","#include \"pick.hls\"\n");Probe("nested-local","#include \"sub/one.hls\"\n",sourceName);Put(root+"/mod/sub/one.hls","#include <pick.hls>\n");Probe("nested-system","#include \"sub/one.hls\"\n",sourceName);assert(DeleteFileA((root+"/mod/pick.hls").c_str()));Put(root+"/mod/sub/one.hls","#include \"pick.hls\"\n");Probe("fallback-local","#include \"sub/one.hls\"\n",sourceName);Put(root+"/mod/sub/one.hls","#include <pick.hls>\n");Probe("fallback-system","#include \"sub/one.hls\"\n",sourceName);}
 diff --git a/tests/preparation_shader_cache/windows.cpp b/tests/preparation_shader_cache/windows.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..f4a99c2b24779a0340bebe6365ec640773c660df
+index 0000000..f4a99c2
 --- /dev/null
 +++ b/tests/preparation_shader_cache/windows.cpp
 @@ -0,0 +1,194 @@
@@ -22048,7 +22197,7 @@ index 0000000000000000000000000000000000000000..f4a99c2b24779a0340bebe6365ec6407
 +}
 diff --git a/tests/preparation_status/README.md b/tests/preparation_status/README.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..d862662d49e9bfad156264eee9bcd15dbb7c7c8b
+index 0000000..d862662
 --- /dev/null
 +++ b/tests/preparation_status/README.md
 @@ -0,0 +1,53 @@
@@ -22107,7 +22256,7 @@ index 0000000000000000000000000000000000000000..d862662d49e9bfad156264eee9bcd15d
 +readiness.
 diff --git a/tests/preparation_status/run_tests.py b/tests/preparation_status/run_tests.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..b2c07b1a7ebd5ef3aa34e3994e745f9a2e985a18
+index 0000000..b2c07b1
 --- /dev/null
 +++ b/tests/preparation_status/run_tests.py
 @@ -0,0 +1,27 @@
@@ -22140,7 +22289,7 @@ index 0000000000000000000000000000000000000000..b2c07b1a7ebd5ef3aa34e3994e745f9a
 +print("preparation_status: portable JSON contract passed")
 diff --git a/tests/preparation_status/run_windows_fixture.py b/tests/preparation_status/run_windows_fixture.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..462c742af009af9ab9fe53de441d46c714f8c605
+index 0000000..462c742
 --- /dev/null
 +++ b/tests/preparation_status/run_windows_fixture.py
 @@ -0,0 +1,25 @@
@@ -22171,7 +22320,7 @@ index 0000000000000000000000000000000000000000..462c742af009af9ab9fe53de441d46c7
 +print("preparation_status: actual SHA256, JSON counts/state, heartbeat and atomic output verified")
 diff --git a/tests/preparation_status/status_publisher_windows_test.cpp b/tests/preparation_status/status_publisher_windows_test.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..81d8ce7c229e49bc512ba14b610ded9316fe275f
+index 0000000..81d8ce7
 --- /dev/null
 +++ b/tests/preparation_status/status_publisher_windows_test.cpp
 @@ -0,0 +1,78 @@
@@ -22255,7 +22404,7 @@ index 0000000000000000000000000000000000000000..81d8ce7c229e49bc512ba14b610ded93
 +}
 diff --git a/tests/preparation_status/status_serialization_test.cpp b/tests/preparation_status/status_serialization_test.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..b2aa5191656759b34300de8d086c9cf0cd64fd20
+index 0000000..b2aa519
 --- /dev/null
 +++ b/tests/preparation_status/status_serialization_test.cpp
 @@ -0,0 +1,58 @@
@@ -22319,7 +22468,7 @@ index 0000000000000000000000000000000000000000..b2aa5191656759b34300de8d086c9cf0
 +}
 diff --git a/tests/preparation_working_set/README.md b/tests/preparation_working_set/README.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..4e90031088ea45d12774eb57762e2f0c5d31b52b
+index 0000000..4e90031
 --- /dev/null
 +++ b/tests/preparation_working_set/README.md
 @@ -0,0 +1,17 @@
@@ -22342,7 +22491,7 @@ index 0000000000000000000000000000000000000000..4e90031088ea45d12774eb57762e2f0c
 +no persistent learning or folder/name interpretation.
 diff --git a/tests/preparation_working_set/run_tests.py b/tests/preparation_working_set/run_tests.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..69238759e09d584c4695eac6b6597cf0d1b35421
+index 0000000..6923875
 --- /dev/null
 +++ b/tests/preparation_working_set/run_tests.py
 @@ -0,0 +1,14 @@
@@ -22362,7 +22511,7 @@ index 0000000000000000000000000000000000000000..69238759e09d584c4695eac6b6597cf0
 +    subprocess.run([str(executable)], check=True)
 diff --git a/tests/preparation_working_set/working_set_test.cpp b/tests/preparation_working_set/working_set_test.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..223d119798e089e3ba0e6977004be249faa157fe
+index 0000000..223d119
 --- /dev/null
 +++ b/tests/preparation_working_set/working_set_test.cpp
 @@ -0,0 +1,74 @@
@@ -22442,7 +22591,7 @@ index 0000000000000000000000000000000000000000..223d119798e089e3ba0e6977004be249
 +}
 diff --git a/tests/shader_regex_cache/README.md b/tests/shader_regex_cache/README.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..e1500b3eac6d242ddadf065134959dde918e4037
+index 0000000..e1500b3
 --- /dev/null
 +++ b/tests/shader_regex_cache/README.md
 @@ -0,0 +1,3 @@
@@ -22451,7 +22600,7 @@ index 0000000000000000000000000000000000000000..e1500b3eac6d242ddadf065134959dde
 +It verifies the original 16-byte version 1 layout, valid NO_MATCH/matched/patched metadata, hash changes for all three cases, the malformed candidate format that omitted the hash (including current hashes 0/1), and invalid version/payload lengths including match-count overflow. The validator retains the original writer's invariants: `patched` stores a bool, and a patched cache has at least one match. The production loader applies this validator before returning NO_MATCH, linking groups, or loading cached patched bytecode. This portable test does not execute Windows file I/O, command lists, or D3D11.
 diff --git a/tests/shader_regex_cache/main.cpp b/tests/shader_regex_cache/main.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..47b27e523ff5ed9cf0ac5699f0fafcceb392662d
+index 0000000..47b27e5
 --- /dev/null
 +++ b/tests/shader_regex_cache/main.cpp
 @@ -0,0 +1,94 @@
@@ -22551,7 +22700,7 @@ index 0000000000000000000000000000000000000000..47b27e523ff5ed9cf0ac5699f0fafcce
 +}
 diff --git a/tests/shader_regex_cache/run.sh b/tests/shader_regex_cache/run.sh
 new file mode 100755
-index 0000000000000000000000000000000000000000..819d69f427cb3601d5648357742cbff3cc180689
+index 0000000..819d69f
 --- /dev/null
 +++ b/tests/shader_regex_cache/run.sh
 @@ -0,0 +1,8 @@
@@ -22565,7 +22714,7 @@ index 0000000000000000000000000000000000000000..819d69f427cb3601d5648357742cbff3
 +"$build/test"
 diff --git a/tools/preparation-capabilities.py b/tools/preparation-capabilities.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..aa8511d59ec9dd63613c6244edf862b034933b2c
+index 0000000..aa8511d
 --- /dev/null
 +++ b/tools/preparation-capabilities.py
 @@ -0,0 +1,78 @@

@@ -18,7 +18,7 @@ function Run-NativeTest {
     New-Item -ItemType Directory -Force $dir | Out-Null
     Push-Location $dir
     try {
-        $arguments = @('/nologo', "/std:$Standard", '/MT', '/EHsc', '/W4', '/WX', '/UNDEBUG',
+        $arguments = @('/nologo', '/O2', "/std:$Standard", '/MT', '/EHsc', '/W4', '/WX', '/UNDEBUG',
             '/D_CRT_SECURE_NO_WARNINGS', '/DUNICODE', '/D_UNICODE',
             '/DNOMINMAX', '/DWIN32_LEAN_AND_MEAN', "/I$mod",
             "/I$(Join-Path $native 'DirectX11')",

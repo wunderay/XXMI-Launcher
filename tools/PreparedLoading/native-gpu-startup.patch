@@ -1,0 +1,360 @@
+--- a/DirectX11/ModLoading/Runtime.cpp
++++ b/DirectX11/ModLoading/Runtime.cpp
+@@ -91,6 +91,10 @@
+ 	uint64_t totalAssets = 0, baseCompatibility = 0;
+ 	std::map<const void*, ProfileEntry> profile;
+ 	bool loadingWindow = false;
++	bool startupGpu = false;
++	std::atomic<bool> startupStarted{false}, startupFinished{false};
++	unsigned startupSeconds = 30;
++	uint64_t startupCreated = 0, pressureCheck = 0;
+ 	bool resourceSharingProven = false;
+ 	std::shared_ptr<PreparationScheduler> scheduler;
+ 	std::unique_ptr<ChangeMonitor> monitor;
+@@ -390,6 +394,20 @@
+ 	if (request.createDefaultShaderResourceView) request.estimatedBytes += 64 * 1024;
+ 	return true;
+ }
++// A startup object belongs to exactly one declaration and one config generation.
++// Equal files must not alias: later pipeline aliases may mutate an otherwise
++// read-only declaration. Legacy Substantiate consumes it at most once.
++bool IsolateStartupRequest(const RuntimeState& state, const CustomResource& resource,
++	GpuPreparationRequest& request) {
++	if (!state.startupGpu) return true;
++	const auto id = state.resourceIds.find(&resource);
++	if (id == state.resourceIds.end() || id->second.size() > 32767) return false;
++	const auto generation = state.generation.load();
++	request.creationOptions.insert(request.creationOptions.end(), {0x50524956,
++		uint32_t(generation), uint32_t(generation >> 32), uint32_t(id->second.size())});
++	for (wchar_t c : id->second) request.creationOptions.push_back(uint32_t(c));
++	return true;
++}
+ std::shared_ptr<const ShaderBundleInput> CaptureShaderBundle(CustomShader& shader, size_t maxBytes, uint64_t shaderBudget) {
+ 	if (shader.substantiated || shader.preparation_compile_failed ||
+ 		shader.blend_override < 0 || shader.blend_override > 1 ||
+@@ -901,6 +919,8 @@
+ 		status.reason = "waiting for verified sources, complete GPU objects, loading window, or available budget";
+ 	}
+ 	if (!state->refreshReason.empty()) status.reason = state->refreshReason;
++	if (state->startupFinished && current && !forcedReason)
++		status.reason = "Startup GPU pass finished; ready objects retained, unsupported or over-budget assets use normal loading";
+ 	UpdatePreparationStatus(status, statusTicket);
+ }
+ void ResetProfileEntry(ProfileEntry& entry, Generation generation, DeviceEpoch epoch) {
+@@ -1303,6 +1323,12 @@
+ 		state->gpuLimits.milliseconds = (std::max)(0.1f, (std::min)(50.0f,
+ 			GetIniFloat(L"ModLoading", L"create_budget_ms", 2.0f, nullptr)));
+ 		state->loadingWindow = GetIniBool(L"ModLoading", L"preparation_loading_window", false, nullptr);
++		state->startupGpu = state->gpuEnabled && !state->generalEnabled && !state->refreshEnabled &&
++			GetIniBool(L"ModLoading", L"startup_gpu_preload", false, nullptr);
++		state->startupSeconds = Setting(L"startup_preload_seconds", 30, 1, 60);
++		// The explicit startup boundary owns this gate. Never leave it open
++		// for ordinary gameplay, even if an old INI set loading_window=true.
++		if (state->startupGpu) state->loadingWindow = false;
+ 		if (GetIniBool(L"ModLoading", L"auto_activate", false, nullptr))
+ 			LogOverlayW(LOG_WARNING, L"ModLoading auto_activate is unsupported; use explicit compatible reload\n");
+ 		static int statusModuleAnchor;
+@@ -1406,6 +1432,7 @@
+ 			// mentioning the original file resource. Unknown command graphs
+ 			// therefore cannot prove resource immutability for GPU sharing.
+ 			for (auto* resource : state->resources) {
++				if (state->startupGpu) continue; // Per-declaration objects never share storage.
+ 				const auto tracked = state->profile.find(resource);
+ 				if (tracked != state->profile.end()) {
+ 					tracked->second.staticCompatibility = true;
+@@ -1414,6 +1441,18 @@
+ 			}
+ 		}
+ 		state->files.assign(files.begin(), files.end());
++		if (state->startupGpu) {
++			// Geometry before large texture files; only locally qualified
++			// declarations are admitted to the startup CPU/GPU pass.
++			std::stable_partition(state->resources.begin(), state->resources.end(),
++				[](CustomResource* resource) { return IsBuffer(*resource); });
++			state->files.clear(); std::set<std::wstring> admitted;
++			for (auto* resource : state->resources) {
++				const auto tracked = state->profile.find(resource);
++				if (tracked != state->profile.end() && !tracked->second.staticCompatibility &&
++					admitted.insert(resource->filename).second) state->files.push_back(resource->filename);
++			}
++		}
+ 		auto& service = Services();
+ 		if (state->cpuLimits.cpuBytes && !service.scheduler) {
+ 			// Workers can outlive individual config generations. Pin the DLL
+@@ -1588,6 +1627,21 @@
+ 		PublishProgress(state, epoch, "rendering device was removed; compatibility reload/device recreation required");
+ 		return;
+ 	}
++	if (state->startupGpu && state->startupFinished) {
++		// No new reads/uploads on Present after the explicit startup pass.
++		// Release unconsumed speculative objects if game allocations squeeze
++		// the local-memory budget. Active game resources retain their owners.
++		const auto now = GetTickCount64();
++		if (service.planner && now - state->pressureCheck >= 1000) {
++			state->pressureCheck = now;
++			if (service.planner->UnderMemoryPressure()) {
++				service.profileGpuPins.clear();
++				service.planner->CancelPending(); service.planner->EvictUnused();
++				PublishProgress(state, epoch);
++			}
++		}
++		return;
++	}
+ 	// A single-threaded device offers no safe foreign-thread teardown path
+ 	// once prepared children retain its COM lifetime. Keep this device class
+ 	// on the CPU snapshot + legacy GPU path until explicit owner teardown is
+@@ -1626,6 +1680,7 @@
+ 		service.owner = std::this_thread::get_id();
+ 		service.plannerGeneration = state->generation;
+ 		if (!service.planner->BeginDevice(device, epoch)) return;
++		if (state->startupGpu) service.planner->SetSafetyHeadroom(1024 * MiB);
+ 	}
+ 	// Bound CPU admission and descriptor work per Present. The queue/cache
+ 	// enforce their own memory limits; no draw executes just to discover work.
+@@ -1656,7 +1711,8 @@
+ 		if (progress.staticCompatibility) continue;
+ 		progress.compatibility = false;
+ 		GpuPreparationRequest prepared;
+-		if (!RequestFor(resource, *asset, device, prepared, state->detectColorSpace)) { progress.compatibility = true; continue; }
++		if (!RequestFor(resource, *asset, device, prepared, state->detectColorSpace) ||
++			!IsolateStartupRequest(*state, resource, prepared)) { progress.compatibility = true; continue; }
+ 		prepared.sourceOwner = asset;
+ 		DeviceResourceKey key;
+ 		if (!service.planner->ComputeKey(prepared, key)) {
+@@ -1713,6 +1769,7 @@
+ 		~CreationModeGuard() { UnlockResourceCreationMode(); }
+ 	} creationMode;
+ 	const auto result = service.planner->Pump(state->loadingWindow, state->gpuLimits);
++	state->startupCreated += result.created;
+ 	if (result.deviceRemoved) RetireRuntimeDevice(device);
+ 	PublishProgress(state, epoch, result.deviceRemoved ? "rendering device removed during preparation" : nullptr);
+ }
+@@ -1763,7 +1820,7 @@
+ 	std::unique_lock<std::recursive_mutex> lock(service.plannerMutex, std::try_to_lock);
+ 	if (!lock.owns_lock() || service.owner != std::this_thread::get_id()) return false;
+ 	RuntimeOwnerScope ownerScope(lock);
+-	if (!SourcesCurrent(state) || !state->resourceSharingProven || !service.planner || service.device != device ||
++	if (!SourcesCurrent(state) || (!state->resourceSharingProven && !state->startupGpu) || !service.planner || service.device != device ||
+ 		service.plannerGeneration != state->generation) return false;
+ 	const auto tracked = state->profile.find(&target);
+ 	ProfileEntry* progress = tracked != state->profile.end() ? &tracked->second : nullptr;
+@@ -1772,13 +1829,15 @@
+ 		state->scheduler->TryGet(target.filename, state->generation);
+ 	if (!asset) return false;
+ 	GpuPreparationRequest request;
+-	if (!RequestFor(target, *asset, device, request, state->detectColorSpace)) return false;
++	if (!RequestFor(target, *asset, device, request, state->detectColorSpace) ||
++		!IsolateStartupRequest(*state, target, request)) return false;
+ 	request.sourceOwner = asset;
+ 	DeviceResourceKey key;
+ 	if (!service.planner->ComputeKey(request, key)) return false;
+ 	auto prepared = currentPin && SameKey(progress->key, key) ? progress->pinnedGpu.lock() : nullptr;
+ 	if (!prepared) {
+-		if (service.planner->Enqueue(request, &key) != GpuQueueResult::AlreadyReady || !SourcesCurrent(state)) return false;
++		if (!state->startupGpu && service.planner->Enqueue(request, &key) != GpuQueueResult::AlreadyReady) return false;
++		if (!SourcesCurrent(state)) return false;
+ 		prepared = service.planner->TryAcquire(key);
+ 	}
+ 	if (!prepared || !prepared->resource || !SourcesCurrent(state)) return false;
+@@ -1821,7 +1880,7 @@
+ 		tracked->second.epoch == service.epoch && SameKey(tracked->second.key, key);
+ 	auto prepared = currentPin ? tracked->second.pinnedGpu.lock() : nullptr;
+ 	if (!prepared) {
+-		if (service.planner->Enqueue(request, &key) != GpuQueueResult::AlreadyReady) return false;
++		if (!state->startupGpu && service.planner->Enqueue(request, &key) != GpuQueueResult::AlreadyReady) return false;
+ 		prepared = service.planner->TryAcquire(key);
+ 	}
+ 	if (!prepared || !prepared->bundle || !SourcesCurrent(state)) return false;
+@@ -1911,7 +1970,42 @@
+ 	}
+ }
+ void PumpRuntime(ID3D11Device* device, DeviceEpoch epoch, ID3D11DeviceContext* realContext) {
+-	try { PumpRuntimeImpl(device, epoch, realContext); }
++	try {
++		auto state = Current();
++		if (state && state->startupGpu && !state->startupStarted && device && epoch &&
++			!runtimeBusy && state->enabled.load()) {
++			TryGlobalConfigGuard configGuard;
++			if (!configGuard.acquired) return;
++			std::unique_lock<std::recursive_mutex> startupLock(Services().plannerMutex, std::try_to_lock);
++			if (!startupLock.owns_lock() || state->startupStarted) return;
++			// One explicit loading boundary on the actual Present owner. GPU
++			// objects cannot be made in the external launcher and handed across.
++			state->startupStarted = true;
++			const auto start = GetTickCount64(); auto lastCreation = start;
++			state->loadingWindow = true;
++			state->gpuLimits.operations = 16;
++			state->gpuLimits.milliseconds = 10;
++			while (state->enabled.load() && state == Current() &&
++				!(device->GetCreationFlags() & D3D11_CREATE_DEVICE_SINGLETHREADED)) {
++				const auto before = state->startupCreated;
++				PumpRuntimeImpl(device, epoch, realContext);
++				const auto now = GetTickCount64();
++				if (state->startupCreated != before) lastCreation = now;
++				if (now - start >= uint64_t(state->startupSeconds) * 1000 || FAILED(device->GetDeviceRemovedReason())) break;
++				if (state->resourceCursor >= state->resources.size() * 2 &&
++					state->shaderCursor >= state->shaders.size() * 2 &&
++					state->cursor >= state->files.size() && state->scheduler->PendingCount() == 0 &&
++					(!Services().planner || Services().planner->Queued() == 0) && now - lastCreation >= 150) break;
++				Sleep(1); // Yield to CPU snapshot workers; never busy-spin on disk.
++			}
++			state->loadingWindow = false; state->startupFinished = true;
++			state->scheduler->CancelPending();
++			if (Services().planner) Services().planner->CancelPending();
++			PublishProgress(state, epoch);
++			LogInfo("Startup GPU preparation: %llu objects in %llu ms; no further speculative uploads this generation\n",
++				static_cast<unsigned long long>(state->startupCreated), static_cast<unsigned long long>(GetTickCount64() - start));
++		} else PumpRuntimeImpl(device, epoch, realContext);
++	}
+ 	catch (...) {
+ 		// Cache/candidate failures never revoke the last-good explicit overlay.
+ 		// Only the legacy reload/device lifecycle invalidates that generation.
+@@ -2133,6 +2227,83 @@
+ 		std::shared_ptr<ID3D11Device> device(rawDevice, [](ID3D11Device* p) { p->Release(); });
+ 		std::shared_ptr<ID3D11DeviceContext> context(rawContext, [](ID3D11DeviceContext* p) { p->Release(); });
+         {
++            // Exercise the real startup Pump and legacy first-use path on WARP.
++            // Equal-file declarations must own different GPU storage, even when
++            // the surrounding command graph cannot prove global immutability.
++            auto previous = Current();
++            auto startup = std::make_shared<RuntimeState>();
++            startup->mode = PreparationMode::PreparedProfile;
++            startup->startupGpu = true; startup->startupSeconds = 2;
++            startup->generation = ++Services().nextGeneration;
++            startup->cpuLimits.cpuBytes = 16 * MiB;
++            startup->cpuLimits.maxAssetBytes = MiB;
++            startup->gpuBytes = 4 * MiB;
++            startup->scheduler = std::make_shared<PreparationScheduler>(startup->cpuLimits);
++            startup->monitor.reset(new ChangeMonitor());
++            if (!startup->monitor->Start({root}, {}, [owned = startup.get()](const ReconcileRequest& request) {
++                std::lock_guard<std::mutex> lock(owned->pendingMutex);
++                owned->pending = request; owned->hasPending = true;
++            })) return __LINE__;
++            // Production starts unverified until the initial reconcile callback.
++            startup->sourceToken = 0;
++            startup->enabled = true;
++            CustomResource a, b, missing;
++            for (auto* resource : {&a, &b, &missing}) {
++                resource->filename = root + L"runtime-buffer.bin";
++                resource->override_type = CustomResourceType::BUFFER;
++                resource->bind_flags = D3D11_BIND_VERTEX_BUFFER;
++                resource->preparation_known_read = true;
++            }
++            startup->resources = {&a, &b}; startup->files = {a.filename};
++            startup->profile.emplace(&a, ProfileEntry()); startup->profile.emplace(&b, ProfileEntry());
++            startup->resourceIds[&a] = L"ResourceA"; startup->resourceIds[&b] = L"ResourceB";
++            startup->resourceIds[&missing] = L"ResourceMissing";
++            startup->totalAssets = 2;
++            std::atomic_store(&Services().state, startup);
++            const auto epoch = AllocateDeviceEpoch();
++            PumpRuntime(device.get(), epoch, context.get());
++            if (!startup->startupFinished || startup->loadingWindow || startup->startupCreated != 2) {
++                fprintf(stderr, "Startup failure: finished=%d window=%d created=%llu enabled=%d failed=%d current=%d cpu=%zu pending=%zu cursor=%zu resources=%zu planner=%d\n",
++                    int(startup->startupFinished.load()), int(startup->loadingWindow), (unsigned long long)startup->startupCreated,
++                    int(startup->enabled.load()), int(startup->failed.load()), int(SourcesCurrent(startup)), startup->scheduler->ResidentBytes(),
++                    startup->scheduler->PendingCount(), startup->cursor, startup->resourceCursor, int(bool(Services().planner)));
++                for (const auto& entry : startup->profile) fprintf(stderr, "Profile: cpu=%d compat=%d reason=%s\n", int(entry.second.cpuReady), int(entry.second.compatibility), entry.second.reason.c_str());
++                return __LINE__;
++            }
++            auto pa = startup->profile.at(&a).pinnedGpu.lock(), pb = startup->profile.at(&b).pinnedGpu.lock();
++            if (!pa || !pb || !pa->resource || pa->resource == pb->resource) return __LINE__;
++            b.bind_flags = D3D11_BIND_FLAG(D3D11_BIND_VERTEX_BUFFER | D3D11_BIND_INDEX_BUFFER);
++            if (TryUsePreparedResource(b, device.get()) || Services().planner->Queued()) return __LINE__;
++            b.bind_flags = D3D11_BIND_VERTEX_BUFFER;
++            HANDLE exclusive = CreateFileW(a.filename.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, 0, nullptr);
++            if (exclusive == INVALID_HANDLE_VALUE) return __LINE__;
++            a.Substantiate(device.get(), D3D11_BIND_VERTEX_BUFFER, D3D11_RESOURCE_MISC_FLAG(0));
++            b.Substantiate(device.get(), D3D11_BIND_VERTEX_BUFFER, D3D11_RESOURCE_MISC_FLAG(0));
++            CloseHandle(exclusive);
++            if (a.resource != pa->resource || b.resource != pb->resource || a.resource == b.resource) return __LINE__;
++            const unsigned char altered[16] = {};
++            context->UpdateSubresource(a.resource, 0, nullptr, altered, 0, 0);
++            D3D11_BUFFER_DESC desc{}; static_cast<ID3D11Buffer*>(b.resource)->GetDesc(&desc);
++            desc.Usage = D3D11_USAGE_STAGING; desc.BindFlags = 0; desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
++            ID3D11Buffer* readback = nullptr;
++            if (FAILED(device->CreateBuffer(&desc, nullptr, &readback))) return __LINE__;
++            std::shared_ptr<ID3D11Buffer> staging(readback, [](ID3D11Buffer* p) {p->Release();});
++            context->CopyResource(readback, b.resource);
++            D3D11_MAPPED_SUBRESOURCE mapped{};
++            if (FAILED(context->Map(readback, 0, D3D11_MAP_READ, 0, &mapped))) return __LINE__;
++            const bool independent = memcmp(mapped.pData, "0123456789abcdef", 16) == 0;
++            context->Unmap(readback, 0);
++            if (!independent || TryUsePreparedResource(missing, device.get())) return __LINE__;
++            const auto created = startup->startupCreated;
++            for (unsigned frame = 0; frame < 100; ++frame) PumpRuntime(device.get(), epoch, context.get());
++            if (startup->startupCreated != created || Services().planner->Queued()) return __LINE__;
++            RetireRuntimeDevice(device.get());
++            if (TryUsePreparedResource(missing, device.get())) return __LINE__;
++            startup->enabled = false; startup->monitor->Stop(); startup->scheduler->Stop();
++            std::atomic_store(&Services().state, previous);
++            fprintf(stderr, "Startup GPU fixture: two distinct resources; first-use reuses exact objects with file locked; alias mutation isolated; 100 subsequent Presents create zero objects\n");
++        }
++        {
+             // Invalid encoded bytes deliberately make any accidental WIC decode
+             // fail. The private texture must contain the prepared pixel instead.
+             PreparedAsset asset;
+--- a/DirectX11/ModLoading/PreparationPlanner.h
++++ b/DirectX11/ModLoading/PreparationPlanner.h
+@@ -147,6 +147,10 @@
+ 	bool SingleThreadedDevice() const { return singleThreaded_; }
+ 	bool DriverConcurrentCreates() const { return concurrentCreates_; }
+ 	void SetSafetyHeadroom(uint64_t bytes);
++	// Drop pending uploads and reclaim only cache-owned, unleased objects.
++	void CancelPending();
++	bool UnderMemoryPressure() const;
++	void EvictUnused();
+ private:
+ 	struct QueuedRequest {
+ 		GpuPreparationRequest request;
+--- a/DirectX11/ModLoading/PreparationPlanner.cpp
++++ b/DirectX11/ModLoading/PreparationPlanner.cpp
+@@ -676,6 +676,20 @@
+ 	}
+ 	return result;
+ }
++void PreparationPlanner::CancelPending() {
++	if (!OnOwner()) return;
++	queue_.clear(); queuedBytes_ = 0; queuedShaderBytecodeBytes_ = 0;
++	budget_ = MemoryBudgetController(128ull * 1024 * 1024, safetyHeadroom_);
++}
++bool PreparationPlanner::UnderMemoryPressure() const {
++	if (!OnOwner()) return false;
++	const auto sample = QueryBudget();
++	return sample.available && (sample.currentUsage >= sample.budget ||
++		safetyHeadroom_ > sample.budget - sample.currentUsage);
++}
++void PreparationPlanner::EvictUnused() {
++	if (OnOwner()) cache_.EvictInactive(UINT64_MAX);
++}
+ bool PreparationPlanner::Protect(const DeviceResourceKey& key) {
+ 	if (!device_ || !OnOwner()) return false;
+ 	const auto resolved = resolvedKeys_.find(key);
+--- a/DirectX11/ModLoading/PreparationScheduler.h
++++ b/DirectX11/ModLoading/PreparationScheduler.h
+@@ -26,6 +26,9 @@
+ 	bool ConfigureDiskCache(const std::wstring &directory,
+ 							size_t budgetBytes = size_t(1024) * 1024 * 1024);
+ 	void CancelBefore(Generation generation);
++	// End a startup pass without invalidating already verified snapshots.
++	void CancelPending();
++	size_t PendingCount();
+ 	void Stop();
+ 	size_t ResidentBytes() const {
+ 		return cache_.ResidentBytes();
+--- a/DirectX11/ModLoading/PreparationScheduler.cpp
++++ b/DirectX11/ModLoading/PreparationScheduler.cpp
+@@ -144,6 +144,14 @@
+ 		if (worker.joinable())
+ 			worker.join();
+ 	workers_.clear();
++}
++void PreparationScheduler::CancelPending() {
++	std::lock_guard<std::mutex> lock(mutex_);
++	CancelQueued();
++}
++size_t PreparationScheduler::PendingCount() {
++	std::lock_guard<std::mutex> lock(mutex_);
++	return pending_.size();
+ }
+ void PreparationScheduler::Worker() {
+ #ifdef _WIN32

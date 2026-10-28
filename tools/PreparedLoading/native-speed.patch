@@ -1,0 +1,492 @@
+--- a/DirectX11/IniHandler.cpp
++++ b/DirectX11/IniHandler.cpp
+@@ -5607,7 +5607,8 @@
+ 	InsertBuiltInIniSections();
+ 	ModLoading::LoadTrace::Get().SetCommandListTracing(
+ 		GetIniBool(L"Logging", L"mod_load_trace_commands", false, NULL));
+-	if (!ModLoading::ConfigureLoadTrace(GetIniBool(L"Logging", L"mod_load_trace", false, NULL)))
++	if (!ModLoading::ConfigureLoadTrace(GetIniBool(L"Logging", L"mod_load_trace", false, NULL),
++		static_cast<uint32_t>((std::max)(0, (std::min)(540, GetIniInt(L"Logging", L"mod_load_trace_seconds", 0, NULL))))))
+ 		LogOverlay(LOG_WARNING, "Mod-load trace control failed or export is still active.\n");
+ 
+ 	// Unbuffered logging to remove need for fflush calls, and r/w access to make it easy
+--- a/DirectX11/ModLoading/ChangeMonitor.cpp
++++ b/DirectX11/ModLoading/ChangeMonitor.cpp
+@@ -140,6 +140,7 @@
+ struct RootWatch {
+ 	std::wstring root;
+ 	std::wstring parent;
++	std::wstring shortRoot; // Capture before rename/removal makes the alias unresolvable.
+ 	std::unique_ptr<Watch> tree;
+ 	std::unique_ptr<Watch> ancestor;
+ 	bool attemptedTree = false;
+@@ -164,8 +165,16 @@
+ 			const auto slash = root.find_last_of(L"\\/");
+ 			RootWatch item;
+ 			item.root = root;
++			wchar_t alias[32768] = {};
++			const DWORD aliasLength = GetShortPathNameW(root.c_str(), alias, 32768);
+ 			if (slash != std::wstring::npos)
+ 				item.parent = root.substr(0, slash + (slash == 2 ? 1 : 0));
++			if (aliasLength && aliasLength < 32768) {
++				const std::wstring shortPath(alias, aliasLength);
++				const auto shortSlash = shortPath.find_last_of(L"\\/");
++				if (shortSlash != std::wstring::npos && slash != std::wstring::npos)
++					item.shortRoot = root.substr(0, slash + 1) + shortPath.substr(shortSlash + 1);
++			}
+ 			roots.push_back(std::move(item));
+ 		}
+ 		uint64_t retryAt = 0;
+@@ -220,7 +229,7 @@
+ 						const std::wstring path = ptr->directory + (ptr->directory.back() == L'\\' ? L"" : L"\\") + std::wstring(event->FileName, event->FileNameLength / sizeof(wchar_t));
+ 						if (parent) {
+ 							const auto resolved = ResolveNotificationPath(path);
+-							if (event->Action != FILE_ACTION_MODIFIED && (resolved.unresolved || Same(resolved.path, root.root))) {
++							if (event->Action != FILE_ACTION_MODIFIED && (Same(resolved.path, root.root) || (!root.shortRoot.empty() && Same(path, root.shortRoot)))) {
+ 								replaced = true;
+ 								state.Notify(ChangeKind::RootReplaced, root.root, Now());
+ 							}
+--- a/DirectX11/ModLoading/CpuAssetCache.cpp
++++ b/DirectX11/ModLoading/CpuAssetCache.cpp
+@@ -31,6 +31,19 @@
+ 	std::lock_guard<std::mutex> lock(mutex_);
+ 	capacity_ = capacity;
+ 	MakeRoom(0);
++}
++bool CpuAssetCache::ReserveUnused(size_t bytes, Generation minimum) {
++	std::lock_guard<std::mutex> lock(mutex_);
++	// Retired generations cannot satisfy a current lookup. Reclaim them once
++	// unpinned, while still accounting for old snapshots held by live callers.
++	for (auto it = entries_.begin(); it != entries_.end();)
++		if (it->first.second < minimum && Unpinned(it->second.asset)) {
++			resident_ -= it->second.asset->ByteSize();
++			it = entries_.erase(it);
++		} else ++it;
++	if (bytes > capacity_ || resident_ > capacity_ - bytes || reserved_ > capacity_ - bytes - resident_) return false;
++	reserved_ += bytes;
++	return true;
+ }
+ bool CpuAssetCache::Reserve(size_t bytes) {
+ 	std::lock_guard<std::mutex> lock(mutex_);
+--- a/DirectX11/ModLoading/CpuAssetCache.h
++++ b/DirectX11/ModLoading/CpuAssetCache.h
+@@ -8,6 +8,8 @@
+ 	explicit CpuAssetCache(size_t capacity);
+ 	void SetCapacity(size_t capacity);
+ 	bool Reserve(size_t bytes);
++	// Speculative work must not evict useful resident assets merely to reserve scratch.
++	bool ReserveUnused(size_t bytes, Generation minimum = 0);
+ 	void ReleaseReservation(size_t bytes);
+ 	bool Publish(std::shared_ptr<const PreparedAsset> asset, size_t reservation);
+ 	std::shared_ptr<const PreparedAsset> Find(const std::wstring& path, Generation generation);
+--- a/DirectX11/ModLoading/PreparationScheduler.cpp
++++ b/DirectX11/ModLoading/PreparationScheduler.cpp
+@@ -30,7 +30,7 @@
+ PreparationScheduler::~PreparationScheduler() {
+ 	Stop();
+ }
+-bool PreparationScheduler::Enqueue(const std::wstring &path, Generation generation, int priority) {
++bool PreparationScheduler::Enqueue(const std::wstring &path, Generation generation, int priority, bool speculative) {
+ 	if (path.empty() || path.size() > 32767)
+ 		return false;
+ 	std::lock_guard<std::mutex> lock(mutex_);
+@@ -41,14 +41,17 @@
+ 		return false;
+ 	if (cache_.Find(path, generation) || pending_.count(key))
+ 		return true;
+-	if (pending_.size() >= limits_.maxQueued || !cache_.Reserve(reservation_))
++	if (speculative && (attempted_.count(key) || attempted_.size() >= 4096)) return false;
++	if (pending_.size() >= limits_.maxQueued || !(speculative ? cache_.ReserveUnused(reservation_, minimum_) : cache_.Reserve(reservation_)))
+ 		return false;
+ 	try {
++		if (speculative) attempted_.insert(key);
+ 		pending_.insert(key);
+ 		queue_.push_back(
+ 			Job{path, generation, priority, ++order_, limits_.maxAssetBytes, reservation_});
+ 	} catch (...) {
+ 		pending_.erase(key);
++		if (speculative) attempted_.erase(key);
+ 		cache_.ReleaseReservation(reservation_);
+ 		return false;
+ 	}
+@@ -71,6 +74,7 @@
+ void PreparationScheduler::CancelQueued() {
+ 	for (const auto &job : queue_) {
+ 		pending_.erase({job.path, job.generation});
++		attempted_.erase({job.path, job.generation});
+ 		cache_.ReleaseReservation(job.reservation);
+ 	}
+ 	queue_.clear();
+@@ -85,6 +89,7 @@
+ 		minimum_ = (std::max)(minimum_, minimum);
+ 		CancelQueued();
+ 		compatibility_.clear();
++		attempted_.clear();
+ 		limits_ = limits;
+ 		reservation_ = Reservation(limits);
+ 		cache_.SetCapacity(limits.cpuBytes);
+@@ -113,6 +118,8 @@
+ void PreparationScheduler::CancelBefore(Generation generation) {
+ 	std::lock_guard<std::mutex> lock(mutex_);
+ 	minimum_ = (std::max)(minimum_, generation);
++	for (auto it = attempted_.begin(); it != attempted_.end();)
++		if (it->second < minimum_) it = attempted_.erase(it); else ++it;
+ 	for (auto it = compatibility_.begin(); it != compatibility_.end();)
+ 		if (it->first.second < minimum_)
+ 			it = compatibility_.erase(it);
+--- a/DirectX11/ModLoading/PreparationScheduler.h
++++ b/DirectX11/ModLoading/PreparationScheduler.h
+@@ -16,7 +16,7 @@
+ 	PreparationScheduler(const PreparationScheduler &) = delete;
+ 	PreparationScheduler &operator=(const PreparationScheduler &) = delete;
+ 	// True includes duplicate or already-ready work. False is a bounded admission miss.
+-	bool Enqueue(const std::wstring &path, Generation generation, int priority = 0);
++	bool Enqueue(const std::wstring &path, Generation generation, int priority = 0, bool speculative = false);
+ 	std::shared_ptr<const PreparedAsset> TryGet(const std::wstring &path, Generation generation);
+ 	// Empty means no recorded compatibility exclusion; performs no file I/O.
+ 	std::string CompatibilityReason(const std::wstring &path, Generation generation);
+@@ -56,6 +56,7 @@
+ 	std::vector<std::thread> workers_;
+ 	std::vector<Job> queue_;
+ 	std::set<std::pair<std::wstring, Generation>> pending_;
++	std::set<std::pair<std::wstring, Generation>> attempted_;
+ 	std::map<std::pair<std::wstring, Generation>, std::string> compatibility_;
+ 	Generation minimum_ = 0;
+ 	uint64_t order_ = 0;
+--- a/DirectX11/ModLoading/Runtime.cpp
++++ b/DirectX11/ModLoading/Runtime.cpp
+@@ -1162,7 +1162,7 @@
+ }
+ void ObservePreparedResource(CustomResource* original, DrawCallInfo* draw) {
+ 	if (!original || !draw || runtimeBusy) return;
+-	auto state = Current(); if (!state || !state->enabled.load()) return;
++	auto state = Current(); if (!state || !state->enabled.load() || !state->adaptiveLearning) return;
+ 	auto& service = Services();
+ 	std::unique_lock<std::recursive_mutex> lock(service.plannerMutex, std::try_to_lock);
+ 	if (!lock.owns_lock() || service.owner != std::this_thread::get_id()) return;
+@@ -1268,7 +1268,7 @@
+ 		state->generalCpuBytes = state->generalEnabled ? (std::min)(configuredCpu / 2, 1024 * MiB) : 0;
+ 		const uint64_t generalReserved = (std::max)(state->generalCpuBytes, oldGeneral);
+ 		const uint64_t partitionCpu = generalReserved < configuredCpu ? configuredCpu - generalReserved : 0;
+-		state->shaderBytes = (std::min)(partitionCpu / 4, 64 * MiB);
++		state->shaderBytes = state->gpuEnabled ? (std::min)(partitionCpu / 4, 64 * MiB) : 0;
+ 		// The shared refresh bank also covers ordinary GPU preparation scratch.
+ 		state->refreshBytes = state->refreshEnabled || state->gpuEnabled ?
+ 			(std::min)(partitionCpu / 4, 64 * MiB) : 0;
+@@ -1329,7 +1329,8 @@
+ 		}
+ 		ConfigCompiler compiler(Services().configCache);
+ 		auto previous = Current();
+-		state->config = compiler.Build(manifest, previous ? previous->config : nullptr,
++		if (state->gpuEnabled || state->refreshEnabled || state->generalEnabled)
++			state->config = compiler.Build(manifest, previous ? previous->config : nullptr,
+ 			{state->generation.load(), 0, state->generation.load()}, false);
+ 		std::set<std::wstring> files, roots;
+ 		const auto ownOutput = OwnOutputDirectory();
+@@ -1391,7 +1392,7 @@
+ 		// view, or unclassified command may create objects outside declarations.
+ 		// Such a closure is an explicit compatibility entry, never whole-profile
+ 		// Ready merely because its file-backed subset happens to be prepared.
+-		state->resourceSharingProven = KnownPreparationCommandClosure();
++		state->resourceSharingProven = state->gpuEnabled && KnownPreparationCommandClosure();
+ 		if (state->refreshEnabled && state->resourceSharingProven)
+ 			for (const auto& binding : state->refreshBindings) {
+ 				const auto resource = customResources.find(binding.resourceId);
+@@ -1436,7 +1437,7 @@
+ 		}
+ 		if (state->refreshEnabled && service.modulePinned && !service.refreshWorker)
+ 			service.refreshWorker = new RefreshBuildWorker();
+-		ConfigureWorkingSet(*state);
++		if (state->adaptiveLearning || state->generalEnabled) ConfigureWorkingSet(*state);
+ 		if (state->generalEnabled && service.modulePinned && !state->generalAdmissionBlocked) {
+ 			wchar_t workingDirectory[32768] = {};
+ 			const DWORD length = GetCurrentDirectoryW(_countof(workingDirectory), workingDirectory);
+@@ -1593,7 +1594,7 @@
+ 	// available; never create speculative children for it.
+ 	if (!state->gpuBytes || (device->GetCreationFlags() & D3D11_CREATE_DEVICE_SINGLETHREADED)) {
+ 		for (size_t work = 0; work < 8 && !state->files.empty(); ++work)
+-			state->scheduler->Enqueue(state->files[state->cursor++ % state->files.size()], state->generation);
++			state->scheduler->Enqueue(state->files[state->cursor++ % state->files.size()], state->generation, 0, true);
+ 		for (size_t work = 0; work < 8 && !state->resources.empty(); ++work) {
+ 			auto* resource = state->resources[state->resourceCursor++ % state->resources.size()];
+ 			const auto tracked = state->profile.find(resource);
+@@ -1630,7 +1631,7 @@
+ 	// enforce their own memory limits; no draw executes just to discover work.
+ 	for (size_t work = 0; work < 8 && !state->files.empty(); ++work) {
+ 		const auto& file = state->files[state->cursor++ % state->files.size()];
+-		state->scheduler->Enqueue(file, state->generation);
++		state->scheduler->Enqueue(file, state->generation, 0, true);
+ 	}
+ 	auto batch = std::make_shared<ConfigGeneration>();
+ 	batch->id = state->generation;
+@@ -1638,6 +1639,7 @@
+ 	batch->config = state->config;
+ 	for (size_t work = 0; work < 8 && !state->resources.empty(); ++work) {
+ 		auto& resource = *state->resources[state->resourceCursor++ % state->resources.size()];
++		if (resource.substantiated && resource.resource) continue;
+ 		const auto tracked = state->profile.find(&resource);
+ 		if (tracked == state->profile.end()) continue;
+ 		auto& progress = tracked->second;
+--- a/DirectX11/ModLoading/SnapshotIO.cpp
++++ b/DirectX11/ModLoading/SnapshotIO.cpp
+@@ -7,6 +7,8 @@
+ #define NOMINMAX
+ #endif
+ #include <Windows.h>
++#include <bcrypt.h>
++#pragma comment(lib, "bcrypt.lib")
+ #else
+ #include <sys/stat.h>
+ #include <fcntl.h>
+@@ -245,6 +247,16 @@
+ }
+ } // namespace
+ SourceDigest HashBytes(const uint8_t *bytes, size_t size) {
++#if defined(_WIN32) && !defined(MODLOADING_PORTABLE_SHA)
++    // Identical SHA-256 digest via Windows' optimized provider. Fall back to
++    // the portable implementation if unavailable; no verification is skipped.
++    if (size <= (std::numeric_limits<ULONG>::max)()) {
++        SourceDigest digest{};
++        if (BCryptHash(BCRYPT_SHA256_ALG_HANDLE, nullptr, 0,
++            const_cast<PUCHAR>(bytes), static_cast<ULONG>(size),
++            digest.data(), static_cast<ULONG>(digest.size())) >= 0) return digest;
++    }
++#endif
+ 	Sha s;
+ 	s.Add(bytes, size);
+ 	return s.End();
+@@ -282,12 +294,12 @@
+ 			return false;
+ 		}
+ 		SourceDigest digest = HashBytes(bytes->data(), bytes->size());
+-		// A second pass catches same-size writes with preserved timestamps, including on POSIX.
++		// Compare the second pass directly with the immutable first-pass bytes.
++		// This retains same-size/timestamp rewrite detection without a second SHA pass.
+ 		if (!h.Rewind()) {
+ 			error = "source seek failed";
+ 			return false;
+ 		}
+-		Sha check;
+ 		uint8_t block[65536];
+ 		offset = 0;
+ 		while (offset < bytes->size()) {
+@@ -296,10 +308,12 @@
+ 				error = "source changed";
+ 				return false;
+ 			}
+-			check.Add(block, count);
++			if (std::memcmp(bytes->data() + offset, block, count)) {
++				error = "source changed"; return false;
++			}
+ 			offset += count;
+ 		}
+-		if (check.End() != digest || !h.Identity(after) || !(before == after)) {
++		if (!h.Identity(after) || !(before == after)) {
+ 			error = "source changed";
+ 			return false;
+ 		}
+--- a/DirectX11/ModLoading/TraceControl.cpp
++++ b/DirectX11/ModLoading/TraceControl.cpp
+@@ -76,6 +76,9 @@
+ 			if (!output) { failed = true; reason = "write_failure"; StopOwnedCapture(trace, session); }
+ 			const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+ 				std::chrono::steady_clock::now() - started).count();
++			if (limits.captureMilliseconds && static_cast<std::uint64_t>(elapsed) >= limits.captureMilliseconds && trace.CaptureSession() == session) {
++				reason = "scheduled_stop"; trace.RequestEndCapture(session);
++			}
+ 			if (static_cast<std::uint64_t>(elapsed) >= limits.maximumMilliseconds) {
+ 				failed = true; reason = "time_limit"; StopOwnedCapture(trace, session);
+ 			}
+@@ -115,8 +118,9 @@
+ namespace {
+ std::atomic<bool> exporting(false);
+ std::atomic_flag configureLock = ATOMIC_FLAG_INIT;
+-struct WorkerArguments { HMODULE module; std::uint64_t session; };
++struct WorkerArguments { HMODULE module; std::uint64_t session; std::uint32_t seconds; };
+ WorkerArguments arguments; // protected until exporting returns false
++bool scheduledCaptureStarted = false; // configureLock; one timed experiment per process
+ 
+ DWORD WINAPI ExportWorker(void* parameter)
+ {
+@@ -134,7 +138,8 @@
+ 					+ L"-" + std::to_wstring(args.session) + L"-" + std::to_wstring(GetTickCount64()) + L".csv";
+ 				std::ofstream output(filename.c_str(), std::ios::binary | std::ios::out | std::ios::trunc);
+ 				if (output) {
+-					complete = StreamLoadTraceCapture(output, args.session);
++					LoadTraceStreamLimits limits; limits.captureMilliseconds = uint64_t(args.seconds) * 1000;
++					complete = StreamLoadTraceCapture(output, args.session, limits);
+ 					output.close();
+ 					complete = complete && !output.fail();
+ 				}
+@@ -148,7 +153,7 @@
+ }
+ }
+ 
+-bool ConfigureLoadTrace(bool enabled) noexcept
++bool ConfigureLoadTrace(bool enabled, std::uint32_t captureSeconds) noexcept
+ {
+ 	// Configuration calls may overlap, but never wait while holding loader lock.
+ 	if (configureLock.test_and_set(std::memory_order_acquire)) return false;
+@@ -164,6 +169,10 @@
+ 		// request changes the session token, so finalization cannot restart.
+ 		result = trace.CaptureSession() == arguments.session;
+ 	}
++	else if (captureSeconds && scheduledCaptureStarted) {
++		// F10 after the scheduled end must not create another unattended capture.
++		result = true;
++	}
+ 	else {
+ 		HMODULE module = NULL;
+ 		if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+@@ -172,10 +181,10 @@
+ 			trace.SetEnabled(true);
+ 			if (!trace.IsEnabled()) { FreeLibrary(module); result = false; }
+ 			else {
+-				arguments = {module, trace.CaptureSession()};
++				arguments = {module, trace.CaptureSession(), (std::min)(captureSeconds, uint32_t(540))};
+ 				exporting.store(true, std::memory_order_release);
+ 				HANDLE worker = CreateThread(NULL, 0, ExportWorker, &arguments, 0, NULL);
+-				if (worker) CloseHandle(worker);
++				if (worker) { CloseHandle(worker); if (captureSeconds) scheduledCaptureStarted = true; }
+ 				else {
+ 					trace.SetEnabled(false);
+ 					exporting.store(false, std::memory_order_release);
+@@ -189,6 +198,6 @@
+ 	return result;
+ }
+ #else
+-bool ConfigureLoadTrace(bool) noexcept { return false; }
++bool ConfigureLoadTrace(bool, std::uint32_t) noexcept { return false; }
+ #endif
+ }
+--- a/DirectX11/ModLoading/TraceControl.h
++++ b/DirectX11/ModLoading/TraceControl.h
+@@ -12,6 +12,7 @@
+ struct LoadTraceStreamLimits {
+ 	std::uint64_t maximumBytes = 64 * 1024 * 1024;
+ 	std::uint64_t maximumMilliseconds = 10 * 60 * 1000;
++	std::uint64_t captureMilliseconds = 0; // Optional scheduled graceful stop, zero disables.
+ 	std::uint32_t intervalMilliseconds = 100;
+ 	std::uint32_t finalAttempts = 10;
+ };
+@@ -23,5 +24,5 @@
+ // repeated enable is idempotent while active; enable during finalization fails.
+ // Already pinned scopes get a bounded worker-side grace window. No detach join.
+ // False means the request could not start; async file failures disable capture.
+-bool ConfigureLoadTrace(bool enabled) noexcept;
++bool ConfigureLoadTrace(bool enabled, std::uint32_t captureSeconds = 0) noexcept;
+ }
+--- a/tests/mod_loading/load_trace_streaming_test.cpp
++++ b/tests/mod_loading/load_trace_streaming_test.cpp
+@@ -186,6 +186,15 @@
+     assert(bounded.str().find("lossless=0") != std::string::npos);
+     Empty();
+     session = Begin();
++    // A scheduled capture closes admission gracefully and retains loss accounting.
++    limits = FastLimits(); limits.captureMilliseconds = 2;
++    trace.SetEnabled(true); const auto scheduledSession = trace.CaptureSession();
++    trace.RecordInstant(LoadStage::FileRead, 42, 7, 0);
++    std::ostringstream scheduled;
++    assert(StreamLoadTraceCapture(scheduled, scheduledSession, limits));
++    assert(scheduled.str().find("reason=scheduled_stop") != std::string::npos);
++    assert(scheduled.str().find("lossless=1") != std::string::npos);
++    session = Begin();
+     limits = FastLimits(); limits.maximumMilliseconds = 2;
+     std::ostringstream timed;
+     assert(!StreamLoadTraceCapture(timed, session, limits));
+--- a/tests/mod_loading/load_trace_streaming_windows_fixture.cpp
++++ b/tests/mod_loading/load_trace_streaming_windows_fixture.cpp
+@@ -11,6 +11,10 @@
+ extern "C" __declspec(dllexport) BOOL FixtureStart()
+ {
+     return ModLoading::ConfigureLoadTrace(true) ? TRUE : FALSE;
++}
++extern "C" __declspec(dllexport) BOOL FixtureTimedStart()
++{
++    return ModLoading::ConfigureLoadTrace(true, 1) ? TRUE : FALSE;
+ }
+ extern "C" __declspec(dllexport) void FixtureEmit(unsigned count)
+ {
+@@ -126,6 +130,28 @@
+         if (!complete) Sleep(20);
+     }
+     assert(complete);
++    BOOL (*timedStart)() = nullptr;
++    address = GetProcAddress(module, "FixtureTimedStart");
++    std::memcpy(&timedStart, &address, sizeof(timedStart));
++    assert(timedStart);
++    bool timedStarted = false;
++    for (unsigned attempt = 0; attempt < 100 && !timedStarted; ++attempt) {
++        timedStarted = timedStart() != FALSE;
++        if (!timedStarted) Sleep(20);
++    }
++    assert(timedStarted); emit(1);
++    bool timedComplete = false;
++    for (unsigned attempt = 0; attempt < 150 && !timedComplete; ++attempt) {
++        for (const auto& file : Files(directory)) {
++            const auto text = ReadClosed(file);
++            if (text.find("reason=scheduled_stop") != std::string::npos && text.find("lossless=1") != std::string::npos)
++                timedComplete = true;
++        }
++        if (!timedComplete) Sleep(20);
++    }
++    assert(timedComplete);
++    Sleep(100); assert(timedStart()); emit(1); Sleep(150);
++    assert(Files(directory).size() == 3); // Reload cannot restart the timed experiment.
+     assert(FreeLibrary(module));
+     // Worker module pin may briefly outlive its closed file. Retry deletion;
+     // never unload or join the worker from DllMain.
+--- a/tests/preparation_changes/change_monitor_windows_test.cpp
++++ b/tests/preparation_changes/change_monitor_windows_test.cpp
+@@ -112,6 +112,12 @@
+         Require(monitor.WaitUntilWatching(5000), "native watches armed before source proof");
+         queue->WaitAfter(0, "initial watch attachment"); queue->Quiet();
+         Require(!queue->Latest().iniChanged, "initial successful arm preserves asset preparation eligibility");
++        auto siblingBefore = queue->Count();
++        const auto unrelated = temp.path + L"\\launcher-config.tmp";
++        Write(unrelated, "temporary launcher settings");
++        Require(DeleteFileW(unrelated.c_str()) != FALSE, "delete unrelated sibling");
++        queue->Quiet();
++        Require(queue->Count() == siblingBefore, "unrelated deleted sibling must not invalidate mod preparation");
+         auto before = queue->Count(); Write(asset, "AAAA");
+         auto request = queue->WaitAfter(before, "create"); queue->Quiet(); request = queue->Latest();
+         Require(monitor.IsCurrent(request.token), "created token current");
+@@ -158,7 +164,15 @@
+         request = queue->Latest(); Require(monitor.IsCurrent(request.token), "replacement token current");
+         before = queue->Count(); Write(old + L"\\retired.bin", "OLD!");
+         std::this_thread::sleep_for(std::chrono::milliseconds(700));
+-        Require(queue->Count() == before && monitor.IsCurrent(request.token), "old root detached");
++        // IsCurrent deliberately fails while the worker owns its try-lock or
++        // drains an unrelated parent notification. Allow that bounded interval.
++        const auto quietDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
++        bool current = monitor.IsCurrent(request.token);
++        while (!current && std::chrono::steady_clock::now() < quietDeadline) {
++            std::this_thread::sleep_for(std::chrono::milliseconds(5));
++            current = monitor.IsCurrent(request.token);
++        }
++        Require(queue->Count() == before && current, "old root detached");
+         // Stop while a burst may still have pending overlapped IO / debounce.
+         Write(asset, "STOP"); monitor.Stop();
+         const auto stopped = queue->Count();
+--- a/tests/preparation_cpu/main.cpp
++++ b/tests/preparation_cpu/main.cpp
+@@ -133,6 +133,19 @@
+  for(unsigned i=0;i<12;++i){auto name=L"oversized-"+std::to_wstring(i);assert(negative.Enqueue(name,1));auto end=std::chrono::steady_clock::now()+std::chrono::seconds(5);while(negative.CompatibilityReason(name,1).empty()&&std::chrono::steady_clock::now()<end)std::this_thread::yield();assert(!negative.CompatibilityReason(name,1).empty());}
+  for(unsigned i=0;i<12;++i)assert(!negative.Enqueue(L"oversized-"+std::to_wstring(i),1));
+  assert(rejectedReads==12);negative.CancelBefore(2);assert(negative.Enqueue(L"oversized-0",2));negative.Stop();
++ // A small speculative cache must stop instead of cycling through a larger library.
++ std::atomic<unsigned> speculativeReads{0};
++ PreparationLimits boundedLimits;boundedLimits.cpuBytes=16;boundedLimits.maxAssetBytes=4;boundedLimits.workers=1;boundedLimits.maxQueued=2;
++ PreparationScheduler bounded(boundedLimits,[&](const std::wstring& name,size_t,SourceSnapshot& out,std::string&){++speculativeReads;out.path=name;out.bytes=std::make_shared<const std::vector<uint8_t>>(4,uint8_t(1));return true;});
++ for(unsigned i=0;i<3;++i){auto name=L"bounded-"+std::to_wstring(i);assert(bounded.Enqueue(name,1,0,true));auto end=std::chrono::steady_clock::now()+std::chrono::seconds(5);while(!bounded.TryGet(name,1)&&std::chrono::steady_clock::now()<end)std::this_thread::yield();assert(bounded.TryGet(name,1));}
++ for(unsigned pass=0;pass<20;++pass)for(unsigned i=0;i<12;++i)bounded.Enqueue(L"bounded-"+std::to_wstring(i),1,0,true);
++ assert(speculativeReads==3);assert(bounded.TryGet(L"bounded-0",1));
++ // Explicit demand may evict; speculation must not refill the evicted entry.
++ assert(bounded.Enqueue(L"demand",1,100));auto demandEnd=std::chrono::steady_clock::now()+std::chrono::seconds(5);while(!bounded.TryGet(L"demand",1)&&std::chrono::steady_clock::now()<demandEnd)std::this_thread::yield();assert(bounded.TryGet(L"demand",1));
++ for(unsigned i=0;i<3;++i)bounded.Enqueue(L"bounded-"+std::to_wstring(i),1,0,true);
++ assert(speculativeReads==4);bounded.CancelBefore(2);assert(bounded.Enqueue(L"bounded-0",2,0,true));
++ for(int i=0;i<1000&&!bounded.TryGet(L"bounded-0",2);++i)std::this_thread::sleep_for(std::chrono::milliseconds(1));
++ assert(bounded.TryGet(L"bounded-0",2));assert(speculativeReads==5);bounded.Stop();
+  bool rejected=false;try{limits.workers=0;PreparationScheduler invalid(limits);}catch(const std::invalid_argument&){rejected=true;}assert(rejected);
+  std::cout<<"CPU preparation checks passed\n";
+ }

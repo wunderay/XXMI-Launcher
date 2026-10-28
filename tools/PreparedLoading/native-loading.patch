@@ -1,0 +1,275 @@
+--- a/DirectX11/CommandList.cpp
++++ b/DirectX11/CommandList.cpp
+@@ -22,6 +22,10 @@
+ 
+ #include <D3DCompiler.h>
+ #include <mutex>
++#include <chrono>
++#ifdef XXMI_MODLOADING_TESTS
++#include <wrl/client.h>
++#endif
+ #include <locale.h>
+ 
+ 
+@@ -2473,9 +2477,60 @@
+ 
+ // This is similar to the other compile routines, but still distinct enough to
+ // get it's own function for now - TODO: Refactor out the common code
++// Normal startup/F10 use the same content/include-aware bytecode cache as
++// detached builds. Never trust adjacent timestamp-only binaries on this path.
++static bool TryCompileVerifiedLegacyShader(const wchar_t* source, char type,
++    UINT flags, const D3D_SHADER_MACRO* macros, ID3DBlob** bytecode, uint64_t objectId)
++{
++    try {
++        static ModLoading::ResourceRefreshCpuBudget budget(64 * 1024 * 1024);
++        static std::unique_ptr<ModLoading::ShaderDiskCache> cache([] {
++            HMODULE module = nullptr;
++            wchar_t path[32768] = {};
++            if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
++                reinterpret_cast<LPCWSTR>(&TryCompileVerifiedLegacyShader), &module))
++                return static_cast<ModLoading::ShaderDiskCache*>(nullptr);
++            const DWORD size = GetModuleFileNameW(module, path, 32768);
++            FreeLibrary(module);
++            if (!size || size >= 32768) return static_cast<ModLoading::ShaderDiskCache*>(nullptr);
++            std::wstring directory(path, size);
++            const auto slash = directory.find_last_of(L"\\/");
++            if (slash == std::wstring::npos) return static_cast<ModLoading::ShaderDiskCache*>(nullptr);
++            directory.resize(slash);
++            return new ModLoading::ShaderDiskCache(directory + L"\\.xxmi-shader-cache", 64 * 1024 * 1024, 512);
++        }());
++        if (!cache) return false;
++        wchar_t cwd[32768] = {};
++        const DWORD cwdSize = GetCurrentDirectoryW(32768, cwd);
++        if (!cwdSize || cwdSize >= 32768) return false;
++        ModLoading::ShaderCompileRequest request;
++        request.sourcePath = source; request.workingDirectory.assign(cwd, cwdSize);
++        char target[8] = {}, sourceName[MAX_PATH] = {};
++        _snprintf_s(target, sizeof(target), _TRUNCATE, "%cs_5_0", type);
++        const size_t sourceLength = wcstombs(sourceName, source, MAX_PATH);
++        if (sourceLength == size_t(-1) || sourceLength >= MAX_PATH) return false;
++        request.sourceName = sourceName; request.target = target; request.flags = flags;
++        request.recursiveIncludes = G->recursive_include;
++        for (auto macro = macros; macro && macro->Name; ++macro)
++            request.defines.emplace_back(macro->Name, macro->Definition ? macro->Definition : "");
++        ModLoading::ScopedLoadTrace trace(ModLoading::LoadStage::ShaderPreparation, objectId);
++        ModLoading::PreparedShaderBytecode prepared;
++        std::string error;
++        if (!ModLoading::PrepareD3DShader(request, budget, cache.get(), prepared, error)) return false;
++        const HRESULT result = D3DCreateBlob(prepared.bytecode.size(), bytecode);
++        trace.SetResult(result); trace.SetBytes(prepared.bytecode.size());
++        if (FAILED(result)) return false;
++        memcpy((*bytecode)->GetBufferPointer(), prepared.bytecode.data(), prepared.bytecode.size());
++        if (prepared.cacheHit)
++            ModLoading::LoadTrace::Get().RecordInstant(ModLoading::LoadStage::ShaderCacheHit, objectId, prepared.bytecode.size(), 0);
++        return true;
++    } catch (...) { return false; } // Original compiler remains the compatibility fallback.
++}
++
+ bool CustomShader::compile(char type, wchar_t *filename, const wstring *wname, const wstring *namespace_path)
+ {
+ 	ConfigReadScope configuration_scope;
++    const bool verifiedCache = GetIniBool(L"ModLoading", L"verified_shader_cache", false, nullptr);
+ 	wchar_t wpath[MAX_PATH], cache_path[MAX_PATH];
+ 	char apath[MAX_PATH];
+ 	HANDLE f;
+@@ -2597,6 +2652,9 @@
+         return false;
+     }
+ 
++    if (verifiedCache && TryCompileVerifiedLegacyShader(wpath, type, (UINT)compile_flags,
++        macros, ppBytecode, reinterpret_cast<uintptr_t>(this))) return false;
++
+ 	f = CreateFile(wpath, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+ 	if (f == INVALID_HANDLE_VALUE) {
+ 		LogOverlayW(LOG_WARNING, L"Shader not found: %ls\n", wpath);
+@@ -2617,7 +2675,7 @@
+ 		swprintf_s(cache_path, MAX_PATH, L"%s.%S.%x.bin", wpath, shaderModel, (UINT)compile_flags);
+ 
+ 	GetFileTime(f, NULL, NULL, &timestamp);
+-	if (load_cached_shader(timestamp, cache_path, ppBytecode)) {
++	if (!verifiedCache && load_cached_shader(timestamp, cache_path, ppBytecode)) {
+ 		CloseHandle(f);
+ 		return false;
+ 	}
+@@ -2666,7 +2724,7 @@
+ 		goto err;
+ 	}
+ 
+-	if (!IsDetachedConfigBuild() && G->CACHE_SHADERS) {
++	if (!verifiedCache && !IsDetachedConfigBuild() && G->CACHE_SHADERS) {
+ 		FILE *fw;
+ 
+ 		wfopen_ensuring_access(&fw, cache_path, L"wb");
+@@ -6696,6 +6754,109 @@
+ 	return DirectX::WIC_LOADER_FLAGS::WIC_LOADER_DEFAULT;
+ }
+ 
++// Keep DDS pixels, format, dimensions and mip levels unchanged. Separate
++// ordinary file IO from the driver upload; neither is measured by WIC decode.
++static HRESULT LoadDDSWithTrace(ID3D11Device* device, const std::wstring& filename,
++    unsigned bindFlags, unsigned miscFlags, bool forceSRGB, ID3D11Resource** resource, uint64_t objectId)
++{
++    std::unique_ptr<uint8_t[]> bytes;
++    DWORD size = 0;
++    {
++        ModLoading::ScopedLoadTrace read(ModLoading::LoadStage::FileRead, objectId);
++        HANDLE file = CreateFileW(filename.c_str(), GENERIC_READ, FILE_SHARE_READ,
++            nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
++        if (file == INVALID_HANDLE_VALUE) { const HRESULT hr = HRESULT_FROM_WIN32(GetLastError()); read.SetResult(hr); return hr; }
++        struct CloseFile { HANDLE value; ~CloseFile() { CloseHandle(value); } } close{file};
++        LARGE_INTEGER length = {};
++        if (!GetFileSizeEx(file, &length)) { const HRESULT hr = HRESULT_FROM_WIN32(GetLastError()); read.SetResult(hr); return hr; }
++        if (length.QuadPart < 128 || length.QuadPart > MAXDWORD) { read.SetResult(E_FAIL); return E_FAIL; }
++        size = static_cast<DWORD>(length.QuadPart);
++        bytes.reset(new (std::nothrow) uint8_t[size]);
++        if (!bytes) { read.SetResult(E_OUTOFMEMORY); return E_OUTOFMEMORY; }
++        DWORD got = 0;
++        if (!ReadFile(file, bytes.get(), size, &got, nullptr)) { const HRESULT hr = HRESULT_FROM_WIN32(GetLastError()); read.SetResult(hr); return hr; }
++        read.SetBytes(got);
++        if (got != size) { read.SetResult(E_FAIL); return E_FAIL; }
++        read.SetResult(S_OK);
++    }
++    ModLoading::ScopedLoadTrace create(ModLoading::LoadStage::GpuCreation, objectId);
++    const HRESULT hr = DirectX::CreateDDSTextureFromMemoryEx(device, bytes.get(), size, 0,
++        D3D11_USAGE_DEFAULT, bindFlags, 0, miscFlags, forceSRGB, resource, nullptr, nullptr);
++    create.SetResult(hr); create.SetBytes(size); return hr;
++}
++
++#ifdef XXMI_MODLOADING_TESTS
++extern "C" __declspec(dllexport) int WINAPI XXMI_TestLegacyLoading(const wchar_t* directory)
++{
++    if (!directory) return __LINE__;
++    const std::wstring root(directory), shader = root + L"\\legacy-cache.hlsl", include = root + L"\\legacy-value.hlsl";
++    auto write = [](const std::wstring& path, const std::string& text) {
++        FILE* file = _wfopen(path.c_str(), L"wb"); if (!file) return false;
++        const bool ok = fwrite(text.data(), 1, text.size(), file) == text.size(); fclose(file); return ok;
++    };
++    if (!write(include, "#define COLOR 0.25\n") || !write(shader,
++        "#include \"legacy-value.hlsl\"\nfloat4 main(float2 uv:TEXCOORD0):SV_Target {float v=uv.x; [unroll] for(int i=0;i<32;i++)v=sin(v*COLOR+i*0.01+AXIS); return float4(v,uv.y,0,1);}\n")) return __LINE__;
++    const int originalInclude = G->recursive_include; G->recursive_include = 1;
++    struct Restore { int value; ~Restore() { G->recursive_include = value; } } restore{originalInclude};
++    struct Blob { ID3DBlob* p = nullptr; ~Blob() { if (p) p->Release(); } } first, second, direct, changed, macro;
++    D3D_SHADER_MACRO defines[] = {{"AXIS", "1"}, {nullptr, nullptr}};
++    const UINT flags = D3DCOMPILE_OPTIMIZATION_LEVEL3;
++    auto& trace = ModLoading::LoadTrace::Get(); trace.SetEnabled(true);
++    if (!TryCompileVerifiedLegacyShader(shader.c_str(), 'p', flags, defines, &first.p, 101)) return __LINE__;
++    if (!TryCompileVerifiedLegacyShader(shader.c_str(), 'p', flags, defines, &second.p, 102)) return __LINE__;
++    if (FAILED(D3DCompileFromFile(shader.c_str(), defines, D3D_COMPILE_STANDARD_FILE_INCLUDE, "main", "ps_5_0", flags, 0, &direct.p, nullptr))) return __LINE__;
++    auto same = [](ID3DBlob* a, ID3DBlob* b) { return a && b && a->GetBufferSize() == b->GetBufferSize() && !memcmp(a->GetBufferPointer(), b->GetBufferPointer(), a->GetBufferSize()); };
++    if (!same(first.p, second.p) || !same(first.p, direct.p)) return __LINE__;
++    HANDLE file = CreateFileW(include.c_str(), GENERIC_READ | FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
++    if (file == INVALID_HANDLE_VALUE) return __LINE__;
++    FILETIME stamp = {}; GetFileTime(file, nullptr, nullptr, &stamp); CloseHandle(file);
++    if (!write(include, "#define COLOR 0.75\n")) return __LINE__;
++    file = CreateFileW(include.c_str(), FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
++    if (file == INVALID_HANDLE_VALUE) return __LINE__;
++    const BOOL restored = SetFileTime(file, nullptr, nullptr, &stamp); CloseHandle(file); if (!restored) return __LINE__;
++    if (!TryCompileVerifiedLegacyShader(shader.c_str(), 'p', flags, defines, &changed.p, 103) || same(first.p, changed.p)) return __LINE__;
++    defines[0].Definition = "2";
++    if (!TryCompileVerifiedLegacyShader(shader.c_str(), 'p', flags, defines, &macro.p, 104) || same(changed.p, macro.p)) return __LINE__;
++    trace.SetEnabled(false);
++    ModLoading::LoadTraceRecord rows[128]; size_t count = trace.Drain(rows, 128); bool hit = false;
++    for (size_t i = 0; i < count; ++i) if (rows[i].stage == ModLoading::LoadStage::ShaderCacheHit && rows[i].objectId == 102) hit = true;
++    if (!hit) return __LINE__;
++    using Clock = std::chrono::steady_clock;
++    const auto before = Clock::now();
++    for (int i = 0; i < 8; ++i) { Blob b; if (FAILED(D3DCompileFromFile(shader.c_str(), defines, D3D_COMPILE_STANDARD_FILE_INCLUDE, "main", "ps_5_0", flags, 0, &b.p, nullptr))) return __LINE__; }
++    const auto middle = Clock::now();
++    for (int i = 0; i < 8; ++i) { Blob b; if (!TryCompileVerifiedLegacyShader(shader.c_str(), 'p', flags, defines, &b.p, 0)) return __LINE__; }
++    const auto after = Clock::now();
++    printf("Verified legacy shader cache: 8 compiles %.3f ms; 8 warm hits %.3f ms; exact bytecode, include-content and macro invalidation passed\n",
++        std::chrono::duration<double, std::milli>(middle - before).count(), std::chrono::duration<double, std::milli>(after - middle).count());
++    // Exact DDS pixel readback through the production file-read/upload helper.
++    const std::wstring dds = root + L"\\trace-dds.dds";
++    uint32_t header[37] = {}; header[0]=0x20534444; header[1]=124; header[2]=0x100f;
++    header[3]=4; header[4]=4; header[5]=16; header[7]=1; header[19]=32; header[20]=4; header[21]=0x30315844;
++    header[27]=0x1000; header[32]=28; header[33]=3; header[35]=1;
++    std::string encoded(reinterpret_cast<const char*>(header), sizeof(header)); encoded.append(64, char(0xab));
++    if (!write(dds, encoded)) return __LINE__;
++    Microsoft::WRL::ComPtr<ID3D11Device> device; Microsoft::WRL::ComPtr<ID3D11DeviceContext> context;
++    if (FAILED(D3D11CreateDevice(nullptr,D3D_DRIVER_TYPE_WARP,nullptr,0,nullptr,0,D3D11_SDK_VERSION,&device,nullptr,&context))) return __LINE__;
++    Microsoft::WRL::ComPtr<ID3D11Resource> texture;
++    if (FAILED(LoadDDSWithTrace(device.Get(),dds,D3D11_BIND_SHADER_RESOURCE,0,false,&texture,0))) return __LINE__;
++    Microsoft::WRL::ComPtr<ID3D11Texture2D> typed; if (FAILED(texture.As(&typed))) return __LINE__;
++    D3D11_TEXTURE2D_DESC desc = {}; typed->GetDesc(&desc);
++    if(desc.Width!=4 || desc.Height!=4 || desc.MipLevels!=1 || desc.Format!=DXGI_FORMAT_R8G8B8A8_UNORM) return __LINE__;
++    desc.Usage=D3D11_USAGE_STAGING;desc.BindFlags=0;desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
++    Microsoft::WRL::ComPtr<ID3D11Texture2D> staging;
++    if(FAILED(device->CreateTexture2D(&desc,nullptr,&staging)))return __LINE__;
++    context->CopyResource(staging.Get(),typed.Get()); D3D11_MAPPED_SUBRESOURCE mapped={};
++    if(FAILED(context->Map(staging.Get(),0,D3D11_MAP_READ,0,&mapped)))return __LINE__;
++    bool pixels=true;for(size_t row=0;row<4;++row)for(size_t col=0;col<16;++col)
++        pixels=pixels && reinterpret_cast<const uint8_t*>(mapped.pData)[row*mapped.RowPitch+col]==0xab;
++    context->Unmap(staging.Get(),0); if(!pixels)return __LINE__;
++    if(!write(dds,"bad") || SUCCEEDED(LoadDDSWithTrace(device.Get(),dds,D3D11_BIND_SHADER_RESOURCE,0,false,&texture,0)))return __LINE__;
++    printf("DDS tracing: unchanged dimensions/format/mips and exact WARP pixels; malformed file rejected\n");
++    return 0;
++}
++#endif
++
+ void CustomResource::LoadFromFile(ID3D11Device *mOrigDevice1)
+ {
+ 	wstring ext;
+@@ -6743,10 +6904,13 @@
+ 	auto prepared = ModLoading::TryGetPreparedAsset(filename);
+ 	if (prepared && prepared->snapshot.bytes && !prepared->snapshot.bytes->empty()) {
+ 		const auto& bytes = *prepared->snapshot.bytes;
+-		if (!_wcsicmp(ext.c_str(), L".dds"))
++		if (!_wcsicmp(ext.c_str(), L".dds")) {
++            ModLoading::ScopedLoadTrace upload(ModLoading::LoadStage::GpuCreation, reinterpret_cast<uintptr_t>(this));
+ 			hr = DirectX::CreateDDSTextureFromMemoryEx(mOrigDevice1,
+ 				bytes.data(), bytes.size(), 0, D3D11_USAGE_DEFAULT, bind_flags, 0,
+ 				misc_flags, override_color_space == CustomColorSpace::SRGB, &resource, NULL, NULL);
++            upload.SetBytes(bytes.size()); upload.SetResult(hr);
++        }
+ 		else if (!ModLoading::TryCreateDecodedTexture(*prepared, *this, mOrigDevice1,
+             bind_flags, misc_flags, G->gForceDetectColorSpace, hr))
+ 			hr = DirectX::CreateWICTextureFromMemoryEx(mOrigDevice1,
+@@ -6755,10 +6919,8 @@
+ 					G->gForceDetectColorSpace), &resource, NULL);
+ 	} else if (!_wcsicmp(ext.c_str(), L".dds")) {
+ 		LogInfoW(L"Loading custom resource %s as DDS, bind_flags=0x%03x\n", filename.c_str(), bind_flags);
+-		hr = DirectX::CreateDDSTextureFromFileEx(mOrigDevice1,
+-				filename.c_str(), 0,
+-				D3D11_USAGE_DEFAULT, bind_flags, 0, misc_flags,
+-				override_color_space == CustomColorSpace::SRGB, &resource, NULL, NULL);
++        hr = LoadDDSWithTrace(mOrigDevice1, filename, bind_flags, misc_flags,
++            override_color_space == CustomColorSpace::SRGB, &resource, reinterpret_cast<uintptr_t>(this));
+ 	} else {
+ 		LogInfoW(L"Loading custom resource %s as WIC, bind_flags=0x%03x\n", filename.c_str(), bind_flags);
+ 		hr = DirectX::CreateWICTextureFromFileEx(mOrigDevice1,
+--- a/DirectX11/ModLoading/LoadTrace.h
++++ b/DirectX11/ModLoading/LoadTrace.h
+@@ -11,7 +11,7 @@
+ enum class LoadStage : std::uint8_t {
+ 	Discovery, FileRead, Decode, ShaderPreparation, GpuCreation, ViewCreation,
+ 	CommandList, ConfigReload, ReadinessWait, Activation, FirstCorrectFrame,
+-	FileLoad, Present
++	FileLoad, Present, ShaderCacheHit
+ };
+ 
+ enum class LoadTraceKind : std::uint8_t { Instant, Duration };
+--- a/DirectX11/ModLoading/LoadTrace.cpp
++++ b/DirectX11/ModLoading/LoadTrace.cpp
+@@ -27,6 +27,7 @@
+ 	case LoadStage::FirstCorrectFrame: return "first_correct_frame";
+ 	case LoadStage::FileLoad: return "file_load_combined";
+ 	case LoadStage::Present: return "present_cpu";
++	case LoadStage::ShaderCacheHit: return "shader_cache_hit";
+ 	}
+ 	return "unknown";
+ }
+--- a/tests/preparation_native_integration/host.cpp
++++ b/tests/preparation_native_integration/host.cpp
+@@ -41,6 +41,11 @@
+         return 7;
+     }
+     std::cout << "native integration: production worker, WARP preparation, migration, publication and first-use checks passed\n";
++    address = GetProcAddress(module, "XXMI_TestLegacyLoading");
++    std::memcpy(&test, &address, sizeof(test));
++    if (!test) return 8;
++    const int legacy_result = test(argv[2]);
++    if (legacy_result) { std::cerr << "legacy loading fixture failed at source line " << legacy_result << '\n'; return 9; }
+     // Process exit owns this isolated test DLL and its process-lifetime services.
+     return 0;
+ }

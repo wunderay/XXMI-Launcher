@@ -1,0 +1,111 @@
+{
+  "schema": "xxmi.campaign-source-inputs.v1",
+  "reconstruction_proven": false,
+  "files": [
+    {
+      "path": "tools/PreparedLoading/native.patch",
+      "sha256": "07898d8f53ba71439d70e5de9327cc5d90f3210a26eb13eb517d452ee7156fa7",
+      "bytes": 1092996
+    },
+    {
+      "path": "tools/PreparedLoading/native-speed.patch",
+      "sha256": "b7d1cf2c1380d9ffde325c367569924e3e6113f69c6e068368ab808fae578bb4",
+      "bytes": 25213
+    },
+    {
+      "path": "tools/PreparedLoading/native-loading.patch",
+      "sha256": "85ade7906e6c7e0255602153273db359f0f3c69594c99c08ff4a946c71697d27",
+      "bytes": 16579
+    },
+    {
+      "path": "tools/PreparedLoading/native-gpu-startup.patch",
+      "sha256": "d9932a38d9e5dcc66a082317c3c2ca8007fe20923c7073f6631c794a776ee4a6",
+      "bytes": 20364
+    },
+    {
+      "path": "tools/PreparedLoading/native-gpu-retention.patch",
+      "sha256": "2a249ff34ae23a21dfd5ac23c8535d6d13ed7f4223cab4db455837f49db6dfd2",
+      "bytes": 32250
+    },
+    {
+      "path": "tools/PreparedLoading/native-candidate.json",
+      "sha256": "18d546f743364fcd832c574be3640596f59b9bb8a7e0e06342ddb3771dba88d5",
+      "bytes": 407
+    },
+    {
+      "path": "tools/PreparedLoading/build-native-direct.py",
+      "sha256": "f8a2212b234192723191cb113241de5950af6be850e3b3389c24fc8bae8fc5a0",
+      "bytes": 5755
+    },
+    {
+      "path": "tools/PreparedLoading/build-native.ps1",
+      "sha256": "6e1192c9c2b560cd8d078d8b53295962b425024fb0c2156cc01004c39f767ae4",
+      "bytes": 13543
+    },
+    {
+      "path": "tools/PreparedLoading/capture-speed.py",
+      "sha256": "4c20fb7d4f878f05780189d626ebf3025e8aa6b926670025adc12d8bb6fdf96b",
+      "bytes": 14794
+    },
+    {
+      "path": "tools/PreparedLoading/test_capture_speed.py",
+      "sha256": "d41ea71d392f78fafbdedd030c7d62cafbd63246cf922f28a5c35cadfa68248a",
+      "bytes": 7411
+    },
+    {
+      "path": "tools/PreparedLoading/validate-speed.py",
+      "sha256": "c4b8f728f55e2815c7c74c9e75950699751765d488a5d024e281a7fc207dbc22",
+      "bytes": 4649
+    },
+    {
+      "path": "tools/PreparedLoading/benchmark-cpu.cpp",
+      "sha256": "f181f32c4cc335cb0098d1d26f325dfa65d28dae69f849f658a5cf6844a468f9",
+      "bytes": 4356
+    },
+    {
+      "path": "tools/PreparedLoading/probe-preparation-limits.cpp",
+      "sha256": "76fe6766a6d44913f7d36dc5ff8fe99c1af51fbe7c12209a5d72bc1b57fd6718",
+      "bytes": 6893
+    },
+    {
+      "path": "tools/PreparedLoading/LocalLauncher.cs",
+      "sha256": "f56939d6592435f9df4bc71dfdb02417b4f7dd2d7163e6093a5cb08a06275135",
+      "bytes": 58875
+    },
+    {
+      "path": "tools/PreparedLoading/ModelPreloader.cs",
+      "sha256": "739bfcc3cd0e15b439df66ac04ac581ac9bc5c282d3129ceadc50fe7b85da60f",
+      "bytes": 14834
+    },
+    {
+      "path": "tools/PreparedLoading/local-launcher.manifest",
+      "sha256": "7a8ca34861ac1fc94e81393cdef5d4173d391a83a4c4e211e2c25a8cf52064d3",
+      "bytes": 842
+    },
+    {
+      "path": "tools/PreparedLoading/COMPLETION-STATUS.md",
+      "sha256": "0e56abfc7cf911e59e3eedc593112a81b4a122430ae9b56162610b0ed28ce220",
+      "bytes": 25454
+    },
+    {
+      "path": "tools/PreparedLoading/integration-evidence/native-history.bundle",
+      "sha256": "8855d980d1081f2b1cfc8a461b630d804f3905db06c01ca810811fa86801b63f",
+      "bytes": 380030
+    },
+    {
+      "path": "tools/PreparedLoading/integration-evidence/README.md",
+      "sha256": "4450bb3237f7759447ac10898a6cf6a03e63efb75c3a41623226107c6cccf7a6",
+      "bytes": 1165
+    },
+    {
+      "path": "development-builds/prepared-loading/BUILD-INFO.json",
+      "sha256": "77f1b1b55d3e2d362f902a5e05c25377a7db1e773733969f496b98c25943a403",
+      "bytes": 7881
+    },
+    {
+      "path": "tools/PreparedLoading/baseline/version.generated.h",
+      "sha256": "8c111be0b0e76b274a50d98de19ef0a1c24ad26732c10079b6d1c8c46ba16689",
+      "bytes": 213
+    }
+  ]
+}
