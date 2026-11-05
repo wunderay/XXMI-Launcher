@@ -1,0 +1,122 @@
+﻿{
+    "format":  1,
+    "started_utc":  "2026-10-26T05:10:19.4580689Z",
+    "artifact_url":  "https://raw.githubusercontent.com/wunderay/XXMI-Launcher/f4e0880ed38eb338de6caf8d474fcc666489d5a4/development-builds/installer/1202392c4aea/XXMI-Launcher-Installer-Online-v2.4.10.msi",
+    "expected_sha256":  "d6076f7200521a661b6f2d34d1759ab86a953dc7a2fb0e61343249d27e558781",
+    "actual_sha256":  "d6076f7200521a661b6f2d34d1759ab86a953dc7a2fb0e61343249d27e558781",
+    "postscan_sha256":  "d6076f7200521a661b6f2d34d1759ab86a953dc7a2fb0e61343249d27e558781",
+    "file_exists_after_scan":  true,
+    "download_blocked_or_failed":  false,
+    "outcome":  "no_detection",
+    "stage":  "scan",
+    "error":  null,
+    "status_before":  {
+                          "AMServiceEnabled":  true,
+                          "AMRunningMode":  "Normal",
+                          "AntivirusEnabled":  true,
+                          "RealTimeProtectionEnabled":  false,
+                          "AMEngineVersion":  "1.1.26090.9",
+                          "AMProductVersion":  "4.18.26090.9",
+                          "AntivirusSignatureVersion":  "1.461.156.0",
+                          "AntivirusSignatureLastUpdated":  "\/Date(1792694420000)\/",
+                          "AntivirusSignatureAge":  3,
+                          "DefenderSignaturesOutOfDate":  false
+                      },
+    "status_after":  {
+                         "AMServiceEnabled":  true,
+                         "AMRunningMode":  "Normal",
+                         "AntivirusEnabled":  true,
+                         "RealTimeProtectionEnabled":  false,
+                         "AMEngineVersion":  "1.1.26090.9",
+                         "AMProductVersion":  "4.18.26090.9",
+                         "AntivirusSignatureVersion":  "1.461.208.0",
+                         "AntivirusSignatureLastUpdated":  "\/Date(1792969336000)\/",
+                         "AntivirusSignatureAge":  0,
+                         "DefenderSignaturesOutOfDate":  false
+                     },
+    "status_at_scan":  {
+                           "AMServiceEnabled":  true,
+                           "AMRunningMode":  "Normal",
+                           "AntivirusEnabled":  true,
+                           "RealTimeProtectionEnabled":  false,
+                           "AMEngineVersion":  "1.1.26090.9",
+                           "AMProductVersion":  "4.18.26090.9",
+                           "AntivirusSignatureVersion":  "1.461.208.0",
+                           "AntivirusSignatureLastUpdated":  "\/Date(1792969336000)\/",
+                           "AntivirusSignatureAge":  0,
+                           "DefenderSignaturesOutOfDate":  false
+                       },
+    "cloud_settings_before":  {
+                                  "available":  true,
+                                  "settings":  {
+                                                   "MAPSReporting":  0,
+                                                   "SubmitSamplesConsent":  2,
+                                                   "DisableBlockAtFirstSeen":  true,
+                                                   "CloudBlockLevel":  0,
+                                                   "CloudExtendedTimeout":  0
+                                               },
+                                  "error":  null
+                              },
+    "cloud_settings_after":  {
+                                 "available":  true,
+                                 "settings":  {
+                                                  "MAPSReporting":  0,
+                                                  "SubmitSamplesConsent":  2,
+                                                  "DisableBlockAtFirstSeen":  true,
+                                                  "CloudBlockLevel":  0,
+                                                  "CloudExtendedTimeout":  0
+                                              },
+                                 "error":  null
+                             },
+    "detections_before":  [
+
+                          ],
+    "detections_after":  [
+
+                         ],
+    "new_detections":  [
+
+                       ],
+    "threat_names_from_output":  [
+
+                                 ],
+    "scanner":  {
+                    "path":  "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18.26090.9-0\\MpCmdRun.exe",
+                    "version":  "4.18.26090.9 (4df2f7dd1ad7282fa3437667daf210904670b7f3)",
+                    "sha256":  "c0c9670d63a8a7de9c0ef5ba58231826b0abee03c2b3ba6f858114d96ea12315",
+                    "signature_status":  "Valid",
+                    "signer":  "CN=Microsoft Windows Publisher, O=Microsoft Corporation, L=Redmond, S=Washington, C=US"
+                },
+    "signature_update":  {
+                             "arguments":  [
+                                               "-SignatureUpdate"
+                                           ],
+                             "exit_code":  0,
+                             "timed_out":  false,
+                             "stdout_file":  "signature-update.stdout.log",
+                             "stderr_file":  "signature-update.stderr.log"
+                         },
+    "scan":  {
+                 "arguments":  [
+                                   "-Scan",
+                                   "-ScanType",
+                                   "3",
+                                   "-File",
+                                   "\"D:\\a\\XXMI-Launcher\\XXMI-Launcher\\work\\defender-diagnostic\\original-installer.msi\"",
+                                   "-DisableRemediation"
+                               ],
+                 "exit_code":  0,
+                 "timed_out":  false,
+                 "stdout_file":  "scan.stdout.log",
+                 "stderr_file":  "scan.stderr.log"
+             },
+    "limits":  [
+                   "Diagnostic custom scan only; no safety or false-positive conclusion.",
+                   "DisableRemediation does not disable real-time protection; download/hash can be blocked or quarantined.",
+                   "Custom-scan detections may be absent from Get-MpThreatDetection; raw scanner output is retained.",
+                   "Before/after history may include unrelated runner activity; inspect resources before attribution.",
+                   "No MSI execution, payload extraction, manual third-party sample submission, or Defender configuration changes.",
+                   "Defender cloud protection/sample submission follows existing runner settings; these are queried, never changed."
+               ],
+    "finished_utc":  "2026-10-26T05:11:55.7128303Z"
+}

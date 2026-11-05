@@ -1,8 +1,10 @@
 # Original XXMI Launcher development MSI
 
-[Download the single installer](XXMI-Launcher-Installer-Online-v2.4.10.msi).
-Run it on Windows x64, then open the installed **XXMI Launcher** shortcut.
-No portable ZIP, build tools or separate capture program are needed.
+**DOWNLOAD WITHDRAWN: antivirus investigation.** The user reports Microsoft
+Defender detection `Trojan:Script/Wacatac.B!ml` while Chrome downloads this MSI.
+Keep the file quarantined. Do not restore/allow it or disable protection.
+See [SECURITY-STATUS.md](SECURITY-STATUS.md). The binary has been removed from the
+current branch; historical build evidence is retained for investigation.
 
 This is an unsigned contributor development build, version **2.4.10**, from
 source `1202392c4aea7a682da81e63b8e41b6c98fbcc07`. It uses original WiX authoring
@@ -39,6 +41,7 @@ See [verification.json](verification.json), the build/validation receipts and
 [SHA256SUMS](SHA256SUMS). Windows checkout CRLF bytes explain the authoring-source
 hash recorded in the build receipt; those bytes were independently matched.
 
+The functional and integrity checks below did not establish antivirus clearance.
 The real MSI has not been installed by this work. Fixtures do not establish
 upgrade behavior from every official installer version, actual-game visual or
 performance qualification, or official publisher release acceptance. No game

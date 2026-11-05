@@ -1,0 +1,55 @@
+﻿{
+    "passed":  true,
+    "powershell_version":  "5.1.20348.5756",
+    "cases":  [
+                  {
+                      "arguments":  [
+                                        "/d",
+                                        "/c",
+                                        "exit",
+                                        "0"
+                                    ],
+                      "exit_code":  0,
+                      "timed_out":  false,
+                      "stdout_file":  "exit-0.stdout.log",
+                      "stderr_file":  "exit-0.stderr.log"
+                  },
+                  {
+                      "arguments":  [
+                                        "/d",
+                                        "/c",
+                                        "exit",
+                                        "2"
+                                    ],
+                      "exit_code":  2,
+                      "timed_out":  false,
+                      "stdout_file":  "exit-2.stdout.log",
+                      "stderr_file":  "exit-2.stderr.log"
+                  },
+                  {
+                      "arguments":  [
+                                        "/d",
+                                        "/c",
+                                        "\"echo scanner-test-stdout \u0026 echo scanner-test-stderr 1\u003e\u00262 \u0026 exit /b 0\""
+                                    ],
+                      "exit_code":  0,
+                      "timed_out":  false,
+                      "stdout_file":  "output-flush.stdout.log",
+                      "stderr_file":  "output-flush.stderr.log"
+                  },
+                  {
+                      "arguments":  [
+                                        "-NoLogo",
+                                        "-NoProfile",
+                                        "-NonInteractive",
+                                        "-Command",
+                                        "\"Start-Sleep -Seconds 30\""
+                                    ],
+                      "exit_code":  -1,
+                      "timed_out":  true,
+                      "stdout_file":  "owned-timeout.stdout.log",
+                      "stderr_file":  "owned-timeout.stderr.log"
+                  }
+              ],
+    "error":  null
+}

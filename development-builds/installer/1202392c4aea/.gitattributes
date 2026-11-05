@@ -1,2 +1,4 @@
 # Keep downloaded receipts and checksums byte-for-byte on every platform.
 * -text whitespace=cr-at-eol
+# Preserve intentional trailing blank lines in the original scanner output.
+defender-e3c29e0/*.log -text whitespace=cr-at-eol,-blank-at-eof

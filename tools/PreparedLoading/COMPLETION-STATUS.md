@@ -3,7 +3,10 @@
 Prepared loading is integrated into the existing launcher's ordinary library
 update, settings and recovery paths. PR #2 is ready for code review, not a draft.
 The native implementation and automated Windows checks pass for the exact
-candidate below.
+candidate below. **The development MSI download is withdrawn after a reported
+Defender `Trojan:Script/Wacatac.B!ml` detection.** See the
+[antivirus investigation](../../development-builds/installer/1202392c4aea/SECURITY-STATUS.md).
+Prior functional/integrity checks did not establish antivirus clearance.
 
 **Official updater delivery still requires the authorized publisher release
 and package-signing process.** An [original MSI project](../Installer/README.md)
@@ -11,8 +14,8 @@ now authors the standard launcher payload without using GPMI's packaging code.
 It preserves the existing installation identity and adds standard MSI updater
 window handling and numeric version comparisons. Windows compilation, read-only
 payload inspection and isolated inert-fixture lifecycle tests passed. The
-[single development MSI](../../development-builds/installer/1202392c4aea/README.md)
-is available. No normal release/deployment has occurred, and actual-game
+[development MSI evidence](../../development-builds/installer/1202392c4aea/README.md)
+is retained with its download recommendation withdrawn. No normal release/deployment has occurred, and actual-game
 qualification remains open. The earlier [build research](PUBLIC-BUILD-RESEARCH.md)
 is historical context, not the implementation recipe.
 
@@ -110,8 +113,9 @@ acceptance bound to the complete paired evidence manifest.
 ## Remaining release gates
 
 1. Use the authorized publisher release/package-signing process for official
-   updater delivery. The original development MSI is built and qualified as
-   described above. The native metadata, DLLs
+   updater delivery. Resolve the reported antivirus detection before restoring
+   development MSI delivery. Prior qualification covered the functional and
+   integrity checks described above. The native metadata, DLLs
    and outer package must be authenticated through the existing signer before
    the launcher accepts support. No signing key or substitute trust path is
    created by this work.

@@ -1,0 +1,44 @@
+name: Original MSI Defender diagnostic
+on:
+  push:
+    branches: [codex/installer-antivirus-fix]
+    paths:
+      - '.github/workflows/installer-antivirus.yml'
+      - 'tools/Installer/scan-defender.ps1'
+      - 'tools/Installer/test-defender.ps1'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: original-msi-defender-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  scan-original-msi:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Verify process exit codes and timeout handling in Windows PowerShell 5.1
+        shell: powershell
+        run: ./tools/Installer/test-defender.ps1 -OutputDirectory ./work/defender-regression
+      - name: Scan exact historical MSI without executing it
+        shell: powershell
+        run: ./tools/Installer/scan-defender.ps1 -OutputDirectory ./work/defender-diagnostic
+      - name: Retain diagnostic records only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: original-msi-defender-diagnostic
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            work/defender-diagnostic/report.json
+            work/defender-diagnostic/scan.stdout.log
+            work/defender-diagnostic/scan.stderr.log
+            work/defender-diagnostic/signature-update.stdout.log
+            work/defender-diagnostic/signature-update.stderr.log
+            work/defender-regression/regression.json
+            work/defender-regression/*.stdout.log
+            work/defender-regression/*.stderr.log
