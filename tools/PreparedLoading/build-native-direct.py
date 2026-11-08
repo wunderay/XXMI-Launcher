@@ -19,6 +19,8 @@ parser.add_argument('--msvc', type=Path, required=True, help='MSVC version direc
 parser.add_argument('--sdk', type=Path, default=Path('C:/Program Files (x86)/Windows Kits/10'))
 parser.add_argument('--sdk-version', default='10.0.17763.0')
 parser.add_argument('--fixture', action='store_true')
+parser.add_argument('--workers', type=int, choices=range(1, 9), default=1,
+                    help='Maximum concurrent compiler processes (default: 1; choose for the executor budget)')
 parser.add_argument('--only-runtime', action='store_true', help='Development iteration only; requires a previous full build in the same output')
 args = parser.parse_args()
 repo, out, vc, sdk = (p.resolve() for p in (args.native, args.output, args.msvc, args.sdk))
@@ -65,7 +67,7 @@ def compile_one(pair):
     (out/(obj.name+'.log')).write_bytes(result.stdout)
     return {'source':str(src.relative_to(repo)),'exit':result.returncode,'log':str(out/(obj.name+'.log'))}
 
-with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
     results=list(pool.map(compile_one, [job for job in jobs if not args.only_runtime or job[0].name == 'Runtime.cpp']))
 failures=[r for r in results if r['exit']]
 (out/('runtime-compile-results.json' if args.only_runtime else 'compile-results.json')).write_text(json.dumps(results,indent=2))

@@ -1,0 +1,35 @@
+name: First-visit Windows tools
+on:
+  pull_request:
+    paths:
+      - 'tools/PreparedLoading/**'
+      - 'tests/test_native_reconstruction.py'
+      - '.github/workflows/first-visit-tools.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: first-visit-tools-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows-tools:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test source reconstruction and evidence-preserving collector
+        shell: pwsh
+        run: |
+          $fixtureTemp = Join-Path $env:GITHUB_WORKSPACE 'work\first-visit-tools'
+          New-Item -ItemType Directory -Force $fixtureTemp | Out-Null
+          $env:TEMP = $fixtureTemp
+          $env:TMP = $fixtureTemp
+          python -m unittest discover -s tests -p test_native_reconstruction.py -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/PreparedLoading/test_capture_speed.py -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

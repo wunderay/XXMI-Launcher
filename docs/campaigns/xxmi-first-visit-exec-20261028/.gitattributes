@@ -1,0 +1,4 @@
+# Preserve the source manifest and the receipt's exact-byte references.
+source-inputs.json -text
+q00-reconstruction.json -text
+q00-source-files.json -text

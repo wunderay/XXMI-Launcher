@@ -1,0 +1,259 @@
+{
+  "schema": "xxmi.native-reconstruction.v1",
+  "route": "aggregate",
+  "base": "a7847eae82aaac32175c9a7d199673d5c9323bcd",
+  "parent": "c442d746282339651a4ecb4b2a111f43daadc30b",
+  "parent_tree": "30e935aa00088be3f8493c143f8c6fa70ec59e6e",
+  "bundle_verified": true,
+  "reconstructed_git_tree": "7d70f3839746dbf27753dd03990d284cdfd30702",
+  "inputs_manifest_sha256": "4950f8ba745d3f3e7e40ff685c1384eae2b8058672054253888bea096f9fdd56",
+  "inputs": [
+    {
+      "path": "tools/PreparedLoading/native.patch",
+      "sha256": "07898d8f53ba71439d70e5de9327cc5d90f3210a26eb13eb517d452ee7156fa7",
+      "bytes": 1092996,
+      "role": "native-source-input",
+      "current_sha256": "07898d8f53ba71439d70e5de9327cc5d90f3210a26eb13eb517d452ee7156fa7",
+      "current_bytes": 1092996,
+      "matches_pin": true
+    },
+    {
+      "path": "tools/PreparedLoading/native-speed.patch",
+      "sha256": "b7d1cf2c1380d9ffde325c367569924e3e6113f69c6e068368ab808fae578bb4",
+      "bytes": 25213,
+      "role": "native-source-input",
+      "current_sha256": "b7d1cf2c1380d9ffde325c367569924e3e6113f69c6e068368ab808fae578bb4",
+      "current_bytes": 25213,
+      "matches_pin": true
+    },
+    {
+      "path": "tools/PreparedLoading/native-loading.patch",
+      "sha256": "85ade7906e6c7e0255602153273db359f0f3c69594c99c08ff4a946c71697d27",
+      "bytes": 16579,
+      "role": "native-source-input",
+      "current_sha256": "85ade7906e6c7e0255602153273db359f0f3c69594c99c08ff4a946c71697d27",
+      "current_bytes": 16579,
+      "matches_pin": true
+    },
+    {
+      "path": "tools/PreparedLoading/native-gpu-startup.patch",
+      "sha256": "d9932a38d9e5dcc66a082317c3c2ca8007fe20923c7073f6631c794a776ee4a6",
+      "bytes": 20364,
+      "role": "native-source-input",
+      "current_sha256": "d9932a38d9e5dcc66a082317c3c2ca8007fe20923c7073f6631c794a776ee4a6",
+      "current_bytes": 20364,
+      "matches_pin": true
+    },
+    {
+      "path": "tools/PreparedLoading/native-gpu-retention.patch",
+      "sha256": "2a249ff34ae23a21dfd5ac23c8535d6d13ed7f4223cab4db455837f49db6dfd2",
+      "bytes": 32250,
+      "role": "native-source-input",
+      "current_sha256": "2a249ff34ae23a21dfd5ac23c8535d6d13ed7f4223cab4db455837f49db6dfd2",
+      "current_bytes": 32250,
+      "matches_pin": true
+    },
+    {
+      "path": "tools/PreparedLoading/native-candidate.json",
+      "sha256": "18d546f743364fcd832c574be3640596f59b9bb8a7e0e06342ddb3771dba88d5",
+      "bytes": 407,
+      "role": "native-source-input",
+      "current_sha256": "18d546f743364fcd832c574be3640596f59b9bb8a7e0e06342ddb3771dba88d5",
+      "current_bytes": 407,
+      "matches_pin": true
+    },
+    {
+      "path": "tools/PreparedLoading/build-native-direct.py",
+      "sha256": "f8a2212b234192723191cb113241de5950af6be850e3b3389c24fc8bae8fc5a0",
+      "bytes": 5755,
+      "role": "helper-provenance",
+      "current_sha256": "9e6e7c72a45def52ae04c469a5eab9a88a63c24a87d593ce768538b5fbae1429",
+      "current_bytes": 5954,
+      "matches_pin": false
+    },
+    {
+      "path": "tools/PreparedLoading/build-native.ps1",
+      "sha256": "6e1192c9c2b560cd8d078d8b53295962b425024fb0c2156cc01004c39f767ae4",
+      "bytes": 13543,
+      "role": "helper-provenance",
+      "current_sha256": "6e1192c9c2b560cd8d078d8b53295962b425024fb0c2156cc01004c39f767ae4",
+      "current_bytes": 13543,
+      "matches_pin": true
+    },
+    {
+      "path": "tools/PreparedLoading/capture-speed.py",
+      "sha256": "4c20fb7d4f878f05780189d626ebf3025e8aa6b926670025adc12d8bb6fdf96b",
+      "bytes": 14794,
+      "role": "helper-provenance",
+      "current_sha256": "942e893ec4d9698d67cea125eb822889e97aad9a2ff1e9984d990e7c234f5146",
+      "current_bytes": 19246,
+      "matches_pin": false
+    },
+    {
+      "path": "tools/PreparedLoading/test_capture_speed.py",
+      "sha256": "d41ea71d392f78fafbdedd030c7d62cafbd63246cf922f28a5c35cadfa68248a",
+      "bytes": 7411,
+      "role": "helper-provenance",
+      "current_sha256": "b1aa2d7c69efc67d522c104a894a42ced21307907abab9c91107c3228eb029a5",
+      "current_bytes": 11271,
+      "matches_pin": false
+    },
+    {
+      "path": "tools/PreparedLoading/validate-speed.py",
+      "sha256": "c4b8f728f55e2815c7c74c9e75950699751765d488a5d024e281a7fc207dbc22",
+      "bytes": 4649,
+      "role": "helper-provenance",
+      "current_sha256": "c4b8f728f55e2815c7c74c9e75950699751765d488a5d024e281a7fc207dbc22",
+      "current_bytes": 4649,
+      "matches_pin": true
+    },
+    {
+      "path": "tools/PreparedLoading/benchmark-cpu.cpp",
+      "sha256": "f181f32c4cc335cb0098d1d26f325dfa65d28dae69f849f658a5cf6844a468f9",
+      "bytes": 4356,
+      "role": "helper-provenance",
+      "current_sha256": "f181f32c4cc335cb0098d1d26f325dfa65d28dae69f849f658a5cf6844a468f9",
+      "current_bytes": 4356,
+      "matches_pin": true
+    },
+    {
+      "path": "tools/PreparedLoading/probe-preparation-limits.cpp",
+      "sha256": "76fe6766a6d44913f7d36dc5ff8fe99c1af51fbe7c12209a5d72bc1b57fd6718",
+      "bytes": 6893,
+      "role": "helper-provenance",
+      "current_sha256": "76fe6766a6d44913f7d36dc5ff8fe99c1af51fbe7c12209a5d72bc1b57fd6718",
+      "current_bytes": 6893,
+      "matches_pin": true
+    },
+    {
+      "path": "tools/PreparedLoading/LocalLauncher.cs",
+      "sha256": "f56939d6592435f9df4bc71dfdb02417b4f7dd2d7163e6093a5cb08a06275135",
+      "bytes": 58875,
+      "role": "helper-provenance",
+      "current_sha256": "f56939d6592435f9df4bc71dfdb02417b4f7dd2d7163e6093a5cb08a06275135",
+      "current_bytes": 58875,
+      "matches_pin": true
+    },
+    {
+      "path": "tools/PreparedLoading/ModelPreloader.cs",
+      "sha256": "739bfcc3cd0e15b439df66ac04ac581ac9bc5c282d3129ceadc50fe7b85da60f",
+      "bytes": 14834,
+      "role": "helper-provenance",
+      "current_sha256": "739bfcc3cd0e15b439df66ac04ac581ac9bc5c282d3129ceadc50fe7b85da60f",
+      "current_bytes": 14834,
+      "matches_pin": true
+    },
+    {
+      "path": "tools/PreparedLoading/local-launcher.manifest",
+      "sha256": "7a8ca34861ac1fc94e81393cdef5d4173d391a83a4c4e211e2c25a8cf52064d3",
+      "bytes": 842,
+      "role": "helper-provenance",
+      "current_sha256": "7a8ca34861ac1fc94e81393cdef5d4173d391a83a4c4e211e2c25a8cf52064d3",
+      "current_bytes": 842,
+      "matches_pin": true
+    },
+    {
+      "path": "tools/PreparedLoading/COMPLETION-STATUS.md",
+      "sha256": "0e56abfc7cf911e59e3eedc593112a81b4a122430ae9b56162610b0ed28ce220",
+      "bytes": 25454,
+      "role": "helper-provenance",
+      "current_sha256": "3c1fd2dd4928e1a2f5167174d63e42399d0ab0409f625cb36cae4d47cf74c2e2",
+      "current_bytes": 26813,
+      "matches_pin": false
+    },
+    {
+      "path": "tools/PreparedLoading/integration-evidence/native-history.bundle",
+      "sha256": "8855d980d1081f2b1cfc8a461b630d804f3905db06c01ca810811fa86801b63f",
+      "bytes": 380030,
+      "role": "native-source-input",
+      "current_sha256": "8855d980d1081f2b1cfc8a461b630d804f3905db06c01ca810811fa86801b63f",
+      "current_bytes": 380030,
+      "matches_pin": true
+    },
+    {
+      "path": "tools/PreparedLoading/integration-evidence/README.md",
+      "sha256": "4450bb3237f7759447ac10898a6cf6a03e63efb75c3a41623226107c6cccf7a6",
+      "bytes": 1165,
+      "role": "helper-provenance",
+      "current_sha256": "4450bb3237f7759447ac10898a6cf6a03e63efb75c3a41623226107c6cccf7a6",
+      "current_bytes": 1165,
+      "matches_pin": true
+    },
+    {
+      "path": "development-builds/prepared-loading/BUILD-INFO.json",
+      "sha256": "77f1b1b55d3e2d362f902a5e05c25377a7db1e773733969f496b98c25943a403",
+      "bytes": 7881,
+      "role": "native-source-input",
+      "current_sha256": "77f1b1b55d3e2d362f902a5e05c25377a7db1e773733969f496b98c25943a403",
+      "current_bytes": 7881,
+      "matches_pin": true
+    },
+    {
+      "path": "tools/PreparedLoading/baseline/version.generated.h",
+      "sha256": "8c111be0b0e76b274a50d98de19ef0a1c24ad26732c10079b6d1c8c46ba16689",
+      "bytes": 213,
+      "role": "native-source-input",
+      "current_sha256": "8c111be0b0e76b274a50d98de19ef0a1c24ad26732c10079b6d1c8c46ba16689",
+      "current_bytes": 213,
+      "matches_pin": true
+    }
+  ],
+  "patch_application": [
+    {
+      "path": "native.patch",
+      "application_transform": "identity",
+      "application_sha256": "07898d8f53ba71439d70e5de9327cc5d90f3210a26eb13eb517d452ee7156fa7"
+    },
+    {
+      "path": "native-speed.patch",
+      "application_transform": "identity",
+      "application_sha256": "b7d1cf2c1380d9ffde325c367569924e3e6113f69c6e068368ab808fae578bb4"
+    },
+    {
+      "path": "native-loading.patch",
+      "application_transform": "identity",
+      "application_sha256": "85ade7906e6c7e0255602153273db359f0f3c69594c99c08ff4a946c71697d27"
+    },
+    {
+      "path": "native-gpu-startup.patch",
+      "application_transform": "identity",
+      "application_sha256": "d9932a38d9e5dcc66a082317c3c2ca8007fe20923c7073f6631c794a776ee4a6"
+    },
+    {
+      "path": "native-gpu-retention.patch",
+      "application_transform": "crlf-to-lf",
+      "application_sha256": "e92e888270f2aae3e39383912310ee6e470bfdec4206c6b15b93ba2987a70dfc"
+    }
+  ],
+  "source_digest_algorithm": "sha256(sorted(path + NUL + file_sha256 + LF), UTF-8); version header included",
+  "source_digest": "e168b7f0cc83108ed5fe65991417d7b747b20561d4528e5d7f4581c202537b64",
+  "historical_source_digest": "7bc377b215fedea252bfafc7f7aebcfe48c83186858cf353583d5ce80bd723bd",
+  "historical_source_matches": false,
+  "historical_archive_scope": {
+    "available": true,
+    "path": "development-builds/prepared-loading/XXMI-Prepared-Loading-development-win-x64.zip",
+    "archive_sha256": "4b0bc40a44d30617403606c8794e9ef62e34dbdb328a38605379bc65ac3e2df7",
+    "corresponding_source_sha256": "3439516e2d5f7c61261eb762ca664bcfe6b03dbb463c7b30350b69704bc7237f",
+    "files": 2130,
+    "missing": [],
+    "zip_name_scope_digest": "5875145201bc32d9c05c0cfb95fb7a25f89bec8d8a886ffd9dcdf5e1f524baf1",
+    "relative_name_scope_digest": "d3e72ec0690dcfdb5c7dfbdccac52b9e302ade724c65946a895c91b6fc3ff70e",
+    "zip_name_scope_matches_record": false,
+    "relative_name_scope_matches_record": false
+  },
+  "qualification": "Source reconstruction only; historical matching covers the archived member-name scope, with additional source files separately manifested. No compile, native execution, deployment or game qualification.",
+  "source_files_manifest": {
+    "path": "q00-source-files.json",
+    "sha256": "361eee24298a178486621595dd1b27f11c72e3f91fec638127f2b05625e535ee",
+    "files": 2160
+  },
+  "command": "python tools/PreparedLoading/reconstruct-native.py --native <local-upstream-checkout> --output <new-owned-checkout> --verify-bundle --receipt <new-receipt.json>",
+  "command_exit": 1,
+  "q00_status": "partial: portable chain reconstructed; equivalence to the historical source remains NOT PROVEN; no Windows compiler preflight",
+  "checks": {
+    "command": "python -m unittest discover -s tests -p test_native_reconstruction.py -v",
+    "unique_tests": 11,
+    "exit": 0
+  },
+  "historical_comparison_algorithm": "sha256(sorted(archive_member_name + NUL + reconstructed_file_sha256 + LF), UTF-8); original corresponding-source.zip names including native/"
+}

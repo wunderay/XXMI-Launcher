@@ -1,5 +1,27 @@
 # Implementation and normal release status
 
+## Repository follow-up, 2026-11-07
+
+The first-visit campaign in `docs/campaigns/xxmi-first-visit-exec-20261028/`
+is unfinished. Its saved native inputs can now be reconstructed and audited
+without editing the original patch bytes. Q00's comparison with the historical
+development source remains **NOT PROVEN**: the complete reconstructed manifest
+and the older archive's source-name subset both differ from the recorded digest.
+See the campaign's Q00 reconstruction report for exact identities and commands.
+The later native implementation and exact-build gates have not been completed
+by this follow-up. Earlier fixture/build receipts remain historical evidence.
+
+Independent tooling fixes reject malformed/truncated/mixed-session captures,
+validate full loss accounting before computing diagnostic results, preserve
+original native CSVs, and archive previous preset reports and CSVs. Compiler
+concurrency is configurable with `--workers` and defaults to one process.
+Linux and Windows tool checks cover these contracts. This changes neither the
+release qualification thresholds nor the native patch chain.
+
+The user confirmed no original captures or Windows/game qualification machine
+is available for this follow-up. Actual-game performance/visual acceptance,
+the unresolved MSI antivirus report, and publisher signing remain open.
+
 ## First-visit coverage update, 2026-10-27
 
 The user authorized longer startup preparation while retaining current memory

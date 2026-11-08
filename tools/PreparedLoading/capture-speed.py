@@ -8,11 +8,11 @@ import csv
 import ctypes
 from ctypes import wintypes
 import hashlib
-import io
 import json
 import os
 from pathlib import Path
 import re
+import shutil
 import statistics
 import time
 
@@ -66,11 +66,15 @@ def fingerprint(profile):
     for name in ['Mods', 'ShaderFixes', 'Core']:
         base = profile / 'ZZMI' / name
         for folder, dirs, files in os.walk(base, followlinks=False):
-            dirs[:] = sorted(d for d in dirs if not (Path(folder) / d).is_junction())
+            for directory in dirs:
+                child = Path(folder) / directory
+                if child.is_symlink() or child.is_junction():
+                    raise ValueError('Linked mod directories cannot qualify a matched comparison')
+            dirs.sort()
             for name in sorted(files):
                 path = Path(folder) / name
                 stat = path.stat()
-                if stat.st_file_attributes & 1024:
+                if path.is_symlink() or getattr(stat, 'st_file_attributes', 0) & 1024:
                     raise ValueError('Linked mod files cannot qualify a matched comparison')
                 entries.append([str(path.relative_to(profile)), stat.st_size, stat.st_mtime_ns,
                                 digest(path) if path.suffix.lower() == '.ini' else None])
@@ -102,14 +106,80 @@ def quantiles(values):
             'p95_ms': percentile(.95), 'p99_ms': percentile(.99), 'max_ms': ordered[-1]} if values else {'count': 0}
 
 
+TRACE_COLUMNS = 'stage,kind,capture_session,start_ns,duration_ns,start_frame,end_frame,thread_id,object_id,bytes,result'.split(',')
+TRACE_PREAMBLE = ['# load_trace_v1; monotonic_ns; frame_ids_are_attribution_only',
+                  '# activation_and_first_correct_frame_require_explicit_external_evidence']
+TRACE_FOOTER = ('capture_end', 'structural_complete', 'lossless', 'accepted', 'drained', 'written',
+                'dropped_full', 'dropped_contention', 'stale', 'outstanding', 'foreign_discarded',
+                'accounting_available', 'reason')
+MAX_TRACE_BYTES = 64 * 1024 * 1024
+MAX_TRACE_ROWS = 250000
+
+
+def validated_trace(text):
+    """Validate the streaming envelope before using any diagnostic measurements.
+
+    Scheduled stop is a complete diagnostic capture, not release qualification.
+    This never manufactures the external visual/frame evidence qualify.py needs.
+    """
+    if len(text) > MAX_TRACE_BYTES or not text.endswith('\n'):
+        raise ValueError('Oversized or truncated native trace')
+    lines = text.splitlines()
+    if len(lines) < 6 or lines[:2] != TRACE_PREAMBLE or lines[2] != ','.join(TRACE_COLUMNS):
+        raise ValueError('Missing native streaming preamble/header')
+    begin = re.fullmatch(r'# capture_begin=([0-9]+);accounting=capture_v2', lines[3])
+    if not begin:
+        raise ValueError('Missing capture begin')
+    if len(begin[1]) > 20:
+        raise ValueError('Invalid capture session')
+    session = int(begin[1])
+    if not 0 < session < 2**64 or session % 2 != 1:
+        raise ValueError('Invalid capture session')
+    if not lines[-1].startswith('# capture_end='):
+        raise ValueError('Missing final capture footer')
+    pairs = [part.split('=', 1) for part in lines[-1][2:].split(';')]
+    if any(len(pair) != 2 for pair in pairs) or tuple(pair[0] for pair in pairs) != TRACE_FOOTER:
+        raise ValueError('Malformed, duplicate or reordered footer fields')
+    metadata = dict(pairs)
+    def uint(value):
+        if not re.fullmatch('[0-9]+', value) or len(value) > 20 or int(value) >= 2**64:
+            raise ValueError('Invalid uint64 trace field')
+        return int(value)
+    counters = {key: uint(metadata[key]) for key in TRACE_FOOTER[:-1]}
+    if counters['capture_end'] != session:
+        raise ValueError('Capture begin/end session mismatch')
+    body = lines[4:-1]
+    if not body or len(body) > MAX_TRACE_ROWS or any(not line or line.startswith('#') for line in body):
+        raise ValueError('Empty, oversized or interrupted trace body')
+    rows = []
+    for values in csv.reader(body, strict=True):
+        if len(values) != len(TRACE_COLUMNS) or not values[0] or values[1] not in ('instant', 'duration'):
+            raise ValueError('Malformed native trace row')
+        numbers = [uint(value) for value in values[2:10]]
+        if numbers[0] != session:
+            raise ValueError('Mixed trace sessions')
+        if numbers[4] < numbers[3] or numbers[1] + numbers[2] >= 2**64:
+            raise ValueError('Invalid trace time/frame interval')
+        # Native UnknownResult is serialized as an empty cell, not success.
+        if values[10] and (not re.fullmatch('-?[0-9]+', values[10]) or len(values[10]) > 20
+                or not -(2**63) <= int(values[10]) < 2**63):
+            raise ValueError('Invalid signed trace result')
+        rows.append(dict(zip(TRACE_COLUMNS, values)))
+    if (any(counters[key] != 1 for key in ('lossless', 'structural_complete', 'accounting_available'))
+            or metadata['reason'] not in ('stopped', 'scheduled_stop')
+            or any(counters[key] for key in ('dropped_full', 'dropped_contention', 'stale', 'outstanding'))
+            or any(counters[key] != len(rows) for key in ('accepted', 'drained', 'written'))):
+        raise ValueError('Incomplete or lossy capture accounting')
+    return metadata, rows
+
+
 def parse_trace(text):
-    footer = next((line for line in reversed(text.splitlines()) if line.startswith('# capture_end=')), '')
-    metadata = dict(part.split('=', 1) for part in footer.removeprefix('# ').split(';') if '=' in part)
-    rows = list(csv.DictReader(io.StringIO('\n'.join(line for line in text.splitlines() if not line.startswith('#')))))
+    try:
+        metadata, rows = validated_trace(text)
+    except (ValueError, csv.Error) as error:
+        return {'complete_lossless': False, 'error': str(error), 'rows': 0, 'stages': {}}
     stages = {}; presents = []; cache_hits = 0; gpu_hits = 0
     for row in rows:
-        if row['capture_session'] != metadata.get('capture_end', row['capture_session']):
-            raise ValueError('Mixed trace sessions')
         if row['kind'] == 'duration':
             stages.setdefault(row['stage'], []).append(int(row['duration_ns']) / 1e6)
         if row['stage'] == 'present_cpu': presents.append(row)
@@ -126,11 +196,7 @@ def parse_trace(text):
         if int(after['start_frame']) != int(before['start_frame']) + 1:
             gaps += 1; continue
         intervals.append((int(after['start_ns']) - int(before['start_ns'])) / 1e6)
-    valid = (metadata.get('lossless') == '1' and metadata.get('structural_complete') == '1'
-        and metadata.get('accounting_available') == '1' and metadata.get('reason') == 'scheduled_stop'
-        and all(metadata.get(key) == '0' for key in ['dropped_full', 'dropped_contention', 'stale', 'outstanding'])
-        and all(metadata.get(key) == str(len(rows)) for key in ['accepted', 'drained', 'written']))
-    return {'complete_lossless': valid, 'footer': metadata, 'rows': len(rows),
+    return {'complete_lossless': True, 'footer': metadata, 'rows': len(rows),
         'stages': {key: quantiles(values) for key, values in stages.items()}, 'shader_cache_hits': cache_hits, 'prepared_gpu_hits': gpu_hits,
         'present_intervals': quantiles(intervals), 'present_frame_gaps': gaps, 'primary_swap_chain': primary,
         'trace_to_first_present_ms': ((int(presents[0]['start_ns']) - min(int(r['start_ns']) for r in rows)) / 1e6) if presents else None,
@@ -169,9 +235,19 @@ def capture(args):
     root = args.root.resolve(); profile = root / '.collector-data/collector-auto-20261023/diagnostic-launcher'
     destination = root / 'captures/loading-speed' / args.dll_hash[:12]; destination.mkdir(parents=True, exist_ok=True)
     report_path = destination / (args.mode + '.json')
+    latest_owned = False
     report = {'mode': args.mode, 'status': 'waiting_for_game', 'expected_dll': args.dll_hash,
               'started_unix': time.time(), 'game_launched_by_observer': False, 'uac_requested': False}
     try:
+        # Keep every previous observation before replacing the latest preset pair.
+        # Raw native CSVs stay at their original paths as well.
+        previous = [destination / (args.mode + suffix) for suffix in ('.json', '.csv')]
+        if any(path.exists() for path in previous):
+            archive = destination / 'archive' / (args.mode + '-' + str(time.time_ns()))
+            archive.mkdir(parents=True)
+            for path in previous:
+                if path.is_file(): shutil.copyfile(path, archive / path.name)
+        latest_owned = True
         preload_path = profile / 'PRELOAD-RESULT.json'
         if preload_path.is_file(): report['prelaunch_model_preload'] = json.loads(preload_path.read_text(encoding='utf-8'))
         report['before'] = fingerprint(profile)
@@ -207,15 +283,17 @@ def capture(args):
                     stream.seek(0, 2); stream.seek(max(0, stream.tell() - 2048))
                     tail = stream.read().decode('utf-8', errors='replace')
                 if '# capture_end=' in tail:
-                    report['trace'] = parse_trace(selected.read_text(encoding='utf-8'))
+                    if selected.stat().st_size > MAX_TRACE_BYTES:
+                        raise ValueError('Native trace exceeds bounded capture size')
+                    with selected.open('rb') as stream:
+                        raw = stream.read(MAX_TRACE_BYTES + 1)
+                    if len(raw) > MAX_TRACE_BYTES:
+                        raise ValueError('Native trace exceeds bounded capture size')
+                    report['trace'] = parse_trace(raw.decode('utf-8'))
+                    report['trace_sha256'] = hashlib.sha256(raw).hexdigest()
                     report['after'] = fingerprint(profile)
                     report['status'] = 'complete' if report['trace']['complete_lossless'] and report.get('dll', {}).get('verified') else 'incomplete'
-                    # Retain exactly one CSV per preset; retry briefly if native close is pending.
-                    for attempt in range(20):
-                        try: selected.replace(destination / (args.mode + '.csv')); break
-                        except PermissionError:
-                            if attempt == 19: raise
-                            time.sleep(.1)
+                    (destination / (args.mode + '.csv')).write_bytes(raw)
                     break
             write_json(report_path, report)
             time.sleep(1)
@@ -224,9 +302,14 @@ def capture(args):
         report['finished_unix'] = time.time()
     except Exception as error:
         report.update(status='error', error=str(error))
-        if not Path(args.ready).exists(): write_json(Path(args.ready), {'ready': False, 'error': str(error)})
+        if not latest_owned:
+            # Archival failed: the old latest pair still belongs to its prior
+            # capture. Even the error report must use a separate path.
+            report_path = destination / (args.mode + '-error-' + str(time.time_ns()) + '.json')
+        if not latest_owned or not Path(args.ready).exists():
+            write_json(Path(args.ready), {'ready': False, 'error': str(error)})
     write_json(report_path, report)
-    compare(destination)
+    if latest_owned: compare(destination)
     message = ('capture saved. You may now close Zenless and XXMI.' if report['status'] == 'complete'
                else 'capture could not be qualified. The report contains the reason.')
     ctypes.windll.user32.MessageBoxW(None, args.mode.title() + ' ' + message + '\n\n' + str(destination),

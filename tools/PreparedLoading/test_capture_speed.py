@@ -11,15 +11,62 @@ import time
 
 spec = importlib.util.spec_from_file_location('capture_speed', Path(__file__).with_name('capture-speed.py'))
 capture = importlib.util.module_from_spec(spec); spec.loader.exec_module(capture)
-HEADER = 'stage,kind,capture_session,start_ns,duration_ns,start_frame,end_frame,thread_id,object_id,bytes,result\n'
+HEADER = ('\n'.join(capture.TRACE_PREAMBLE) + '\n' + ','.join(capture.TRACE_COLUMNS)
+          + '\n# capture_begin=1;accounting=capture_v2\n')
 ROWS = ('present_cpu,duration,1,1000000,1000,0,1,1,1,0,0\n'
         'present_cpu,duration,1,17000000,1000,1,2,1,1,0,0\n'
         'present_cpu,duration,1,34000000,1000,2,3,1,1,0,0\n'
         'config_reload,duration,1,5000000,500000,1,1,1,0,0,0\n')
-FOOTER = '# capture_end=1;structural_complete=1;lossless=1;accepted=4;drained=4;written=4;dropped_full=0;dropped_contention=0;stale=0;outstanding=0;accounting_available=1;reason=scheduled_stop\n'
+FOOTER = '# capture_end=1;structural_complete=1;lossless=1;accepted=4;drained=4;written=4;dropped_full=0;dropped_contention=0;stale=0;outstanding=0;foreign_discarded=0;accounting_available=1;reason=scheduled_stop\n'
 
 
 class CollectorTests(unittest.TestCase):
+    def test_trace_rejects_forged_or_incomplete_envelopes(self):
+        valid = HEADER + ROWS + FOOTER
+        for bad in [valid[:-1], valid + '# ignored\n', valid + FOOTER,
+                    valid.replace('capture_begin=1;', 'capture_begin=3;'),
+                    valid.replace('capture_begin=1;', 'capture_begin=2;'),
+                    valid.replace(';lossless=1;', ';lossless=1;lossless=0;'),
+                    valid.replace('foreign_discarded=0;', ''),
+                    valid.replace('duration,1,1000000', 'duration,3,1000000'),
+                    valid.replace('1000000,1000', '-1,1000'),
+                    valid.replace('1000000,1000', '18446744073709551615,1000'),
+                    valid.replace('1000000,1000', 'NaN,1000'),
+                    valid.replace('1,1,0,0\n', '1,1,0,0,extra\n'),
+                    valid.replace(ROWS, ROWS + '# incomplete-export\n'),
+                    valid.replace('accounting_available=1', 'accounting_available=0')]:
+            with self.subTest(trace=bad[-180:]):
+                self.assertFalse(capture.parse_trace(bad)['complete_lossless'])
+
+    def test_foreign_discarded_is_not_current_capture_loss(self):
+        parsed = capture.parse_trace(HEADER + ROWS + FOOTER.replace('foreign_discarded=0', 'foreign_discarded=12'))
+        self.assertTrue(parsed['complete_lossless'])
+        self.assertTrue(capture.parse_trace(HEADER + ROWS + FOOTER.replace('scheduled_stop', 'stopped'))['complete_lossless'])
+
+    def test_native_unknown_result_remains_unknown(self):
+        rows = ROWS + 'readiness_wait,instant,1,35000000,0,3,3,1,12,256,\n'
+        parsed = capture.parse_trace(HEADER + rows + FOOTER.replace('=4;', '=5;'))
+        self.assertTrue(parsed['complete_lossless'])
+        self.assertEqual(parsed['prepared_gpu_hits'], 0)
+
+    def test_failed_archive_preserves_previous_pair_and_comparison(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); destination = root / 'captures/loading-speed/abc'
+            destination.mkdir(parents=True)
+            saved = {'baseline.json': b'{"status":"complete"}',
+                     'baseline.csv': (HEADER + ROWS + FOOTER).encode(),
+                     'comparison.json': b'{"previous":"comparison"}'}
+            for name, raw in saved.items(): (destination / name).write_bytes(raw)
+            args = SimpleNamespace(root=root, mode='baseline', dll_hash='abc', since=time.time(), ready=str(root / 'ready.json'))
+            desktop = SimpleNamespace(user32=SimpleNamespace(MessageBoxW=mock.Mock(return_value=1)))
+            with mock.patch.object(capture.shutil, 'copyfile', side_effect=OSError('disk full')), mock.patch.object(capture.ctypes, 'windll', desktop, create=True):
+                capture.capture(args)
+            for name, raw in saved.items(): self.assertEqual((destination / name).read_bytes(), raw)
+            failures = list(destination.glob('baseline-error-*.json'))
+            self.assertEqual(len(failures), 1)
+            self.assertEqual(json.loads(failures[0].read_text())['status'], 'error')
+            self.assertFalse(json.loads((root / 'ready.json').read_text())['ready'])
+
     def test_gpu_reuse_counts_only_successful_instant_hits(self):
         events = ('readiness_wait,instant,1,35000000,0,3,3,1,12,256,0\n'
                   'readiness_wait,instant,1,36000000,0,3,3,1,13,256,-1\n'
@@ -93,7 +140,6 @@ class CollectorTests(unittest.TestCase):
         self.assertTrue(capture.inspect_dll(os.getpid(), dll, capture.digest(dll))['verified'])
         self.assertFalse(capture.inspect_dll(os.getpid(), dll, '0' * 64)['verified'])
 
-    @unittest.skipUnless(os.name == 'nt', 'Windows observer filesystem')
     def test_passive_observer_end_to_end(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); profile = root / '.collector-data/collector-auto-20261023/diagnostic-launcher'
@@ -103,13 +149,22 @@ class CollectorTests(unittest.TestCase):
             (native / 'd3dx.ini').write_text('[ModLoading]\nmode = off\n')
             trace = native / 'mod-load-trace-123-1-1.csv'; trace.write_text(HEADER + ROWS + FOOTER)
             args = SimpleNamespace(root=root, mode='baseline', dll_hash='abc', since=time.time() - 10, ready=str(profile / 'ready.json'))
-            with mock.patch.object(capture, 'inspect_dll', return_value={'verified': True, 'pid': 123}), mock.patch.object(capture.ctypes.windll.user32, 'MessageBoxW', return_value=1):
+            fake_desktop = SimpleNamespace(user32=SimpleNamespace(MessageBoxW=mock.Mock(return_value=1)))
+            with mock.patch.object(capture, 'inspect_dll', return_value={'verified': True, 'pid': 123}), mock.patch.object(capture.ctypes, 'windll', fake_desktop, create=True):
+                capture.capture(args)
+                # Repeated captures preserve the earlier report/CSV as well as
+                # the native original; only the latest preset pair is compared.
                 capture.capture(args)
             report = json.loads((root / 'captures/loading-speed/abc/baseline.json').read_text())
             self.assertEqual(report['status'], 'complete')
             self.assertEqual(report['before'], report['after'])
-            self.assertFalse(trace.exists())
+            self.assertTrue(trace.exists())
             self.assertTrue((root / 'captures/loading-speed/abc/baseline.csv').exists())
+            self.assertEqual(report['trace_sha256'], capture.digest(trace))
+            archives = list((root / 'captures/loading-speed/abc/archive').glob('baseline-*'))
+            self.assertEqual(len(archives), 1)
+            self.assertEqual((archives[0] / 'baseline.csv').read_bytes(), trace.read_bytes())
+            self.assertEqual(json.loads((archives[0] / 'baseline.json').read_text())['status'], 'complete')
             self.assertEqual(previous.read_text(), 'previous completed capture')
 
 

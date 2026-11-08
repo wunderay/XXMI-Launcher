@@ -4,6 +4,12 @@ Use SPEC.md as the acceptance contract. Suggested quest boundaries follow; Quest
 
 - [ ] Q00 — Bind the existing native and launcher baseline (3–6 h). Inventory exact dirty/untracked inputs and existing build receipts; select only PreparedLoading changes needed for this goal, preserving unrelated installer/antivirus changes. Reconstruct the native bundle/ordered patches in owned scratch, record complete source manifests and exact version header, and place authorized portable source/build inputs where workers can fetch them. Validate the candidate against the current ignored native source and development record. Required before remote dispatch: real repository registration, authorized candidate input identity and qualified executor. Output source manifest, reconstruction procedure, exclusions and meaningful build preflight. Do not deploy. Parent/operator must supply the portable inputs if the assigned executor cannot read the local checkout; do not claim a cloud worker can access an ignored host path.
 
+  Partial evidence: [portable reconstruction](Q00-RECONSTRUCTION.md) verifies the
+  parent tree and ordered patch application with 11 passing contract tests.
+  The complete reconstructed source digest and original ZIP membership scope
+  both fail to reproduce the historical source receipt. Original host source
+  equivalence and Windows executor/build preflight remain open; Q00 is unchecked.
+
 - [ ] Q01 — Specify bounded coverage events and replay fixtures (2–4 h; after Q00). Define stable generation/resource/group IDs, finite buffers/caps and admission/retry/rejection/end/pressure/eviction/invalidation records. Preserve existing counter meaning and capture compatibility. Acceptance: deterministic example sessions explain each outcome without inventing cause or treating counters as latency. Own telemetry types/contracts and tests; avoid Runtime writer overlap with Q02.
 
 - [ ] Q02 — Implement accountable native outcomes and collector support (3–5 h; after Q01). Instrument existing paths and asynchronous publication with low overhead; connect first-use QPC costs to Present intervals. Acceptance: fixtures cover every reason, pressure transitions, generation changes, loss markers and bounded publication. Own Runtime/trace integration and collector adapter. Report overhead scope honestly.

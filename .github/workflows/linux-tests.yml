@@ -26,3 +26,5 @@ jobs:
         env:
           PYTHONPATH: src/xxmi_launcher
         run: python -m unittest discover -s tests -v
+      - name: Test passive capture protocol and evidence retention
+        run: python tools/PreparedLoading/test_capture_speed.py -v
