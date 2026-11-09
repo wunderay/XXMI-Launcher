@@ -70,6 +70,7 @@ jobs:
             work/launcher-package/build/launcher-build.log
             work/launcher-package/build/pyinstaller/launcher/warn-launcher.txt
           if-no-files-found: warn
+          retention-days: 7
   launcher-windows:
     runs-on: windows-2022
     timeout-minutes: 10
@@ -146,3 +147,4 @@ jobs:
           name: prepared-loading-development
           path: work/prepared-build/
           if-no-files-found: warn
+          retention-days: 7

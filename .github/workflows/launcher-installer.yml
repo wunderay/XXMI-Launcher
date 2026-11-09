@@ -97,3 +97,4 @@ jobs:
             work/installer-fixtures/**/LIFECYCLE-RESULT.json
             work/installer-fixtures/**/MSI-DATABASE.json
           if-no-files-found: warn
+          retention-days: 7
