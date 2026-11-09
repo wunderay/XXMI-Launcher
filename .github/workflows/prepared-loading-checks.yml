@@ -146,3 +146,35 @@ jobs:
           name: prepared-loading-development
           path: work/prepared-build/
           if-no-files-found: warn
+  publish-development:
+    if: ${{ github.event_name == 'push' }}
+    needs: [launcher-installation, launcher-windows, native-windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: development-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: prepared-loading-development
+          path: dist
+      - name: Publish the rolling development prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          files=()
+          for name in XXMI-Prepared-Loading-development-win-x64.zip SHA256SUMS BUILD-INFO.json native.patch; do
+            if [ -f "dist/$name" ]; then files+=("dist/$name"); fi
+          done
+          if [ ! -f dist/XXMI-Prepared-Loading-development-win-x64.zip ]; then echo 'development zip missing' >&2; exit 1; fi
+          if gh release view development --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete development --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+          fi
+          gh release create development --repo "$GITHUB_REPOSITORY" --prerelease --target "$GITHUB_SHA" \
+            --title "Development build ${GITHUB_SHA::12}" \
+            --notes "Unsigned development build from ${GITHUB_SHA}. Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}. Synthetic Windows tests only; not qualified for games." \
+            "${files[@]}"
