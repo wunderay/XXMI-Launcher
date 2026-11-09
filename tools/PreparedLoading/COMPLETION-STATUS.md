@@ -5,7 +5,7 @@ update, settings and recovery paths. PR #2 is ready for code review, not a draft
 The native implementation and automated Windows checks pass for the exact
 candidate below. **The development MSI download is withdrawn after a reported
 Defender `Trojan:Script/Wacatac.B!ml` detection.** See the
-[antivirus investigation](../../development-builds/installer/1202392c4aea/SECURITY-STATUS.md).
+[antivirus investigation](https://github.com/wunderay/XXMI-Launcher/blob/6d390e5ac43d828e222b4d557ff75880f738233f/development-builds/installer/1202392c4aea/SECURITY-STATUS.md).
 Prior functional/integrity checks did not establish antivirus clearance.
 
 **Official updater delivery still requires the authorized publisher release
@@ -14,7 +14,7 @@ now authors the standard launcher payload without using GPMI's packaging code.
 It preserves the existing installation identity and adds standard MSI updater
 window handling and numeric version comparisons. Windows compilation, read-only
 payload inspection and isolated inert-fixture lifecycle tests passed. The
-[development MSI evidence](../../development-builds/installer/1202392c4aea/README.md)
+[development MSI evidence](https://github.com/wunderay/XXMI-Launcher/blob/6d390e5ac43d828e222b4d557ff75880f738233f/development-builds/installer/1202392c4aea/README.md)
 is retained with its download recommendation withdrawn. No normal release/deployment has occurred, and actual-game
 qualification remains open. The earlier [build research](PUBLIC-BUILD-RESEARCH.md)
 is historical context, not the implementation recipe.

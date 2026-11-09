@@ -86,10 +86,10 @@ The workflow compiles with default ICE validation, inspects the real MSI without
 installing it, and tests install/upgrade/repair/uninstall using isolated inert
 fixtures. [Windows qualification passed](https://github.com/wunderay/XXMI-Launcher/actions/runs/40268228471)
 for producer `1202392c4aea7a682da81e63b8e41b6c98fbcc07`; the
-[development MSI receipts](../../development-builds/installer/1202392c4aea/README.md)
+[development MSI receipts](https://github.com/wunderay/XXMI-Launcher/blob/6d390e5ac43d828e222b4d557ff75880f738233f/development-builds/installer/1202392c4aea/README.md)
 remain available, but the download recommendation is withdrawn after a reported
 Defender `Trojan:Script/Wacatac.B!ml` detection. See the
-[security status](../../development-builds/installer/1202392c4aea/SECURITY-STATUS.md).
+[security status](https://github.com/wunderay/XXMI-Launcher/blob/6d390e5ac43d828e222b4d557ff75880f738233f/development-builds/installer/1202392c4aea/SECURITY-STATUS.md).
 Those functional/integrity checks did not establish antivirus clearance.
 The real MSI has not been installed by this work.
 

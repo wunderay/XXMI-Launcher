@@ -11,7 +11,8 @@ qualification gates in `tools/PreparedLoading/COMPLETION-STATUS.md`.
 `BUILD-INFO.json` identifies the pinned upstream base, exact source patch, DLL,
 compiler and Windows SDK. `corresponding-source.zip` contains the native source
 used by this build, including its third-party notices. The source patch is also
-included separately. `SHA256SUMS` is published alongside the development zip.
+included separately. `SHA256SUMS` is published alongside the development zip as assets of the rolling
+`development` prerelease on the repository Releases page.
 The build record also binds the candidate native commit and tree. Test-only
 parser/runtime exports are built in a separate fixture DLL and checked absent
 from the packaged production DLL.
