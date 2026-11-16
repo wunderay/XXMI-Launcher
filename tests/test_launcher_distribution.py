@@ -62,7 +62,8 @@ class LauncherDistributionTests(unittest.TestCase):
             tree = ast.parse((ROOT / 'src/xxmi_launcher/app.py').read_text())
             entry = next(node for node in tree.body if isinstance(node, ast.If)
                          and ast.unparse(node.test) == "__name__ == '__main__'")
-            selection = next(node for node in entry.body if isinstance(node, ast.If))
+            selection = next(node for node in entry.body if isinstance(node, ast.If)
+                             and ast.unparse(node.test) == "'__compiled__' in globals()")
             namespace = {'Path': Path, 'sys': SimpleNamespace(executable=str(installed_executable), frozen=True),
                          '__launcher_root__': workspace / 'obsolete override'}
             exec(compile(ast.Module(body=[selection], type_ignores=[]), 'app-root', 'exec'), namespace)

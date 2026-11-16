@@ -212,6 +212,8 @@ class LauncherUserFlowTests(unittest.TestCase):
             OptionWidgetErrorLabel, OptionWidgetValueDropdown, OptionWidgetValueInputInteger,
         )
         frame, rows = self.open_importer_settings()
+        self.assertNotIn('Back up...', rows)
+        self.assertNotIn('Restore...', rows)
         mode = rows['Vars.Active.Migoto.preparation_mode'].grab(OptionWidgetValueDropdown)
         self.assertEqual(mode.cget('state'), 'normal')
         self.assertIn('prepared_profile', mode._values_dict)
@@ -265,6 +267,20 @@ class LauncherUserFlowTests(unittest.TestCase):
         rows['Diagnostics'].grab(OptionWidgetValueButton).invoke()
         self.assertEqual(len(messages), 1)
         self.assertIn(frame._preparation_capability.reason, messages[0].message)
+
+    @isolated_gui_case
+    def test_zzmi_mod_backup_buttons_dispatch_separate_application_actions(self):
+        from gui.windows.settings.settings_content_frame import OptionWidgetValueButton
+        self.Config.Launcher.active_importer = 'ZZMI'
+        backups, restores = [], []
+        self.Events.Subscribe(self.Events.Application.BackupModState, backups.append, caller_id=self)
+        self.Events.Subscribe(self.Events.Application.RestoreModState, restores.append, caller_id=self)
+        frame, rows = self.open_importer_settings()
+        rows['Back up...'].grab(OptionWidgetValueButton).invoke()
+        rows['Restore...'].grab(OptionWidgetValueButton).invoke()
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(len(restores), 1)
+        self.assertIsNone(self.package.downloaded_asset_path)
 
     @isolated_gui_case
     def test_normal_update_buttons_dispatch_standard_application_events(self):
