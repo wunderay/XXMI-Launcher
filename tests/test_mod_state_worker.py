@@ -13,6 +13,19 @@ from core import mod_state_snapshot as snapshot
 from core import mod_state_worker as worker
 
 
+def windows_short_path(path):
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.GetShortPathNameW.argtypes = (wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD)
+    kernel.GetShortPathNameW.restype = wintypes.DWORD
+    buffer = ctypes.create_unicode_buffer(32768)
+    size = kernel.GetShortPathNameW(str(path), buffer, len(buffer))
+    if not size or size >= len(buffer):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return Path(buffer.value)
+
+
 class WorkerTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -150,6 +163,23 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(report.read_bytes(), b"retain existing report")
         self.assertFalse((self.job / "ready.json").exists())
 
+    @unittest.skipUnless(os.name == "nt", "Windows short/long path aliases")
+    def test_job_runtime_ownership_accepts_same_long_and_short_windows_path(self):
+        job = self.parent / "Isolated Worker Job With Spaces"
+        runtime = job / "runtime"
+        runtime.mkdir(parents=True)
+        for name in ("mod_state_worker.py", "mod_state_snapshot.py"):
+            (runtime / name).write_bytes(b"# owned runtime fixture\n")
+        short_job = windows_short_path(job)
+        canonical = runtime.resolve()
+        if os.path.normcase(str(short_job)) == os.path.normcase(str(job.resolve())):
+            self.skipTest("8.3 aliases are disabled on this volume")
+        with mock.patch.object(worker, "__file__", str(canonical / "mod_state_worker.py")), \
+                mock.patch.object(snapshot, "__file__", str(canonical / "mod_state_snapshot.py")):
+            worker._validate_isolation(short_job, self.root)
+        with self.assertRaisesRegex(snapshot.SnapshotError, "outside"):
+            worker._outside(self.root.resolve() / "backup.zip", windows_short_path(self.root), "archive")
+
     def test_source_runtime_is_copied_and_uses_isolated_python(self):
         command, frozen = worker._prepare_runtime(self.job, self.root)
         self.assertFalse(frozen)
@@ -208,6 +238,7 @@ class WorkerTests(unittest.TestCase):
 
     def test_runtime_copy_failure_does_not_spawn_helper(self):
         with mock.patch.object(worker, "_prepare_runtime", side_effect=OSError("copy failed")), \
+                mock.patch.object(snapshot, "guard_processes"), \
                 mock.patch.object(worker.subprocess, "Popen") as spawn:
             with self.assertRaisesRegex(OSError, "copy failed"):
                 worker.prepare_snapshot_job("backup", self.root, self.archive)
@@ -249,6 +280,7 @@ class WorkerTests(unittest.TestCase):
         job = self.parent / "waiting-job"
         job.mkdir()
         with mock.patch.object(worker.tempfile, "mkdtemp", return_value=str(job)), \
+                mock.patch.object(snapshot, "guard_processes"), \
                 mock.patch.object(worker.subprocess, "Popen", return_value=process), \
                 mock.patch.object(worker, "READY_TIMEOUT", 0):
             with self.assertRaisesRegex(snapshot.SnapshotError, "did not become ready"):

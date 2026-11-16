@@ -96,7 +96,17 @@ def safe_relative(value: str) -> str:
 
 
 def _fingerprint(st: os.stat_result) -> tuple:
-    return (st.st_mode, st.st_size, st.st_mtime_ns, st.st_ctime_ns, st.st_ino, st.st_dev)
+    # CPython Windows path stat reports creation time as ctime, but fstat can
+    # report ChangeTime. Compare the explicit birth timestamp across interfaces.
+    # Descriptor ChangeTime is still checked separately around the actual copy.
+    timestamp = (getattr(st, "st_birthtime_ns", st.st_ctime_ns)
+                 if os.name == "nt" else st.st_ctime_ns)
+    return (st.st_mode, st.st_size, st.st_mtime_ns, timestamp, st.st_ino, st.st_dev)
+
+
+def _unchanged_descriptor(before: os.stat_result, after: os.stat_result) -> bool:
+    return (_fingerprint(before) == _fingerprint(after) and
+            before.st_ctime_ns == after.st_ctime_ns)
 
 
 def inventory(root: Path) -> dict[str, dict]:
@@ -384,12 +394,13 @@ def backup(root: Path | str, archive: Path | str) -> dict:
                 if _fingerprint(path.lstat()) != entry["fingerprint"]:
                     fail(f"Source changed during backup: {path}")
                 with path.open("rb") as source, target.open(_zip_info("payload/" + relative), "w", force_zip64=True) as dest:
-                    if _fingerprint(os.fstat(source.fileno())) != entry["fingerprint"]:
+                    opened_stat = os.fstat(source.fileno())
+                    if _fingerprint(opened_stat) != entry["fingerprint"]:
                         fail(f"Source changed during backup: {path}")
                     while chunk := source.read(CHUNK):
                         digest.update(chunk)
                         dest.write(chunk)
-                    if _fingerprint(os.fstat(source.fileno())) != entry["fingerprint"]:
+                    if not _unchanged_descriptor(opened_stat, os.fstat(source.fileno())):
                         fail(f"Source changed during backup: {path}")
                 if _fingerprint(path.lstat()) != entry["fingerprint"]:
                     fail(f"Source changed during backup: {path}")

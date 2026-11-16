@@ -5,6 +5,7 @@ from pathlib import Path
 import stat
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 import zipfile
@@ -350,6 +351,25 @@ class SnapshotTests(unittest.TestCase):
             with mock.patch.object(snapshot.subprocess, "run", return_value=query):
                 with self.assertRaisesRegex(snapshot.SnapshotError, "CustomGame.exe"):
                     snapshot.guard_processes(config)
+
+    def test_windows_path_and_descriptor_creation_time_are_comparable(self):
+        common = {"st_mode": stat.S_IFREG | 0o644, "st_size": 7, "st_mtime_ns": 500,
+                  "st_ino": 42, "st_dev": 10, "st_birthtime_ns": 100}
+        path_stat = SimpleNamespace(**common, st_ctime_ns=100)
+        fd_stat = SimpleNamespace(**common, st_ctime_ns=300)
+        with mock.patch.object(snapshot.os, "name", "nt"):
+            self.assertEqual(snapshot._fingerprint(path_stat), snapshot._fingerprint(fd_stat))
+
+    def test_windows_descriptor_change_time_still_detects_during_copy_change(self):
+        common = {"st_mode": stat.S_IFREG | 0o644, "st_size": 7, "st_mtime_ns": 500,
+                  "st_ino": 42, "st_dev": 10, "st_birthtime_ns": 100}
+        before = SimpleNamespace(**common, st_ctime_ns=300)
+        unchanged = SimpleNamespace(**common, st_ctime_ns=300)
+        after = SimpleNamespace(**common, st_ctime_ns=400)
+        with mock.patch.object(snapshot.os, "name", "nt"):
+            self.assertTrue(snapshot._unchanged_descriptor(before, unchanged))
+            self.assertEqual(snapshot._fingerprint(before), snapshot._fingerprint(after))
+            self.assertFalse(snapshot._unchanged_descriptor(before, after))
 
 
 if __name__ == "__main__":

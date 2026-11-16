@@ -146,7 +146,7 @@ class ParentWaiter:
 
 
 def _outside(path: Path, root: Path, description: str):
-    if snapshot.inside(path, root) or snapshot.inside(path.resolve(), root):
+    if snapshot.inside(path, root) or snapshot.inside(path.resolve(), root.resolve()):
         raise snapshot.SnapshotError(f"{description} must be outside the captured launcher root: {path}")
 
 
@@ -316,15 +316,17 @@ def _load_request(path: Path) -> dict:
 def _validate_isolation(job: Path, root: Path):
     _outside(job, root, "Temporary helper job")
     runtime = snapshot.checked_path(job / "runtime")
+    canonical_runtime = runtime.resolve()
     # Merely being outside root is insufficient ownership for result writes or
     # cleanup: this exact job must contain the code currently executing.
     for module in (Path(__file__), Path(snapshot.__file__)):
-        if not snapshot.inside(module.absolute(), runtime) or not snapshot.inside(module.resolve(), runtime):
+        module = snapshot.checked_path(module)
+        if not snapshot.inside(module.resolve(), canonical_runtime):
             raise snapshot.SnapshotError("Worker modules do not belong to this isolated job/runtime; refusing reporting or cleanup.")
     if getattr(sys, "frozen", False):
         executable = Path(sys.executable).resolve()
         bundle = getattr(sys, "_MEIPASS", None)
-        if executable.parent != runtime or not bundle or Path(bundle).resolve() != runtime / "_internal":
+        if executable.parent != canonical_runtime or not bundle or Path(bundle).resolve() != canonical_runtime / "_internal":
             raise snapshot.SnapshotError("Frozen worker runtime does not belong to this isolated job.")
     paths = [job, Path.cwd(), Path(sys.executable), Path(__file__), Path(snapshot.__file__)]
     paths.extend(Path(value) for value in sys.path if value)
