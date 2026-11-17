@@ -109,7 +109,9 @@ def bench_open(self, *a, **k):
         else:
             usage = resource.getrusage(resource.RUSAGE_SELF)
             cpu, peak = usage.ru_utime + usage.ru_stime, usage.ru_maxrss * 1024
-        marks.update(cpu_s=round(cpu, 3), max_rss_mb=round(peak / 1024 / 1024, 1),
+        import psutil
+        current = psutil.Process().memory_info().rss
+        marks.update(cpu_s=round(cpu, 3), max_rss_mb=round(peak / 1024 / 1024, 1), rss_mb=round(current / 1024 / 1024, 1),
                      **counts, av_loaded='av' in sys.modules, pyglet_loaded='pyglet' in sys.modules)
         print('BENCH ' + json.dumps(marks), flush=True)
         os._exit(0)

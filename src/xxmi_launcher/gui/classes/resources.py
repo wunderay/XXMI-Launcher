@@ -27,8 +27,10 @@ class PreparedImageCache:
     Cached images are shared and must never be modified in place (PhotoImage only reads them).
     """
 
-    def __init__(self, max_bytes: int = 32 * 1024 * 1024):
+    def __init__(self, max_bytes: int = 32 * 1024 * 1024, max_entry_bytes: int = 1024 * 1024):
         self.max_bytes = max_bytes
+        # Large backgrounds are prepared once per window; holding a copy only costs memory
+        self.max_entry_bytes = max_entry_bytes
         self.used_bytes = 0
         self.entries: OrderedDict = OrderedDict()
 
@@ -51,7 +53,7 @@ class PreparedImageCache:
 
     def put(self, key, image):
         size = image.width * image.height * 4
-        if size > self.max_bytes:
+        if size > min(self.max_bytes, self.max_entry_bytes):
             return
         old = self.entries.pop(key, None)
         if old is not None:

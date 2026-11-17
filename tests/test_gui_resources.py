@@ -50,7 +50,7 @@ class PreparedImageCacheTests(unittest.TestCase):
         self.assertIsNone(PreparedImageCache.key(FakeImage(4, 4, str(self.file) + '.gone'), (4, 4), 1, 1))
 
     def test_least_recently_used_entries_are_evicted_within_budget(self):
-        cache = PreparedImageCache(max_bytes=3 * 10 * 10 * 4)
+        cache = PreparedImageCache(max_bytes=3 * 10 * 10 * 4, max_entry_bytes=10 * 10 * 4)
         for name in 'abc':
             cache.put(name, FakeImage(10, 10))
         self.assertIsNotNone(cache.get('a'))  # refresh "a"
@@ -58,7 +58,7 @@ class PreparedImageCacheTests(unittest.TestCase):
         self.assertIsNone(cache.get('b'))
         self.assertIsNotNone(cache.get('a'))
         self.assertLessEqual(cache.used_bytes, cache.max_bytes)
-        cache.put('huge', FakeImage(100, 100))
+        cache.put('huge', FakeImage(11, 10))
         self.assertIsNone(cache.get('huge'))
 
 
