@@ -44,6 +44,45 @@ class ValidationResult:
     line_issues: dict[int, Issue] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class IniFile:
+    path: Path
+    # Same string as `str(path.resolve())`, computed without resolving every file
+    key: str
+    # Same value as `path.stat().st_mtime`, taken from the directory listing where the OS provides it
+    mtime: float
+
+
+def read_ini_text(path: Path) -> str:
+    """Same text as `path.read_text(encoding='utf-8')` with universal newlines, in fewer system calls."""
+    with open(path, 'rb', buffering=0) as file:
+        data = file.read()
+    return data.decode('utf-8').replace('\r\n', '\n').replace('\r', '\n')
+
+
+def read_first_ini_line(path: Path, chunk_size: int = 16384) -> str | None:
+    """First line that is neither empty nor a `;` comment (left-stripped), like iterating
+    `path.open(encoding='utf-8')` with universal newlines, but with raw unbuffered reads."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, 'O_BINARY', 0))
+    try:
+        partial = b''
+        while True:
+            chunk = os.read(fd, chunk_size)
+            *lines, partial = (partial + chunk).split(b'\n')
+            if not chunk:
+                lines.append(partial)
+            for line in lines:
+                # A lone `\r` also ends a line under universal newlines
+                for piece in line.split(b'\r'):
+                    text = piece.decode('utf-8').lstrip()
+                    if text and not text.startswith(';'):
+                        return text
+            if not chunk:
+                return None
+    finally:
+        os.close(fd)
+
+
 @dataclass
 class ParsedIni:
     ini_lines: list[str] = field(default_factory=list)
@@ -59,12 +98,12 @@ class IniValidatorCache:
     def reset(self):
         self.data = {}
 
-    def get_mod_time(self, path: Path):
-        return self.data.get(str(path.resolve()), None)
+    def get_mod_time(self, path: Path, key: str | None = None):
+        return self.data.get(key or str(path.resolve()), None)
 
-    def add_path(self, path: Path):
-        resolved_path = str(path.resolve())
-        self.data[resolved_path] = path.stat().st_mtime
+    def add_path(self, path: Path, key: str | None = None, mtime: float | None = None):
+        resolved_path = key or str(path.resolve())
+        self.data[resolved_path] = path.stat().st_mtime if mtime is None else mtime
         self.modified = True
 
     def remove_path(self, path: Path):
@@ -74,13 +113,13 @@ class IniValidatorCache:
         del self.data[resolved_path]
         self.modified = True
 
-    def load(self, mods_path: Path, cache_path: Path | None = None):
+    def load(self, mods_path: Path, cache_path: Path | None = None, read: bool = True):
         self.file_path = cache_path or mods_path
 
         if self.file_path.suffix != '.json':
             self.file_path /= 'ini_validator_cache.json'
 
-        if self.file_path.exists():
+        if read and self.file_path.exists():
             try:
                 with open(self.file_path, 'r', encoding='utf-8') as f:
                     self.data = {k: float(v) for k, v in json.load(f).items()}
@@ -128,7 +167,61 @@ class IniValidator:
                 for root, dirs, files in os.walk(dir_path, followlinks=symlinks)
                 for file in files if file.endswith('.ini')]
 
-    def validate_folder(self) -> dict[Path, tuple[ValidationResult, ParsedIni | None]]:
+    @staticmethod
+    def scan_ini_files(dir_path: Path, exclude_patterns: list[str] | None = None) -> list[IniFile]:
+        """List `*.ini` files like `get_ini_files` + `should_exclude`, in a single cheap pass.
+
+        Excluded folders are pruned instead of walked (DISABLED mods often hold most of the files),
+        and modification times come from the directory listing (free on Windows), so unchanged
+        files need no per-file stat or path resolution.
+        """
+        patterns = [pattern.lower() for pattern in exclude_patterns or []]
+
+        def is_excluded(name: str) -> bool:
+            name = name.lower()
+            return any(fnmatch.fnmatch(name, pattern) for pattern in patterns)
+
+        result = []
+        root_real = os.path.realpath(dir_path)
+        visited = {root_real}
+        # (real path used for cache keys, path as reached through the walk)
+        pending = [(root_real, Path(dir_path))]
+        while pending:
+            real_dir, dir_path_walked = pending.pop()
+            try:
+                with os.scandir(dir_path_walked) as entries:
+                    entries = list(entries)
+            except OSError:
+                continue
+            subdirs = []
+            for entry in entries:
+                try:
+                    if entry.is_dir():
+                        if not is_excluded(entry.name):
+                            subdirs.append(entry)
+                        continue
+                    if not entry.name.endswith('.ini') or is_excluded(entry.name):
+                        continue
+                    path = dir_path_walked / entry.name
+                    if entry.is_symlink():
+                        result.append(IniFile(path, os.path.realpath(path), path.stat().st_mtime))
+                    else:
+                        result.append(IniFile(path, os.path.join(real_dir, entry.name), entry.stat().st_mtime))
+                except OSError:
+                    continue
+            # Walk in os.walk order (top-down, listing order)
+            for entry in reversed(subdirs):
+                is_link = entry.is_symlink() or getattr(entry, 'is_junction', lambda: False)()
+                real_subdir = os.path.realpath(entry.path) if is_link else os.path.join(real_dir, entry.name)
+                if is_link:
+                    # Same protection os.walk lacks: never loop through a link to an ancestor
+                    if real_subdir in visited:
+                        continue
+                visited.add(real_subdir)
+                pending.append((real_subdir, dir_path_walked / entry.name))
+        return result
+
+    def validate_folder(self, ini_files: list[IniFile] | None = None) -> dict[Path, tuple[ValidationResult, ParsedIni | None]]:
         # Load list of already processed files to avoid scanning them (if cache is enabled)
         self.load_cache()
 
@@ -136,14 +229,14 @@ class IniValidator:
 
         unwanted_files = self.unwanted_files.get('*', [])
 
-        for path in self.get_ini_files(self.folder_path):
-            # Exclude paths that are configured to be ignored by DLL
-            if self.exclude_patterns:
-                if self.should_exclude(path.relative_to(self.folder_path), self.exclude_patterns):
-                    continue
+        if ini_files is None:
+            ini_files = self.scan_ini_files(self.folder_path, self.exclude_patterns)
+
+        for ini_file in ini_files:
+            path = ini_file.path
 
             # Skip unchanged files found in the cache
-            if self.is_path_in_cache(path):
+            if self.is_path_in_cache(path, ini_file):
                 # log.debug(f'Skipped already processed file sanitizing: {path}')
                 continue
 
@@ -155,12 +248,12 @@ class IniValidator:
                 validation_result.file_issue = Issue(0, IssueType.UnwantedFile, f'unwanted {path.name}')
                 validation_results[path] = (validation_result, None)
                 # Update cache with current modification time
-                self.add_path_to_cache(path)
+                self.add_path_to_cache(path, ini_file)
                 continue
 
             # Read ini and analyze its behavior
             try:
-                ini_lines = Paths.App.read_text(path).splitlines()
+                ini_lines = read_ini_text(path).splitlines()
                 validation_result, parsed_ini = self.validate_ini(ini_lines)
                 if validation_result.file_issue or validation_result.line_issues:
                     validation_results[path] = (validation_result, parsed_ini)
@@ -168,7 +261,7 @@ class IniValidator:
                 log.exception(f'Failed to validate {path}')
             finally:
                 # Update cache with current modification time
-                self.add_path_to_cache(path)
+                self.add_path_to_cache(path, ini_file)
 
         return validation_results
 
@@ -266,32 +359,23 @@ class IniValidator:
     def should_exclude(path: Path, patterns: list[str]) -> bool:
         return any(fnmatch.fnmatch(part.lower(), pat.lower()) for part in path.parts for pat in patterns)
 
-    def index_namespaces(self, folder_path: Path):
+    def index_namespaces(self, folder_path: Path, ini_files: list[IniFile] | None = None):
         log.debug(f"Indexing namespaces for {folder_path}...")
         namespaces: dict[str, list[Path]] = {}
 
-        for path in self.get_ini_files(folder_path):
-            # Exclude paths that are configured to be ignored by DLL
-            if self.exclude_patterns:
-                if self.should_exclude(path.relative_to(folder_path), self.exclude_patterns):
-                    continue
+        if ini_files is None:
+            ini_files = self.scan_ini_files(folder_path, self.exclude_patterns)
 
+        for ini_file in ini_files:
+            path = ini_file.path
             try:
-                for line in Paths.App.read_lines(path):
-                    stripped_line = line.lstrip()
-
-                    # Skip empty lines and comments
-                    if not stripped_line or stripped_line.startswith(';'):
-                        continue
-
-                    # Try to read the first non-empty and non-comment line as namespace.
-                    if stripped_line.lower().startswith("namespace"):
-                        parts = stripped_line.split("=", 1)
-                        if len(parts) == 2:
-                            namespace = parts[1].strip()
-                            namespaces.setdefault(namespace, []).append(path)
-
-                    break
+                # Only the first non-empty and non-comment line can declare the namespace
+                stripped_line = read_first_ini_line(path)
+                if stripped_line and stripped_line.lower().startswith("namespace"):
+                    parts = stripped_line.split("=", 1)
+                    if len(parts) == 2:
+                        namespace = parts[1].strip()
+                        namespaces.setdefault(namespace, []).append(path)
 
             except Exception as e:
                 log.debug(f"Namespace indexing error: {str(e)}")
@@ -299,24 +383,30 @@ class IniValidator:
         return namespaces
 
     def load_cache(self):
-        if self.use_cache and not self.new_cache:
-            self.cache.load(self.folder_path, self.cache_path)
+        if self.use_cache:
+            # A new (reset) cache still needs its file path, or it would never be saved
+            self.cache.load(self.folder_path, self.cache_path, read=not self.new_cache)
 
     def reset_cache(self):
         if self.use_cache:
             self.cache.reset()
 
-    def is_path_in_cache(self, path: Path):
+    def is_path_in_cache(self, path: Path, ini_file: IniFile | None = None):
         if not self.use_cache:
             return False
+        elif ini_file is not None:
+            return self.cache.get_mod_time(path, ini_file.key) == ini_file.mtime
         else:
             file_mod_time = path.stat().st_mtime
             cache_mod_time = self.cache.get_mod_time(path)
             return cache_mod_time == file_mod_time
 
-    def add_path_to_cache(self, path: Path):
+    def add_path_to_cache(self, path: Path, ini_file: IniFile | None = None):
         if self.use_cache:
-            self.cache.add_path(path)
+            if ini_file is not None:
+                self.cache.add_path(path, ini_file.key, ini_file.mtime)
+            else:
+                self.cache.add_path(path)
 
     def remove_path_from_cache(self, path: Path):
         if self.use_cache:
@@ -416,9 +506,13 @@ class ModManager:
             "GIMI": Config.Active.Importer.importer_path / 'Core' / 'GIMI' / 'Libraries',
             "ZZMI": Config.Active.Importer.importer_path / 'Core' / 'ZZMI' / 'Libraries',
         }
+        # One listing of Mods serves both passes (rescanned only if duplicates were disabled)
+        mods_ini_files = IniValidator.scan_ini_files(mods_path, exclude_patterns)
+
         libs_path = libs_paths.get(Config.Launcher.active_importer, None)
         if libs_path:
-            self.disable_duplicate_libraries(libs_path, mods_path, exclude_patterns, dry_run)
+            if self.disable_duplicate_libraries(libs_path, mods_path, exclude_patterns, dry_run, mods_ini_files):
+                mods_ini_files = IniValidator.scan_ini_files(mods_path, exclude_patterns)
 
         self.ini_validator = IniValidator(
             folder_path=mods_path,
@@ -441,7 +535,7 @@ class ModManager:
         if Config.Launcher.active_importer == 'EFMI':
             self.ini_validator.unwanted_files['*'] = {'vscheck.ini'}
 
-        validation_results = self.ini_validator.validate_folder()
+        validation_results = self.ini_validator.validate_folder(mods_ini_files)
 
         rogue_ini_issues = {}
         global_trigger_results = {}
@@ -680,12 +774,14 @@ class ModManager:
         mods_path: Path,
         exclude_patterns: list[str] | None = None,
         dry_run: bool = True,
-    ):
+        mods_ini_files: list[IniFile] | None = None,
+    ) -> bool:
+        """Returns True if any ini file was disabled."""
         self.ini_validator = IniValidator(
             folder_path=mods_path,
             exclude_patterns=exclude_patterns,
         )
-        mods_namespaces = self.ini_validator.index_namespaces(mods_path)
+        mods_namespaces = self.ini_validator.index_namespaces(mods_path, mods_ini_files)
         packaged_namespaces = self.ini_validator.index_namespaces(libs_path)
 
         duplicate_ini_paths = []
@@ -695,16 +791,18 @@ class ModManager:
                     duplicate_ini_paths.append(ini_path)
 
         if len(duplicate_ini_paths) == 0:
-            return
+            return False
 
         user_requested_disable = self.show_duplicate_libraries_notification(duplicate_ini_paths, mods_path)
 
         if not user_requested_disable:
-            return
+            return False
 
         for ini_path in duplicate_ini_paths:
             if not dry_run:
                 self.disable_ini(ini_path)
+
+        return not dry_run
 
     def show_duplicate_libraries_notification(
         self,
