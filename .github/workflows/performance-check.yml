@@ -1,7 +1,7 @@
 name: Performance check
 # Mandatory before merging: runs the tools/perf benchmarks on the PR's base and head
 # on the same runner and fails if the head regresses any metric beyond its tolerance.
-# Results go to the job summary (no artifacts). Linux only (Actions minutes are limited).
+# Results go to the job summary (no artifacts). Linux only (a free hosted runner on this public repository).
 # Mark the "compare" check as required in Settings > Branches (or a ruleset) for main.
 on:
   pull_request:
@@ -29,9 +29,15 @@ jobs:
           sudo apt-get install -y -qq strace xvfb
           python -c "import tkinter; print('Tk', tkinter.TkVersion)"
       - name: Prepare base sources
+        # A pull request is checked out as its merge commit, built on the base branch's current
+        # tip; that tip (its first parent) is the base. `pull_request.base.sha` can be older.
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || 'origin/main' }}
-        run: git worktree add --detach "$RUNNER_TEMP/base" "$BASE_SHA"
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = pull_request ]; then base=$(git rev-parse HEAD^1); else base=$(git rev-parse origin/main); fi
+          echo "Base: $base"
+          echo "Base: \`$base\`" >> "$GITHUB_STEP_SUMMARY"
+          git worktree add --detach "$RUNNER_TEMP/base" "$base"
       - name: Install portable dependencies of base and head
         # Everything both versions import except Windows-only packages, the Windows PyAV wheel URL
         # and the build tool; PyAV comes from PyPI for Linux.

@@ -47,8 +47,9 @@ METRICS = {
     'gui_rss_repeat_mb': Metric('Memory after startup, repeat start', 'MB', 0.05, 5.0),
     'gui_image_resizes_repeat': Metric('Image resizes, repeat start', '', 0.0, 2),
     'update_bytes': Metric('Update checks: bytes for 3 checks (both channels)', 'B', 0.01, 64),
-    # The benchmark's mock server applies GitHub's documented rule (a 304 is free only with a token)
-    'update_counted_requests': Metric('Update checks: requests charged by the mock rate limit', '', 0.0, 0),
+    # Responses other than an empty 304 (the mock counts every 304 as free; GitHub waives the
+    # charge for a 304 only on token-authenticated requests)
+    'update_counted_requests': Metric('Update checks: non-304 responses', '', 0.0, 0),
 }
 
 
