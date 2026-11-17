@@ -79,5 +79,7 @@ class Security:
     def to_bytearray(self, data, encoding):
         if isinstance(data, str):
             return bytearray(data, encoding)
-        else:
-            return bytearray(data)
+        if isinstance(data, (bytes, bytearray, memoryview)):
+            # Already a buffer: signing and verification read it directly (no multi-MB DLL copy)
+            return data
+        return bytearray(data)
