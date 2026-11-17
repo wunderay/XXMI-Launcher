@@ -5,7 +5,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from core.utils import github_client
+try:
+    from core.utils import github_client
+except ImportError as error:  # requests/dacite are not part of the minimal Linux test setup
+    raise unittest.SkipTest(f'GitHub client dependencies missing: {error}')
 
 RELEASE = {
     'tag_name': 'v2.5.0',
