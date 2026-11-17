@@ -1,0 +1,32 @@
+name: Import time
+# Records how long launcher core modules take to import (a proxy for startup
+# cost) in the job summary (no artifacts). Informational: it has no
+# thresholds, so runner noise cannot fail it.
+# Manual only (Actions minutes are limited); results are written to the job summary.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: import-time-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Install the portable runtime dependencies
+        # Everything in requirements.txt except Windows-only packages, the Windows PyAV wheel URL and the build tool
+        run: |
+          grep -viE '^(pywin32|wmi|winshell|nuitka)==|^av @' requirements.txt > "$RUNNER_TEMP/portable-requirements.txt"
+          python -m pip install --disable-pip-version-check -r "$RUNNER_TEMP/portable-requirements.txt"
+      - name: Measure core module import times
+        env:
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/pycache
+        run: python tools/ci/import_time_report.py --output-dir "$RUNNER_TEMP/import-time" --runs 5

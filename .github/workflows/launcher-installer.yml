@@ -36,10 +36,10 @@ jobs:
     env:
       INSTALLER_VERSION: ${{ inputs.version || '2.4.10' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
           architecture: x64
@@ -77,23 +77,3 @@ jobs:
           $python = Join-Path $env:GITHUB_WORKSPACE 'work\launcher-package\build\venv\Scripts\python.exe'
           & $python -c 'import subprocess, sys; subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_installer_update.py", "-v"], check=True, timeout=120)'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: xxmi-original-installer
-          include-hidden-files: true
-          # MSI distribution is held during the reported Defender investigation.
-          path: |
-            work/installer/*.sha256
-            work/installer/*.json
-            work/installer/*.wxs
-            work/installer/*.log
-            work/launcher-package/LAUNCHER-PACKAGING.json
-            work/launcher-package/LAUNCHER-SELF-TEST.json
-            work/launcher-package/install-payload/LAUNCHER-BUILD.json
-            work/launcher-package/build/launcher-build.log
-            work/installer-fixtures/**/*.log
-            work/installer-fixtures/**/INSTALLER-*.json
-            work/installer-fixtures/**/LIFECYCLE-RESULT.json
-            work/installer-fixtures/**/MSI-DATABASE.json
-          if-no-files-found: warn

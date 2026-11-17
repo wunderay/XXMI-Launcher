@@ -32,10 +32,10 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
           architecture: x64
@@ -58,26 +58,14 @@ jobs:
           $python = Join-Path $env:GITHUB_WORKSPACE 'work\launcher-package\build\venv\Scripts\python.exe'
           & $python -c 'import subprocess, sys; subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_launcher*.py", "-v"], check=True, timeout=120)'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: xxmi-launcher-installation-payload
-          include-hidden-files: true
-          path: |
-            work/launcher-package/install-payload/
-            work/launcher-package/LAUNCHER-PACKAGING.json
-            work/launcher-package/LAUNCHER-SELF-TEST.json
-            work/launcher-package/build/launcher-build.log
-            work/launcher-package/build/pyinstaller/launcher/warn-launcher.txt
-          if-no-files-found: warn
   launcher-windows:
     runs-on: windows-2022
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
       - name: Install isolated fixture dependencies
@@ -101,11 +89,11 @@ jobs:
       - name: Preserve exact source line endings for patch application
         shell: pwsh
         run: git config --global core.autocrlf false
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           path: launcher
           persist-credentials: false
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: SpectrumQT/XXMI-Libs-Package
           ref: a7847eae82aaac32175c9a7d199673d5c9323bcd
@@ -119,10 +107,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git -C native apply ../launcher/tools/PreparedLoading/native.patch
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
         with:
           arch: x64
-      - uses: microsoft/setup-msbuild@v2
+      - uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce # v2.0.0
         with:
           vs-version: '[17.0,18.0)'
       - name: Build isolated DLL and run synthetic fixtures
@@ -134,15 +122,3 @@ jobs:
           $env:TMP = $fixtureTemp
           & ./launcher/tools/PreparedLoading/build-native.ps1 -NativeSource ./native -OutputDirectory ./work/prepared-build
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Preserve source patch
-        if: always()
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force work/prepared-build | Out-Null
-          Copy-Item launcher/tools/PreparedLoading/native.patch work/prepared-build/native.patch
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: prepared-loading-development
-          path: work/prepared-build/
-          if-no-files-found: warn
