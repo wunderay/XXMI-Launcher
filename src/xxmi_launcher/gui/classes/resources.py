@@ -63,3 +63,54 @@ class PreparedImageCache:
         while self.used_bytes > self.max_bytes:
             _, evicted = self.entries.popitem(last=False)
             self.used_bytes -= evicted.width * evicted.height * 4
+
+
+class PreparedImageDiskCache:
+    """Prepared large images (window backgrounds) stored as lossless WebP between launches.
+
+    Decoding a full-size theme background and LANCZOS-resizing it costs ~75 ms per image on every
+    start; loading the already prepared, pixel-identical result costs ~16 ms. Entries are keyed
+    by the same inputs as PreparedImageCache plus the Pillow version, written on a background
+    thread, and only the newest `max_files` are kept.
+    """
+
+    def __init__(self, folder, max_files: int = 16):
+        self.folder = folder
+        self.max_files = max_files
+
+    def path(self, key):
+        import hashlib
+        import PIL
+        digest = hashlib.sha1(repr((key, PIL.__version__)).encode('utf-8')).hexdigest()
+        return self.folder / f'{digest}.webp'
+
+    def load(self, key):
+        from PIL import Image
+        path = self.path(key)
+        try:
+            with Image.open(path) as image:
+                image.load()
+                return image.convert('RGBA')
+        except Exception:
+            return None
+
+    def store_async(self, key, image):
+        import threading
+        threading.Thread(target=self._store, args=(key, image), name='ImageCacheWrite', daemon=True).start()
+
+    def _store(self, key, image):
+        path = self.path(key)
+        try:
+            self.folder.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_name(path.name + '.tmp')
+            image.save(temporary, 'WEBP', lossless=True, method=0, exact=True)
+            os.replace(temporary, path)
+            entries = sorted(self.folder.glob('*.webp'), key=lambda entry: entry.stat().st_mtime, reverse=True)
+            for stale in entries[self.max_files:]:
+                stale.unlink(missing_ok=True)
+            # Writes interrupted by the launcher exiting
+            for leftover in self.folder.glob('*.webp.tmp'):
+                if leftover != temporary and leftover.stat().st_mtime < os.path.getmtime(path) - 60:
+                    leftover.unlink(missing_ok=True)
+        except Exception:
+            pass

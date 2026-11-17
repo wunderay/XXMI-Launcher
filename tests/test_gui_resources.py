@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from gui.classes.resources import LazyModule, PreparedImageCache
+from gui.classes.resources import LazyModule, PreparedImageCache, PreparedImageDiskCache
 from gui.classes import fonts
 
 
@@ -60,6 +60,34 @@ class PreparedImageCacheTests(unittest.TestCase):
         self.assertLessEqual(cache.used_bytes, cache.max_bytes)
         cache.put('huge', FakeImage(11, 10))
         self.assertIsNone(cache.get('huge'))
+
+
+class PreparedImageDiskCacheTests(unittest.TestCase):
+    def setUp(self):
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest('Pillow is not installed')
+        self.Image = Image
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.cache = PreparedImageDiskCache(Path(temp.name) / 'Images', max_files=2)
+
+    def test_round_trip_is_pixel_identical_including_transparent_colors(self):
+        image = self.Image.new('RGBA', (64, 32), (10, 20, 30, 0))
+        image.putpixel((5, 5), (200, 100, 50, 128))
+        self.cache._store(('a', 1), image)
+        loaded = self.cache.load(('a', 1))
+        self.assertEqual(loaded.mode, 'RGBA')
+        self.assertEqual(loaded.tobytes(), image.tobytes())
+        self.assertIsNone(self.cache.load(('a', 2)))
+
+    def test_only_newest_entries_are_kept(self):
+        for index in range(4):
+            self.cache._store(('k', index), self.Image.new('RGBA', (4, 4), (index, 0, 0, 255)))
+            path = self.cache.path(('k', index))
+            os.utime(path, (1000 + index, 1000 + index))
+        self.assertEqual(len(list(self.cache.folder.glob('*.webp'))), 2)
 
 
 class PrivateFontTests(unittest.TestCase):

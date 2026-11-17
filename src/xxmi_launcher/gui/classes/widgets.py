@@ -21,7 +21,7 @@ from PIL import Image, ImageTk, ImageDraw
 import core.config_manager as Config
 
 from gui.classes.element import UIElementBase
-from gui.classes.resources import LazyModule, PreparedImageCache
+from gui.classes.resources import LazyModule, PreparedImageCache, PreparedImageDiskCache
 from gui.classes.windows import UIWindow
 
 # PyAV (FFmpeg) is needed only for video/animated theme backgrounds; the default theme has none
@@ -870,6 +870,15 @@ class AnimationMixin:
 
 
 _prepared_images = PreparedImageCache()
+_prepared_images_on_disk: PreparedImageDiskCache | None = None
+
+
+def _disk_cache() -> PreparedImageDiskCache:
+    global _prepared_images_on_disk
+    if _prepared_images_on_disk is None:
+        import core.path_manager as Paths
+        _prepared_images_on_disk = PreparedImageDiskCache(Paths.App.Resources / 'Cache' / 'Images')
+    return _prepared_images_on_disk
 
 
 class UIImage(AnimationMixin, UICanvasWidget, CTkBaseClass):
@@ -1155,10 +1164,19 @@ class UIImage(AnimationMixin, UICanvasWidget, CTkBaseClass):
                 max(1, int(self._apply_widget_scaling(self._height))))
         key = _prepared_images.key(image, size, self.opacity, self.brightness)
         prepared = _prepared_images.get(key) if key else None
-        if prepared is None:
-            prepared = self._prepare_image(image)
-            if key:
-                _prepared_images.put(key, prepared)
+        if prepared is not None:
+            return prepared
+        # Large images (backgrounds) are kept on disk between launches instead of in memory
+        large = key is not None and size[0] * size[1] * 4 > _prepared_images.max_entry_bytes
+        if large:
+            prepared = _disk_cache().load(key)
+            if prepared is not None:
+                return prepared
+        prepared = self._prepare_image(image)
+        if large:
+            _disk_cache().store_async(key, prepared)
+        elif key:
+            _prepared_images.put(key, prepared)
         return prepared
 
     def _prepare_image(self, image: Image.Image) -> Image.Image:
