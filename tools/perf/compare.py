@@ -8,8 +8,11 @@ HEAD regresses any metric beyond its tolerance. Deterministic metrics (file-syst
 image resizes, update-check traffic) get a tight tolerance; timings and memory get a relative
 tolerance plus an absolute noise floor.
 
-Usage (Linux; needs strace, xvfb-run and a Python with Tk and the GUI packages):
-    python tools/perf/compare.py --base BASE/src/xxmi_launcher --head src/xxmi_launcher
+Usage (Linux; needs strace, xvfb-run and Pythons with Tk and the GUI packages):
+    python tools/perf/compare.py --base BASE/src/xxmi_launcher --head src/xxmi_launcher \
+        [--base-python BASE_VENV/bin/python --head-python HEAD_VENV/bin/python]
+Give each version its own interpreter when their requirements differ (a dependency update);
+otherwise both run with this interpreter.
 """
 import argparse
 import json
@@ -63,9 +66,11 @@ def run_json(command, env=None, xvfb=False):
     return json.loads(lines[-1])
 
 
-def measure(src: Path, mods: Path, game_mods: Path, runs: int) -> dict:
+def measure(src: Path, mods: Path, game_mods: Path, runs: int, python=None) -> dict:
+    """One round of every benchmark for the launcher at `src`, run with `python` (an interpreter
+    with that version's own dependencies; this one by default)."""
     env = {**os.environ, 'PYTHONPATH': str(src)}
-    python = sys.executable
+    python = str(python or sys.executable)
     values = {}
 
     prelaunch = run_json([python, PERF / 'bench_prelaunch.py', mods / 'ZZMI', '--runs', str(runs), '--syscalls'], env)
@@ -103,16 +108,17 @@ def best_of(rounds: list[dict]) -> dict:
 
 
 def measure_interleaved(base_src: Path, head_src: Path, mods: Path, game_mods: Path, runs: int, rounds: int,
-                        measure_fn=None) -> tuple[dict, dict]:
+                        measure_fn=None, base_python=None, head_python=None) -> tuple[dict, dict]:
     measure_fn = measure_fn or measure
+    pythons = {base_src: base_python, head_src: head_python}
     # Warm-up: the first process to import a fresh tree pays cold-disk costs; measure neither
     for src in (base_src, head_src):
-        measure_fn(src, mods, game_mods, 1)
+        measure_fn(src, mods, game_mods, 1, pythons[src])
     results = {base_src: [], head_src: []}
     for index in range(rounds):
         order = (base_src, head_src) if index % 2 == 0 else (head_src, base_src)
         for src in order:
-            results[src].append(measure_fn(src, mods, game_mods, runs))
+            results[src].append(measure_fn(src, mods, game_mods, runs, pythons[src]))
     return best_of(results[base_src]), best_of(results[head_src])
 
 
@@ -147,6 +153,8 @@ def main():
     ap.add_argument('--head', type=Path, required=True, help='head src/xxmi_launcher')
     ap.add_argument('--runs', type=int, default=7)
     ap.add_argument('--rounds', type=int, default=4, help='interleaved measurement rounds per version')
+    ap.add_argument('--base-python', type=Path, help="interpreter with base's dependencies (default: this one)")
+    ap.add_argument('--head-python', type=Path, help="interpreter with head's dependencies (default: this one)")
     ap.add_argument('--json', type=Path, help='also write raw values here')
     args = ap.parse_args()
     for tool in ('strace', 'xvfb-run'):
@@ -160,7 +168,8 @@ def main():
                        check=True, capture_output=True)
         # Same generated mod sets and machine for both versions
         base, head = measure_interleaved(args.base.resolve(), args.head.resolve(), mods, game_mods,
-                                         args.runs, args.rounds)
+                                         args.runs, args.rounds, base_python=args.base_python,
+                                         head_python=args.head_python)
     if args.json:
         args.json.write_text(json.dumps({'base': base, 'head': head}, indent=2), encoding='utf-8')
     summary, failures = report(base, head)
