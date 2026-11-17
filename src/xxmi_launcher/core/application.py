@@ -47,6 +47,9 @@ class Application:
         self.shutting_down = False
         # App shutdown event for watchdog thread
         self.shutdown_event = Event()
+        # A whole-folder snapshot must finish preparing before the GUI exits.
+        self._mod_state_pending = False
+        self._mod_state_results = Queue()
 
         # Load config json
         config_error = None
@@ -190,6 +193,10 @@ class Application:
             lambda event: self.run_as_thread(self.launch))
         Events.Subscribe(Events.Application.Restart,
             lambda event: self.run_as_thread(self.restart, delay=event.delay))
+        Events.Subscribe(Events.Application.BackupModState,
+            lambda event: self.handle_mod_state('backup'))
+        Events.Subscribe(Events.Application.RestoreModState,
+            lambda event: self.handle_mod_state('restore'))
 
         self.gui.after(100, self.run_as_thread, self.auto_update)
 
@@ -205,6 +212,8 @@ class Application:
         self.gui.open()
 
     def handle_update(self, event: Events.Application.Update):
+        if self._mod_state_pending:
+            return
         self.launcher.ensure_game_close()
         self.run_as_thread(self.package_manager.update_packages, **event.__dict__)
 
@@ -215,6 +224,129 @@ class Application:
             self.initialize_gui(open_settings=True)
         else:
             settings_frame.open_settings(tab_name=event.tab_name, wait_window=event.wait_window)
+
+    def handle_mod_state(self, operation: str):
+        """Choose and confirm on the Tk thread; prepare the detached helper off-thread."""
+        if operation not in ('backup', 'restore'):
+            raise ValueError('Unknown mod backup operation')
+        if Config.Launcher.active_importer != 'ZZMI' or self._mod_state_pending:
+            return
+
+        with self.thread_lock:
+            busy = (self.shutting_down or self.is_locked or self.package_manager.update_running
+                    or any(thread.is_alive() for thread in self.threads))
+            if not busy:
+                self._mod_state_pending = True
+                self.is_locked = True
+        if busy:
+            self.gui.show_messagebox(Events.Application.ShowInfo(
+                modal=True,
+                title=L('mod_backup_busy_title', 'Launcher is busy'),
+                message=L('mod_backup_busy_message',
+                    'Wait for the current launcher task to finish, then try the mod backup option again.'),
+            ))
+            return
+
+        preparing = False
+        try:
+            from datetime import datetime
+            from tkinter import filedialog
+
+            root = Paths.App.Root
+            options = dict(parent=self.gui, initialdir=str(root.parent),
+                           filetypes=[('XXMI mod backup', '*.zip')])
+            if operation == 'backup':
+                selected = filedialog.asksaveasfilename(
+                    title=L('mod_backup_choose_archive', 'Save mods and settings backup'),
+                    initialfile=f'ZZMI-mods-and-settings-{datetime.now():%Y%m%d-%H%M%S}.zip',
+                    defaultextension='.zip', confirmoverwrite=False, **options)
+            else:
+                selected = filedialog.askopenfilename(
+                    title=L('mod_restore_choose_archive', 'Choose mods and settings backup'), **options)
+            if not selected:
+                return
+            archive = Path(selected)
+
+            if operation == 'backup':
+                title = L('mod_backup_title', 'Back up mods and settings')
+                action = L('mod_backup_confirm', 'Back up and close launcher')
+                message = L('mod_backup_confirmation', """
+                    Create a backup of the **entire launcher folder**, including all contained games,
+                    mods, saved mod choices and launcher settings.
+
+                    First press **F10** in ZZZ to save your mod choices, then close all games.
+                    Choices that the mod does not save cannot be captured.
+
+                    Choose a new archive outside the launcher folder. Existing backups are never overwritten.
+                    The launcher will close after preparation. A separate message will report completion.
+                """)
+            else:
+                title = L('mod_restore_title', 'Restore mods and settings')
+                action = L('mod_restore_confirm', 'Restore and close launcher')
+                message = L('mod_restore_confirmation', """
+                    Restore the **entire launcher folder**, including all contained games, mods and settings,
+                    to the selected backup. Files added since the backup will leave the active folder.
+
+                    Close all games before continuing. The backup must belong to this exact launcher location.
+                    The archive will be verified before the launcher closes.
+
+                    Your current folder will be kept beside the restored folder for rollback.
+                    A separate message will report completion and the rollback location.
+                """)
+            message = str(message) + '\n\n' + L('mod_backup_paths',
+                'Launcher folder: `{root}`\n\nBackup file: `{archive}`').format(root=root, archive=archive)
+            if not self.gui.show_messagebox(Events.Application.ShowDialogue(
+                    modal=True, title=title, message=message, confirm_text=action)):
+                return
+
+            # Commit pending Tk variables and their signatures before reading the on-disk config.
+            Events.Fire(Events.Application.CloseSettings(save=True))
+            Config.Manager.save()
+            Events.Fire(Events.Application.Busy())
+            Events.Fire(Events.Application.StatusUpdate(status=L('mod_backup_preparing',
+                'Preparing mods and settings operation...')))
+            self.run_as_thread(self._prepare_mod_state, operation, root, archive)
+            preparing = True
+            self.gui.after(50, self._poll_mod_state)
+        except Exception as error:
+            logging.exception('Failed to prepare mod backup operation')
+            self.gui.show_messagebox(Events.Application.ShowError(
+                modal=True, title=L('mod_backup_failed', 'Mods and settings operation refused'),
+                message=str(error),
+            ))
+        finally:
+            if not preparing:
+                self._mod_state_pending = False
+                self.is_locked = False
+                Events.Fire(Events.Application.Ready())
+
+    def _prepare_mod_state(self, operation, root, archive):
+        try:
+            from core.mod_state_worker import prepare_snapshot_job
+            job = prepare_snapshot_job(operation, root, archive)
+        except Exception as error:
+            self._mod_state_results.put((None, error, traceback.format_exc()))
+        else:
+            self._mod_state_results.put((job, None, ''))
+
+    def _poll_mod_state(self):
+        # Only this main-thread callback touches Tk or asks the GUI to close.
+        try:
+            job, error, trace = self._mod_state_results.get_nowait()
+        except Empty:
+            self.gui.after(50, self._poll_mod_state)
+            return
+        if error is None and job['process'].poll() is not None:
+            error = RuntimeError(f"Backup helper stopped before launcher shutdown. Report: {job['result_path']}")
+            trace = str(error)
+        if error is not None:
+            self._mod_state_pending = False
+            self.is_locked = False
+            Events.Fire(Events.Application.Ready())
+            self.error_queue.put_nowait((error, trace))
+            return
+        logging.info('Mod backup/restore helper ready; result report: %s', job['result_path'])
+        Events.Fire(Events.Application.Close())
 
     def load_config(self):
         cfg_backup_path = Paths.App.Backups / Config.Manager.config_path.name
@@ -600,6 +732,9 @@ class Application:
             self.error_queue.put_nowait((e, traceback.format_exc()))
 
     def run_as_thread(self, callback, *args, **kwargs):
+        if self._mod_state_pending and callback != self._prepare_mod_state:
+            logging.warning('Ignoring task while preparing mod backup operation: %s', callback)
+            return None
         # Force blocking callback execution with value return via `no_thread=True`is found in kwargs.
         # Doing so allows to wait for callback completion or get its return value.
         no_thread = kwargs.pop("no_thread", False)
@@ -611,6 +746,9 @@ class Application:
         with self.thread_lock:
             if self.shutting_down:
                 logging.warning("Ignoring thread request during application shutdown: %s", callback)
+                return None
+            if self._mod_state_pending and callback != self._prepare_mod_state:
+                logging.warning('Ignoring task while preparing mod backup operation: %s', callback)
                 return None
 
             thread = Thread(
