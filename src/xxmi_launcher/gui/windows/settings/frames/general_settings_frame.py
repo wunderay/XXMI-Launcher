@@ -247,12 +247,18 @@ class GeneralSettingsFrame(SettingsContentFrame):
                             label_text=L("general_settings_skip_platform_game_launcher_checkbox",
                                 "Skip {launcher} Launcher"
                             ).format(
-                                launcher="HoYoPlay"
+                                launcher=({
+                                    "WWMI": "Kuro Games",
+                                    "ZZMI": "HoYoPlay"
+                                }.get(
+                                    Config.Launcher.active_importer,
+                                    L("error_no_data_available_short", "N/A")
+                                )),
                             ),
                             widget=OptionWidget.CHECKBOX,
                             value_variable="Vars.Active.Importer.skip_platform_game_launcher",
                             load_if=Condition(
-                                predicate=lambda: Vars.Launcher.active_importer.get() in {"ZZMI"},
+                                predicate=lambda: Vars.Launcher.active_importer.get() in {"ZZMI", "WWMI"},
                             ),
                             enabled_if=Condition(
                                 variables=("Vars.Active.Importer.configure_platform_launch_options",),
@@ -263,13 +269,19 @@ class GeneralSettingsFrame(SettingsContentFrame):
                                 predicate=lambda: Vars.Active.Importer.game_launch.get() == GameLaunch.STEAM,
                             ),
                             tooltip=L("general_settings_skip_platform_game_launcher_checkbox_tooltip", """
-                                Make **{platform}** to launch **{game}** process directly, avoiding **{launcher}**.
+                                Make **{platform}** to launch **{game}** process directly, avoiding **{launcher}** launcher.
                                 
                                 Requires **{general_settings_configure_platform_launch_options_checkbox}** to be enabled.
                             """).format(
                                 game=Vars.Active.Importer.game.get().value,
                                 platform=Vars.Active.Importer.game_launch.get().value,
-                                launcher="HoYoPlay",
+                                launcher=({
+                                    "WWMI": "Kuro Games",
+                                    "ZZMI": "HoYoPlay"
+                                }.get(
+                                    Config.Launcher.active_importer,
+                                    L("error_no_data_available_short", "N/A")
+                                )),
                             ),
                         ),
 
@@ -306,15 +318,14 @@ class GeneralSettingsFrame(SettingsContentFrame):
                             ),
                             visible_if=Condition(
                                 variables=("Vars.Active.Importer.game_launch",),
-                                predicate=lambda: Vars.Active.Importer.game_launch.get() == GameLaunch.DIRECT,
+                                predicate=lambda: Vars.Active.Importer.game_launch.get() in [GameLaunch.DIRECT, GameLaunch.EPIC_GAMES, GameLaunch.STEAM],
                             ),
                             tooltip=L("general_settings_wuwa_resource_tier_tooltip", """
                                 Controls **[assets quality tier]({page_link})** used by **{game}**.
                                 
-                                * For **Steam** and **Epic Games** installations select **{default_tier}**.
-                                * For **official launcher** installation select **any actually downloaded** tier.
+                                Make sure that selected tier is **actually installed**.
                                  
-                                Selection of wrong tier will cause the game to crash on loading.
+                                Selection of non-installed tier will cause the game to crash on loading.
                             """).format(
                                 game=Config.Importers.WWMI.Importer.game.value,
                                 page_link=r"https://wutheringwaves.kurogames.com/en/main/news/detail/5513",
@@ -415,7 +426,7 @@ class GeneralSettingsFrame(SettingsContentFrame):
                     
                                 * Default is **165**, which should be enough for the most part of in-game scenes.
                                 * The further away the camera is from active character, the bigger the FoV value is.
-                            """) + """\n\n<font color="#666666">UserEngine.ini › ConsoleVariables › r.Kuro.SkeletalMesh.DistanceLODBaseFOV</font>""",
+                            """) + """\n\n<font color="#666666">Engine.ini › ConsoleVariables › r.Kuro.SkeletalMesh.DistanceLODBaseFOV</font>""",
                         ),
 
                         SettingsOption(

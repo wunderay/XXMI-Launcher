@@ -168,7 +168,7 @@ class GameLauncher:
 
         if get_value(cfg.Active.Importer.game_launch) == GameLaunch.STEAM:
             if (
-                get_value(cfg.Active.Importer.game) == Game.ZENLESS_ZONE_ZERO
+                get_value(cfg.Active.Importer.game) in [Game.ZENLESS_ZONE_ZERO, Game.WUTHERING_WAVES]
                 and get_value(cfg.Active.Importer.skip_platform_game_launcher)
             ) or get_value(cfg.Active.Importer.game) == Game.ARKNIGHTS_ENDFIELD:
                 if not game_exe_path:
@@ -328,14 +328,14 @@ class GameLauncher:
         if Config.Active.Importer.configure_platform_launch_options:
             if Config.Active.Importer.game_launch == GameLaunch.STEAM:
                 launch_options = platform_manager.get_launch_options(Config.Active.Importer.game)
-                if launch_options != cmd_args:
+                if launch_options != launch_context.target.cmd_args:
                     Events.Fire(Events.Application.StatusUpdate(
                         status=L('status_configuring_launch_options', 'Configuring {game} Launch Options on {platform}...').format(
                             game=Config.Active.Importer.game.value,
                             platform=Config.Active.Importer.game_launch.value,
                         ))
                     )
-                    platform_manager.set_launch_options(Config.Active.Importer.game, cmd_args)
+                    platform_manager.set_launch_options(Config.Active.Importer.game, launch_context.target.cmd_args)
 
         # endregion
 
