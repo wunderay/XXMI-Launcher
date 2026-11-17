@@ -886,6 +886,15 @@ class Application:
         except Exception:
             logging.exception("Failed to save config during shutdown")
 
+        # os._exit skips atexit handlers: let queued prepared-image cache writes finish first,
+        # so none is cut short into a stray .tmp file
+        try:
+            from gui.classes import widgets
+            if not widgets.flush_prepared_image_writes(timeout=2.0):
+                logging.warning("Image cache writes still pending at exit")
+        except Exception:
+            logging.exception("Failed to flush image cache writes during shutdown")
+
         logging.debug("App Exit")
         os._exit(os.EX_OK)
 

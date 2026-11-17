@@ -82,6 +82,10 @@ class PreparedImageDiskCache:
         self.max_files = max_files
         self._queue = None
         self._writer = None
+        import threading
+        # One prune per burst of writes: after 1 s without writes, or by flush()
+        self._prune_lock = threading.Lock()
+        self._prune_pending = False
 
     def path(self, key):
         import hashlib
@@ -108,16 +112,44 @@ class PreparedImageDiskCache:
             self._writer.start()
         self._queue.put((key, image))
 
+    def flush(self, timeout: float = 5.0) -> bool:
+        """Wait until every queued image is written (or `timeout` passes); True if none remain.
+
+        The writer is a daemon thread, so without this an exiting launcher (or a test removing
+        the folder) can cut a write short and leave a `.tmp` file behind."""
+        import time
+        if self._queue is None:
+            return True
+        deadline = time.monotonic() + timeout
+        with self._queue.all_tasks_done:
+            while self._queue.unfinished_tasks:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._queue.all_tasks_done.wait(remaining)
+        # Finish the burst's prune here, so the folder is final when this returns
+        self._prune_if_pending()
+        return True
+
     def _write_queued(self):
         import queue
         while True:
-            key, image = self._queue.get()
-            self._store(key, image, prune=False)
             try:
-                # Prune once the burst of startup writes is over
-                key, image = self._queue.get(timeout=1.0)
-                self._queue.put((key, image))
+                key, image = self._queue.get(timeout=1.0 if self._prune_pending else None)
             except queue.Empty:
+                # The burst of startup writes is over
+                self._prune_if_pending()
+                continue
+            try:
+                self._store(key, image, prune=False)
+                self._prune_pending = True
+            finally:
+                self._queue.task_done()
+
+    def _prune_if_pending(self):
+        with self._prune_lock:
+            if self._prune_pending:
+                self._prune_pending = False
                 self._prune()
 
     def _store(self, key, image, prune=True):

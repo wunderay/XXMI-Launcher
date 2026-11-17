@@ -905,9 +905,19 @@ _prepared_images_on_disk: PreparedImageDiskCache | None = None
 def _disk_cache() -> PreparedImageDiskCache:
     global _prepared_images_on_disk
     if _prepared_images_on_disk is None:
+        import atexit
         import core.path_manager as Paths
         _prepared_images_on_disk = PreparedImageDiskCache(Paths.App.Resources / 'Cache' / 'Images')
+        # Let queued writes finish before the interpreter stops the daemon writer
+        atexit.register(flush_prepared_image_writes)
     return _prepared_images_on_disk
+
+
+def flush_prepared_image_writes(timeout: float = 5.0) -> bool:
+    """Wait for queued prepared-image cache writes; True if none remain."""
+    if _prepared_images_on_disk is None:
+        return True
+    return _prepared_images_on_disk.flush(timeout)
 
 
 class UIImage(AnimationMixin, UICanvasWidget, CTkBaseClass):

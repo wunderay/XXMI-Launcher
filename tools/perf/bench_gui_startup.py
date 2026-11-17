@@ -124,13 +124,13 @@ runpy.run_path(sys.argv[0], run_name='__main__')
 '''
 
 
-def run_once(src: Path, launches: int = 1) -> list[dict]:
+def run_once(src: Path, launches: int = 1, assets: Path = REPO) -> list[dict]:
     """Start the launcher `launches` times in one fresh installation (later starts reuse caches)."""
     with tempfile.TemporaryDirectory(prefix='xxmi-gui-bench-') as work:
         root = Path(work)
         shutil.copytree(src, root / 'src' / 'xxmi_launcher', ignore=shutil.ignore_patterns('__pycache__'))
         for folder in ('Locale', 'Themes'):
-            shutil.copytree(REPO / folder, root / folder)
+            shutil.copytree(assets / folder, root / folder)
         app = root / 'src' / 'xxmi_launcher'
         # Compile once so every run measures warm bytecode, as an installed launcher would
         subprocess.run([sys.executable, '-m', 'compileall', '-q', str(app)], check=True, capture_output=True)
@@ -151,8 +151,9 @@ def main():
     ap.add_argument('--runs', type=int, default=7)
     ap.add_argument('--src', type=Path, default=REPO / 'src' / 'xxmi_launcher')
     ap.add_argument('--launches', type=int, default=1, help='starts per installation; reports each start separately')
+    ap.add_argument('--assets', type=Path, default=REPO, help='folder holding the Locale and Themes to start with')
     args = ap.parse_args()
-    series = [run_once(args.src.resolve(), args.launches) for _ in range(args.runs)]
+    series = [run_once(args.src.resolve(), args.launches, args.assets.resolve()) for _ in range(args.runs)]
 
     def summarize(runs):
         summary = {key: statistics.median(run[key] for run in runs) for key in runs[0] if not isinstance(runs[0][key], bool)}
