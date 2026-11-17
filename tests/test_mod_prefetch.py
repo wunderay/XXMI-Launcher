@@ -1,3 +1,4 @@
+import ast
 import os
 import tempfile
 import threading
@@ -212,6 +213,17 @@ class ModPrefetchTests(unittest.TestCase):
             start.assert_not_called()
             mod_prefetch.ModPrefetcher.start_for_importer(self.importer, enabled=True)
             start.assert_called_once_with(self.importer / 'd3dx.ini')
+
+
+class GameLauncherWiringTests(unittest.TestCase):
+    def test_launch_passes_the_prefetch_setting(self):
+        # core.game_launcher cannot be imported on Linux; check the call it makes instead
+        source = Path(__file__).resolve().parents[1] / 'src' / 'xxmi_launcher' / 'core' / 'game_launcher.py'
+        calls = [node for node in ast.walk(ast.parse(source.read_text(encoding='utf-8')))
+                 if isinstance(node, ast.Call) and getattr(node.func, 'attr', None) == 'start_for_importer']
+        self.assertEqual(len(calls), 1)
+        self.assertEqual([ast.unparse(arg) for arg in calls[0].args],
+                         ['Config.Active.Importer.importer_path', 'Config.Launcher.prefetch_mod_files'])
 
 
 if __name__ == '__main__':

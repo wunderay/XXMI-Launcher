@@ -2,10 +2,11 @@ name: Release
 # Builds `XXMI Launcher.exe` with tools/PreparedLoading/build-launcher.ps1, runs its
 # frozen self-test and the packaged launcher tests, and zips the installation payload
 # as XXMI-Launcher-<version>-win-x64.zip with a .sha256 file.
-#  - Push of a tag vX.Y.Z: build and publish a GitHub Release for that tag.
+#  - Push of a tag vX.Y.Z: build and publish a GitHub Release for that tag, only if the
+#    tagged commit is on the default branch.
 #  - workflow_dispatch: build; publish v<version> only when `publish` is true
 #    (from the default branch, and only if that tag does not exist yet).
-#  - pull_request touching this file: dry-run build, never publishes.
+#  - pull_request touching this file or the build inputs: dry-run build, never publishes.
 # No workflow artifacts are uploaded; the release assets are the only output.
 # The dry-run and publish jobs share the same build steps through YAML anchors, so
 # a dry run exercises exactly what a release builds; only the publish job can write.
@@ -15,6 +16,9 @@ on:
   pull_request:
     paths:
       - '.github/workflows/release.yml'
+      - 'tools/PreparedLoading/build-launcher.ps1'
+      - 'tools/PreparedLoading/package-launcher.py'
+      - 'tools/PreparedLoading/launcher.spec'
   workflow_dispatch:
     inputs:
       version:
@@ -149,6 +153,17 @@ jobs:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           if ($env:REF -ne "refs/heads/$env:DEFAULT_BRANCH") { throw "Manual publishing is only allowed from $env:DEFAULT_BRANCH, not $env:REF" }
+      - name: Require a tagged commit that is on the default branch
+        if: github.event_name == 'push'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          # Compare the tagged commit with the default branch: "ahead"/"identical" means it is on it
+          $status = gh api "repos/$env:GITHUB_REPOSITORY/compare/$env:GITHUB_SHA...$env:DEFAULT_BRANCH" --jq .status
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($status -notin @('ahead', 'identical')) { throw "Tag $env:GITHUB_REF_NAME points at $env:GITHUB_SHA, which is not on $env:DEFAULT_BRANCH ($status)" }
       - *checkout
       - *resolve-version
       - *setup-python

@@ -1,5 +1,6 @@
 import importlib.util
 import subprocess
+import tempfile
 import sys
 import unittest
 from pathlib import Path
@@ -76,12 +77,13 @@ class ExitStatusTests(unittest.TestCase):
 
 
 class MeasureCommandTests(unittest.TestCase):
-    def test_each_version_starts_with_its_own_themes_and_locale(self):
-        commands = []
-        gui = {'gui_open_s': 1, 'cpu_s': 1, 'max_rss_mb': 1, 'rss_mb': 1, 'image_resize_calls': 1}
+    gui = {'gui_open_s': 1, 'cpu_s': 1, 'max_rss_mb': 1, 'rss_mb': 1, 'image_resize_calls': 1}
+
+    def measure(self, src):
+        calls = []
 
         def fake_run_json(command, env=None, xvfb=False):
-            commands.append([str(part) for part in command])
+            calls.append(([str(part) for part in command], env))
             name = Path(str(command[1])).name
             if name == 'bench_prelaunch.py':
                 timing = {'min_ms': 1, 'fs_syscalls': 1}
@@ -89,15 +91,33 @@ class MeasureCommandTests(unittest.TestCase):
             if name == 'simulate_game_load.py':
                 return {'median_load_s': 1}
             if name == 'bench_gui_startup.py':
-                return {'first_start': gui, 'later_starts': gui}
+                return {'first_start': self.gui, 'later_starts': self.gui}
             return {'stable': {'body_bytes': 1, 'counted_requests': 0}}
 
-        src = Path('/trees/base/src/xxmi_launcher')
         with mock.patch.object(compare, 'run_json', fake_run_json):
             compare.measure(src, Path('/mods'), Path('/game'), 3)
-        gui_command = next(c for c in commands if c[1].endswith('bench_gui_startup.py'))
+        return {Path(command[1]).name: (command, env) for command, env in calls}
+
+    def test_each_version_starts_with_its_own_themes_and_locale(self):
+        src = Path('/trees/base/src/xxmi_launcher')
+        gui_command, _ = self.measure(src)['bench_gui_startup.py']
         self.assertEqual(gui_command[gui_command.index('--assets') + 1], str(Path('/trees/base')))
         self.assertEqual(gui_command[gui_command.index('--src') + 1], str(src))
+
+    def test_each_benchmark_imports_the_version_it_measures(self):
+        src = Path('/trees/head/src/xxmi_launcher')
+        calls = self.measure(src)
+        for name in ('bench_prelaunch.py', 'simulate_game_load.py', 'bench_update_check.py'):
+            with self.subTest(benchmark=name):
+                self.assertEqual(calls[name][1]['PYTHONPATH'], str(src))
+
+    def test_prefetch_is_simulated_only_for_versions_that_have_it(self):
+        with tempfile.TemporaryDirectory() as root:
+            src = Path(root) / 'src' / 'xxmi_launcher'
+            (src / 'core').mkdir(parents=True)
+            self.assertNotIn('--prefetch', self.measure(src)['simulate_game_load.py'][0])
+            (src / 'core' / 'mod_prefetch.py').write_text('', encoding='utf-8')
+            self.assertIn('--prefetch', self.measure(src)['simulate_game_load.py'][0])
 
 
 if __name__ == '__main__':

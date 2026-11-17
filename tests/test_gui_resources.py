@@ -175,6 +175,39 @@ class PreparedImageDiskCacheTests(unittest.TestCase):
         time.sleep(1.2)  # the idle timer finds nothing left to prune
         self.assertEqual(len(prunes), 1)
 
+    def test_flush_deadline_covers_a_slow_prune(self):
+        import threading
+        import time
+        release = threading.Event()
+        original = self.cache._prune
+
+        def slow_prune():
+            release.wait(10)
+            original()
+
+        self.cache._prune = slow_prune
+        for index in range(3):
+            self.cache.store_async(('slow', index), self.Image.new('RGBA', (8, 8), (index, 0, 0, 255)))
+        started = time.monotonic()
+        self.assertFalse(self.cache.flush(timeout=0.1))
+        self.assertLess(time.monotonic() - started, 1.0)
+        release.set()
+        self.assertTrue(self.cache.flush(timeout=10))
+        self.assertEqual(len(list(self.cache.folder.glob('*.webp'))), 2)
+
+    def test_idle_writer_prunes_without_flush(self):
+        import time
+        for index in range(4):
+            self.cache.store_async(('idle', index), self.Image.new('RGBA', (8, 8), (index, 0, 0, 255)))
+        deadline = time.monotonic() + 5
+        while self.cache._queue.unfinished_tasks and time.monotonic() < deadline:
+            time.sleep(0.01)
+        # All written, prune still pending (it waits for 1 s without writes)
+        self.assertEqual(len(list(self.cache.folder.glob('*.webp'))), 4)
+        while len(list(self.cache.folder.glob('*.webp'))) != 2 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertEqual(len(list(self.cache.folder.glob('*.webp'))), 2)
+
 
 class ShutdownFlushTests(unittest.TestCase):
     def test_application_exit_flushes_image_writes_before_os_exit(self):
