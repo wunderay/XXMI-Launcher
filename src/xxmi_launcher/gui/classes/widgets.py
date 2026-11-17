@@ -870,6 +870,26 @@ class AnimationMixin:
 
 
 _prepared_images = PreparedImageCache()
+# Files already found to be static images in this process: (mtime_ns, size) by path
+_static_image_files: dict[str, tuple[int, int]] = {}
+
+
+class _StaticImageSource:
+    """A theme image already known to be static: opened only if a preparation misses the caches."""
+
+    def __init__(self, filename: str):
+        self.filename = filename
+
+    def open(self) -> Image.Image:
+        return Image.open(self.filename)
+
+
+def _file_identity(path: str) -> tuple[int, int] | None:
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return None
+    return stat.st_mtime_ns, stat.st_size
 _prepared_images_on_disk: PreparedImageDiskCache | None = None
 
 
@@ -993,8 +1013,15 @@ class UIImage(AnimationMixin, UICanvasWidget, CTkBaseClass):
 
                 image = None
                 if not is_animated:
-                    image = Image.open(str(path))
-                    is_animated = getattr(image, "is_animated", False) and getattr(image, "n_frames", 1) > 1
+                    identity = _file_identity(str(path))
+                    if identity is not None and _static_image_files.get(str(path)) == identity:
+                        # Same static file as before: skip re-reading its header
+                        image = _StaticImageSource(str(path))
+                    else:
+                        image = Image.open(str(path))
+                        is_animated = getattr(image, "is_animated", False) and getattr(image, "n_frames", 1) > 1
+                        if not is_animated and identity is not None:
+                            _static_image_files[str(path)] = identity
 
                 if is_animated:
                     self._image = _PyAVVideoSource(path)
@@ -1166,11 +1193,15 @@ class UIImage(AnimationMixin, UICanvasWidget, CTkBaseClass):
         prepared = _prepared_images.get(key) if key else None
         if prepared is not None:
             return prepared
+        if isinstance(image, _StaticImageSource) and key is None:
+            image = image.open()
         if key is None:
             return self._prepare_image(image)
         # Prepared results also persist on disk between launches; large ones (backgrounds) are
         # kept only there, not in memory
         from_disk = _disk_cache().load(key)
+        if from_disk is None and isinstance(image, _StaticImageSource):
+            image = image.open()
         prepared = from_disk if from_disk is not None else self._prepare_image(image)
         if from_disk is None:
             _disk_cache().store_async(key, prepared)
