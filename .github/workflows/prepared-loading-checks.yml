@@ -1,21 +1,6 @@
 name: Prepared loading development checks
+# Manual only: Actions minutes are limited (Actions > this workflow > Run workflow).
 on:
-  push:
-    branches: [codex/prepared-mod-launcher]
-    paths:
-      - 'tools/PreparedLoading/native.patch'
-      - 'tools/PreparedLoading/native-candidate.json'
-      - 'tools/PreparedLoading/*.py'
-      - 'tools/PreparedLoading/*.ps1'
-      - 'tools/PreparedLoading/launcher.spec'
-      - 'tools/PreparedLoading/launcher-version.txt'
-      - 'src/xxmi_launcher/**'
-      - 'requirements.txt'
-      - 'Themes/**'
-      - 'Locale/**'
-      - 'tests/test_prepared*.py'
-      - 'tests/test_launcher*.py'
-      - '.github/workflows/prepared-loading-checks.yml'
   workflow_dispatch:
     inputs:
       launcher_only:
@@ -58,18 +43,6 @@ jobs:
           $python = Join-Path $env:GITHUB_WORKSPACE 'work\launcher-package\build\venv\Scripts\python.exe'
           & $python -c 'import subprocess, sys; subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_launcher*.py", "-v"], check=True, timeout=120)'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: always()
-        with:
-          name: xxmi-launcher-installation-payload
-          include-hidden-files: true
-          path: |
-            work/launcher-package/install-payload/
-            work/launcher-package/LAUNCHER-PACKAGING.json
-            work/launcher-package/LAUNCHER-SELF-TEST.json
-            work/launcher-package/build/launcher-build.log
-            work/launcher-package/build/pyinstaller/launcher/warn-launcher.txt
-          if-no-files-found: warn
   launcher-windows:
     runs-on: windows-2022
     timeout-minutes: 10
@@ -140,9 +113,3 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force work/prepared-build | Out-Null
           Copy-Item launcher/tools/PreparedLoading/native.patch work/prepared-build/native.patch
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: always()
-        with:
-          name: prepared-loading-development
-          path: work/prepared-build/
-          if-no-files-found: warn

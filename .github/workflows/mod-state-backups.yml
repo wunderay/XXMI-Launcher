@@ -1,16 +1,6 @@
 name: Mod backup Windows checks
+# Manual only: Actions minutes are limited (Actions > this workflow > Run workflow).
 on:
-  pull_request:
-    paths:
-      - 'src/xxmi_launcher/**'
-      - 'tests/test_mod_state*.py'
-      - 'tests/test_launcher*.py'
-      - 'tools/PreparedLoading/launcher-bootstrap.py'
-      - 'tools/PreparedLoading/launcher.spec'
-      - 'tools/PreparedLoading/build-launcher.ps1'
-      - 'tools/PreparedLoading/package-launcher.py'
-      - 'requirements.txt'
-      - '.github/workflows/mod-state-backups.yml'
   workflow_dispatch:
 permissions:
   contents: read
@@ -65,15 +55,3 @@ jobs:
           $python = Join-Path $env:GITHUB_WORKSPACE 'work\launcher-package\build\venv\Scripts\python.exe'
           & $python -c 'import subprocess, sys; subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_launcher*.py", "-v"], check=True, timeout=240)'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: mod-state-packaging-evidence
-          include-hidden-files: true
-          path: |
-            work/launcher-package/LAUNCHER-PACKAGING.json
-            work/launcher-package/LAUNCHER-SELF-TEST.json
-            work/launcher-package/build/launcher-build.log
-            work/launcher-package/build/pyinstaller/launcher/warn-launcher.txt
-            work/mod-state-temp/xxmi-mod-state-*/result.json
-          if-no-files-found: warn

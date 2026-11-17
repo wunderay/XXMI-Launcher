@@ -1,22 +1,6 @@
 name: Original launcher MSI
+# Manual only: Actions minutes are limited (Actions > this workflow > Run workflow).
 on:
-  push:
-    branches: [codex/prepared-mod-launcher]
-    paths:
-      - 'tools/Installer/authoring.py'
-      - 'tools/Installer/validate_msi.py'
-      - 'tools/Installer/build-msi.ps1'
-      - 'tools/PreparedLoading/*.py'
-      - 'tools/PreparedLoading/*.ps1'
-      - 'tools/PreparedLoading/launcher.spec'
-      - 'tools/PreparedLoading/launcher-version.txt'
-      - 'tests/test_installer*.py'
-      - 'src/xxmi_launcher/**'
-      - 'requirements.txt'
-      - 'Themes/**'
-      - 'Locale/**'
-      - 'LICENSE'
-      - '.github/workflows/launcher-installer.yml'
   workflow_dispatch:
     inputs:
       version:
@@ -77,23 +61,3 @@ jobs:
           $python = Join-Path $env:GITHUB_WORKSPACE 'work\launcher-package\build\venv\Scripts\python.exe'
           & $python -c 'import subprocess, sys; subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_installer_update.py", "-v"], check=True, timeout=120)'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: always()
-        with:
-          name: xxmi-original-installer
-          include-hidden-files: true
-          # MSI distribution is held during the reported Defender investigation.
-          path: |
-            work/installer/*.sha256
-            work/installer/*.json
-            work/installer/*.wxs
-            work/installer/*.log
-            work/launcher-package/LAUNCHER-PACKAGING.json
-            work/launcher-package/LAUNCHER-SELF-TEST.json
-            work/launcher-package/install-payload/LAUNCHER-BUILD.json
-            work/launcher-package/build/launcher-build.log
-            work/installer-fixtures/**/*.log
-            work/installer-fixtures/**/INSTALLER-*.json
-            work/installer-fixtures/**/LIFECYCLE-RESULT.json
-            work/installer-fixtures/**/MSI-DATABASE.json
-          if-no-files-found: warn
