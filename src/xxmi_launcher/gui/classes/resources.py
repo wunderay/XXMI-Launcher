@@ -1,21 +1,23 @@
 import os
-import importlib
 
 from collections import OrderedDict
 
+from core.utils.lazy_module import LazyModule  # noqa: F401 (re-exported)
 
-class LazyModule:
-    """Imports a module on first attribute access, so optional heavy libraries cost nothing
-    (import time, memory) until a feature actually uses them."""
 
-    def __init__(self, name: str):
-        self._name = name
-        self._module = None
+class LazyMarkdown:
+    """GitHub-flavored Markdown parser built on first `convert` (markdown and its extensions
+    are only needed once a message, tooltip or settings description is rendered)."""
 
-    def __getattr__(self, attr):
-        if self._module is None:
-            self._module = importlib.import_module(self._name)
-        return getattr(self._module, attr)
+    def __init__(self):
+        self._parser = None
+
+    def convert(self, text: str) -> str:
+        if self._parser is None:
+            import markdown
+            from mdx_gfm import GithubFlavoredMarkdownExtension
+            self._parser = markdown.Markdown(extensions=[GithubFlavoredMarkdownExtension()])
+        return self._parser.convert(text)
 
 
 class PreparedImageCache:

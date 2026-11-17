@@ -1,15 +1,12 @@
 import logging
 import re
 import webbrowser
-import markdown
 import os
 import math
 
 from typing import List, Optional
 from textwrap import dedent
-from mdx_gfm import GithubFlavoredMarkdownExtension
 from customtkinter import IntVar
-from tkinterweb import HtmlLabel
 from pathlib import Path
 from math import ceil
 
@@ -21,9 +18,13 @@ from core.locale_manager import L
 from gui.classes.containers import UIFrame, UIScrollableFrame
 from gui.classes.widgets import UILabel, UIButton, UIEntry, UICheckbox,  UIOptionMenu
 from gui.classes.widgets import UIText, UIImageButton
+from gui.classes.resources import LazyMarkdown, LazyModule
+
+# HTML rendering is needed only once a message is shown
+tkinterweb = LazyModule('tkinterweb')
 
 
-markdown_parser = markdown.Markdown(extensions=[GithubFlavoredMarkdownExtension()])
+markdown_parser = LazyMarkdown()
 
 
 class MessageFrame(UIFrame):
@@ -305,7 +306,7 @@ class ContentFrame(UIScrollableFrame):
 
         self.configure(fg_color='#1f2024')
 
-        self.message_widget = HtmlLabel(
+        self.message_widget = tkinterweb.HtmlLabel(
             master=self,
             messages_enabled=False,
             caches_enabled=False,
@@ -365,7 +366,7 @@ class ContentFrame(UIScrollableFrame):
         ui_scale = self._apply_widget_scaling(1.0)
 
         if ui_scale != 1.0:
-            measurement_widget = HtmlLabel(
+            measurement_widget = tkinterweb.HtmlLabel(
                 master=self,
                 messages_enabled=False,
                 caches_enabled=False,
@@ -540,7 +541,7 @@ class ContentFrame(UIScrollableFrame):
 class RadioWidget:
     def __init__(
         self,
-        frame: HtmlLabel,
+        frame: "tkinterweb.HtmlLabel",
         options: list[str],
         radio_var: IntVar,
         selected_id: int = 0,
@@ -658,8 +659,8 @@ class RadioWidget:
 
 
 class CheckboxWidget:
-    def __init__(self, frame: HtmlLabel, options: list[tuple[bool, str]], selected_options: list[bool]):
-        self.frame: HtmlLabel = frame
+    def __init__(self, frame: "tkinterweb.HtmlLabel", options: list[tuple[bool, str]], selected_options: list[bool]):
+        self.frame: "tkinterweb.HtmlLabel" = frame
         self.options: list[tuple[bool, str]] = options
         self.selected_options = selected_options
         self.hovered_option = 0

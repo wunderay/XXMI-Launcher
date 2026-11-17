@@ -1,17 +1,19 @@
 import os
 import json
 import logging
-import requests
 
 from pathlib import Path
 from typing import List, Optional
 from dataclasses import dataclass
 
 from dacite import from_dict
-from requests.exceptions import SSLError
 
 from core.locale_manager import L
 from core.utils.proxy import ProxyConfig, ProxyManager
+from core.utils.lazy_module import LazyModule
+
+# Update checks run on a background thread after the window opens; keep requests off startup
+requests = LazyModule('requests')
 
 log = logging.getLogger(__name__)
 
@@ -105,7 +107,7 @@ class GitHubClient:
                 response = http_response.json()
                 if http_response.status_code == 200 and (isinstance(response, list) or 'tag_name' in response):
                     self._save_cached(cache_file, http_response.headers.get('ETag'), response)
-        except SSLError as e:
+        except requests.exceptions.SSLError as e:
             raise ValueError(L('error_ssl_certificate_validation_failed', """
                  Failed to validate SSL certificate of GitHub HTTPS connection!
                  
