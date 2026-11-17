@@ -1,6 +1,5 @@
 import json
 import logging
-import pyglet
 
 import core.path_manager as Paths
 import core.event_manager as Events
@@ -11,6 +10,7 @@ from core.locale_manager import L
 from customtkinter import set_appearance_mode, set_default_color_theme, ScalingTracker, set_widget_scaling, set_window_scaling
 
 from core.config.enums import WindowScale
+from gui.classes.fonts import register_private_font
 from gui.classes.windows import UIMainWindow, calculate_scaling_limit, get_monitor_dpi, install_scaling_tracker_guard, enable_high_quality_dpi_awareness
 from gui.windows.main.message_frame.message_frame import MessageFrame
 from gui.windows.main.launcher_frame.launcher_frame import LauncherFrame
@@ -42,9 +42,6 @@ class MainWindow(UIMainWindow):
 
         # Use dark mode theme colors
         set_appearance_mode('Dark')
-
-        # Fix pyglet font load
-        pyglet.options['win32_gdi_font'] = True
 
         self.active_theme = None
         self.launcher_frame = None
@@ -87,7 +84,7 @@ class MainWindow(UIMainWindow):
                 if font_path.suffix != '.ttf':
                     continue
                 try:
-                    pyglet.font.add_file(str(font_path))
+                    register_private_font(font_path)
                 except Exception as e:
                     log.exception(e)
 

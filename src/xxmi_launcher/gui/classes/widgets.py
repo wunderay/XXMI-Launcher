@@ -1,10 +1,10 @@
+import os
 import sys
 import logging
 import time
 import tkinter
 import re
 import threading
-import av
 
 from typing import Union, Tuple, List, Dict, Optional, Callable, Deque, Iterator
 from pathlib import Path
@@ -21,7 +21,11 @@ from PIL import Image, ImageTk, ImageDraw
 import core.config_manager as Config
 
 from gui.classes.element import UIElementBase
+from gui.classes.resources import LazyModule, PreparedImageCache
 from gui.classes.windows import UIWindow
+
+# PyAV (FFmpeg) is needed only for video/animated theme backgrounds; the default theme has none
+av = LazyModule('av')
 
 logging.getLogger('PIL').setLevel(logging.INFO)
 
@@ -590,7 +594,7 @@ class AnimationMixin:
     # region PyAV Video Decoding
 
     @staticmethod
-    def _get_video_stream(container: av.container.InputContainer, source: _PyAVVideoSource):
+    def _get_video_stream(container: "av.container.InputContainer", source: _PyAVVideoSource):
         streams = container.streams.video
         if not streams:
             return None
@@ -599,7 +603,7 @@ class AnimationMixin:
         stream_index = 1 if source.path.lower().endswith(".avif") and len(streams) > 1 else 0
         return streams[stream_index]
 
-    def _get_video_fps(self, video_stream: av.video.stream.VideoStream) -> float:
+    def _get_video_fps(self, video_stream: "av.video.stream.VideoStream") -> float:
         rate = video_stream.average_rate or video_stream.guessed_rate or video_stream.base_rate or 30.0
         return max(1.0, float(rate))
 
@@ -614,11 +618,11 @@ class AnimationMixin:
 
     def _create_video_filter_graph(
         self,
-        video_stream: av.video.stream.VideoStream,
+        video_stream: "av.video.stream.VideoStream",
         output_size: tuple[int, int],
         *,
         fps: float | None = None,
-    ) -> av.filter.Graph:
+    ) -> "av.filter.Graph":
         """Build a PyAV graph that scales frames and converts them to RGBA."""
         width, height = self._validate_output_size(output_size)
         graph = av.filter.Graph()
@@ -667,10 +671,10 @@ class AnimationMixin:
 
     @staticmethod
     def _iter_filtered_frames(
-        container: av.container.InputContainer,
-        video_stream: av.video.stream.VideoStream,
-        graph: av.filter.Graph,
-    ) -> Iterator[av.VideoFrame]:
+        container: "av.container.InputContainer",
+        video_stream: "av.video.stream.VideoStream",
+        graph: "av.filter.Graph",
+    ) -> "Iterator[av.VideoFrame]":
         """Yield all available graph output, including delayed frames at EOF."""
         for decoded_frame in container.decode(video_stream):
             graph.push(decoded_frame)
@@ -865,6 +869,9 @@ class AnimationMixin:
     # endregion
 
 
+_prepared_images = PreparedImageCache()
+
+
 class UIImage(AnimationMixin, UICanvasWidget, CTkBaseClass):
     def __init__(
         self,
@@ -1002,7 +1009,7 @@ class UIImage(AnimationMixin, UICanvasWidget, CTkBaseClass):
                     log.exception("Unable to decode the initial video frame")
                     self.image = None
             else:
-                self.image = ImageTk.PhotoImage(self._prepare_image(self._image))
+                self.image = ImageTk.PhotoImage(self._prepare_static_image(self._image))
 
             if self.image_tag is None:
                 self._update_attrs(['x', 'y', 'anchor'], kwargs)
@@ -1120,7 +1127,8 @@ class UIImage(AnimationMixin, UICanvasWidget, CTkBaseClass):
             draw.rounded_rectangle(box, radius=radius * scale, outline=border_color, width=border_width)
 
         if scale != 1:
-            image = image.resize((width, height), Image.LANCZOS)
+            # Integer supersampling: a box average is the anti-aliasing filter, at half LANCZOS's cost
+            image = image.resize((width, height), Image.BOX)
 
         if bg_image:
             bg_image.alpha_composite(image, (self.get_pad_value(padx), self.get_pad_value(pady)))
@@ -1135,6 +1143,18 @@ class UIImage(AnimationMixin, UICanvasWidget, CTkBaseClass):
         y = (bg.height - fg.height) // 2
         bg.alpha_composite(fg, (x, y))
         return bg
+
+    def _prepare_static_image(self, image: Image.Image) -> Image.Image:
+        """`_prepare_image` for a static (non-animated) image, reusing earlier identical results."""
+        size = (max(1, int(self._apply_widget_scaling(self._width))),
+                max(1, int(self._apply_widget_scaling(self._height))))
+        key = _prepared_images.key(image, size, self.opacity, self.brightness)
+        prepared = _prepared_images.get(key) if key else None
+        if prepared is None:
+            prepared = self._prepare_image(image)
+            if key:
+                _prepared_images.put(key, prepared)
+        return prepared
 
     def _prepare_image(self, image: Image.Image) -> Image.Image:
         """Modify image size, opacity and/or brightness."""
