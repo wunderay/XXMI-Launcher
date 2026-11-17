@@ -34,9 +34,40 @@ def excluded(name, patterns):
     return any(fnmatch.fnmatch(name.lower(), p.lower()) for p in patterns)
 
 
+def purge_windows_standby_list() -> bool:
+    """Empty the Windows file cache (standby list), as RAMMap does. Machine-wide, so it only runs
+    when XXMI_PERF_ALLOW_CACHE_PURGE=1 (set by the CI benchmark on throwaway runners) and as admin."""
+    if os.environ.get("XXMI_PERF_ALLOW_CACHE_PURGE") != "1":
+        return False
+    import ctypes
+    from ctypes import wintypes
+    advapi32, ntdll = ctypes.WinDLL("advapi32", use_last_error=True), ctypes.WinDLL("ntdll")
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+    class LUID(ctypes.Structure):
+        _fields_ = [("LowPart", wintypes.DWORD), ("HighPart", wintypes.LONG)]
+
+    class TOKEN_PRIVILEGES(ctypes.Structure):
+        _fields_ = [("PrivilegeCount", wintypes.DWORD), ("Luid", LUID), ("Attributes", wintypes.DWORD)]
+
+    token = wintypes.HANDLE()
+    if not advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), 0x0020 | 0x0008, ctypes.byref(token)):
+        return False
+    privileges = TOKEN_PRIVILEGES(1, LUID(), 0x00000002)
+    if not advapi32.LookupPrivilegeValueW(None, "SeProfileSingleProcessPrivilege", ctypes.byref(privileges.Luid)):
+        return False
+    advapi32.AdjustTokenPrivileges(token, False, ctypes.byref(privileges), 0, None, None)
+    # SystemMemoryListInformation (80): flush modified pages to disk (3), then purge standby (4)
+    for command in (3, 4):
+        value = ctypes.c_int(command)
+        if ntdll.NtSetSystemInformation(80, ctypes.byref(value), ctypes.sizeof(value)) != 0:
+            return False
+    return True
+
+
 def evict(root: Path):
     if not hasattr(os, "posix_fadvise"):
-        return False
+        return os.name == "nt" and purge_windows_standby_list()
     for folder, _, files in os.walk(root):
         for f in files:
             fd = os.open(os.path.join(folder, f), os.O_RDONLY)
@@ -88,9 +119,10 @@ def main():
                     help="run the launcher's core.mod_prefetch during the boot delay (needs PYTHONPATH=src/xxmi_launcher)")
     args = ap.parse_args()
     runs = []
+    cold_ok = False
     for _ in range(args.repeat):
         if args.cold:
-            evict(args.importer)
+            cold_ok = evict(args.importer)
         prefetcher = None
         if args.prefetch:
             from core.mod_prefetch import ModPrefetcher
@@ -110,7 +142,7 @@ def main():
     except ImportError:  # Windows
         pass
     best["median_load_s"] = sorted(r["load_s"] for r in runs)[len(runs) // 2]
-    best["mode"] = "cold" if args.cold else "warm"
+    best["mode"] = "cold" if args.cold and cold_ok else "warm"
     print(json.dumps(best))
 
 
