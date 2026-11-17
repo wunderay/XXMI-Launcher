@@ -34,13 +34,17 @@ jobs:
       - name: Benchmark
         shell: pwsh
         env:
-          BASE_REF: ${{ github.event.pull_request.base.sha || 'origin/main' }}
+          # A pull request is checked out as its merge commit; its first parent is the base it was
+          # merged onto (pull_request.base.sha does not follow the base branch)
+          EVENT_NAME: ${{ github.event_name }}
           # Lets the simulator empty this throwaway runner's file cache between cold runs
           XXMI_PERF_ALLOW_CACHE_PURGE: '1'
         run: |
           $work = Join-Path $env:RUNNER_TEMP 'perf'
           New-Item -ItemType Directory -Force $work | Out-Null
-          git worktree add --detach (Join-Path $work 'base') $env:BASE_REF
+          $base = if ($env:EVENT_NAME -eq 'pull_request') { git rev-parse 'HEAD^1' } else { git rev-parse origin/main }
+          Write-Output "Base: $base"
+          git worktree add --detach (Join-Path $work 'base') $base
           python tools/perf/make_mods.py (Join-Path $work 'mods') --mods 1000 --scale 0.02 --seed 2
           $summary = @('## Windows benchmarks', '', '### Pre-launch Mods optimizer (1000 mods, median of 7)', '')
           foreach ($variant in @(@('base', (Join-Path $work 'base/src/xxmi_launcher')), @('this change', 'src/xxmi_launcher'))) {
@@ -76,11 +80,15 @@ jobs:
       - name: Benchmark real launcher startup (base vs this change)
         shell: pwsh
         env:
-          BASE_REF: ${{ github.event.pull_request.base.sha || 'origin/main' }}
+          # A pull request is checked out as its merge commit; its first parent is the base it was
+          # merged onto (pull_request.base.sha does not follow the base branch)
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           $work = Join-Path $env:RUNNER_TEMP 'perf-gui'
           New-Item -ItemType Directory -Force $work | Out-Null
-          git worktree add --detach (Join-Path $work 'base') $env:BASE_REF
+          $base = if ($env:EVENT_NAME -eq 'pull_request') { git rev-parse 'HEAD^1' } else { git rev-parse origin/main }
+          Write-Output "Base: $base"
+          git worktree add --detach (Join-Path $work 'base') $base
           # Base requirements are a superset (they still list pyglet); the build-only Nuitka is skipped
           Get-Content (Join-Path $work 'base/requirements.txt') | Where-Object { $_ -notmatch '^Nuitka' } |
             Set-Content (Join-Path $work 'requirements.txt')

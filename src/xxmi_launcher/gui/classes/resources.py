@@ -67,6 +67,10 @@ class PreparedImageCache:
             self.used_bytes -= evicted.width * evicted.height * 4
 
 
+# Queued by flush(): the writer runs the burst's pending prune as part of the flushed work
+_PRUNE_REQUEST = object()
+
+
 class PreparedImageDiskCache:
     """Prepared static theme images stored as lossless WebP between launches.
 
@@ -82,9 +86,8 @@ class PreparedImageDiskCache:
         self.max_files = max_files
         self._queue = None
         self._writer = None
-        import threading
-        # One prune per burst of writes: after 1 s without writes, or by flush()
-        self._prune_lock = threading.Lock()
+        # One prune per burst of writes: after 1 s without writes, or when flush() asks. Only the
+        # writer thread prunes, so flush's deadline covers the prune too
         self._prune_pending = False
 
     def path(self, key):
@@ -121,36 +124,39 @@ class PreparedImageDiskCache:
         if self._queue is None:
             return True
         deadline = time.monotonic() + timeout
+        self._queue.put(_PRUNE_REQUEST)
         with self._queue.all_tasks_done:
             while self._queue.unfinished_tasks:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     return False
                 self._queue.all_tasks_done.wait(remaining)
-        # Finish the burst's prune here, so the folder is final when this returns
-        self._prune_if_pending()
         return True
 
     def _write_queued(self):
         import queue
         while True:
             try:
-                key, image = self._queue.get(timeout=1.0 if self._prune_pending else None)
+                item = self._queue.get(timeout=1.0 if self._prune_pending else None)
             except queue.Empty:
                 # The burst of startup writes is over
                 self._prune_if_pending()
                 continue
             try:
-                self._store(key, image, prune=False)
-                self._prune_pending = True
+                if item is _PRUNE_REQUEST:
+                    self._prune_if_pending()
+                else:
+                    key, image = item
+                    self._store(key, image, prune=False)
+                    self._prune_pending = True
             finally:
                 self._queue.task_done()
 
     def _prune_if_pending(self):
-        with self._prune_lock:
-            if self._prune_pending:
-                self._prune_pending = False
-                self._prune()
+        # Writer thread only
+        if self._prune_pending:
+            self._prune_pending = False
+            self._prune()
 
     def _store(self, key, image, prune=True):
         path = self.path(key)
