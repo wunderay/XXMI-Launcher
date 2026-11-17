@@ -1,6 +1,16 @@
 name: Mod backup Windows checks
-# Manual only: Actions minutes are limited (Actions > this workflow > Run workflow).
 on:
+  pull_request:
+    paths:
+      - 'src/xxmi_launcher/**'
+      - 'tests/test_mod_state*.py'
+      - 'tests/test_launcher*.py'
+      - 'tools/PreparedLoading/launcher-bootstrap.py'
+      - 'tools/PreparedLoading/launcher.spec'
+      - 'tools/PreparedLoading/build-launcher.ps1'
+      - 'tools/PreparedLoading/package-launcher.py'
+      - 'requirements.txt'
+      - '.github/workflows/mod-state-backups.yml'
   workflow_dispatch:
 permissions:
   contents: read

@@ -1,6 +1,21 @@
 name: Prepared loading development checks
-# Manual only: Actions minutes are limited (Actions > this workflow > Run workflow).
 on:
+  push:
+    branches: [codex/prepared-mod-launcher]
+    paths:
+      - 'tools/PreparedLoading/native.patch'
+      - 'tools/PreparedLoading/native-candidate.json'
+      - 'tools/PreparedLoading/*.py'
+      - 'tools/PreparedLoading/*.ps1'
+      - 'tools/PreparedLoading/launcher.spec'
+      - 'tools/PreparedLoading/launcher-version.txt'
+      - 'src/xxmi_launcher/**'
+      - 'requirements.txt'
+      - 'Themes/**'
+      - 'Locale/**'
+      - 'tests/test_prepared*.py'
+      - 'tests/test_launcher*.py'
+      - '.github/workflows/prepared-loading-checks.yml'
   workflow_dispatch:
     inputs:
       launcher_only:

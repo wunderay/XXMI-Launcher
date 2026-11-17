@@ -1,6 +1,11 @@
 name: Original MSI Defender diagnostic
-# Manual only: Actions minutes are limited (Actions > this workflow > Run workflow).
 on:
+  push:
+    branches: [codex/installer-antivirus-fix]
+    paths:
+      - '.github/workflows/installer-antivirus.yml'
+      - 'tools/Installer/scan-defender.ps1'
+      - 'tools/Installer/test-defender.ps1'
   workflow_dispatch:
 permissions:
   contents: read

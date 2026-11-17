@@ -1,6 +1,22 @@
 name: Original launcher MSI
-# Manual only: Actions minutes are limited (Actions > this workflow > Run workflow).
 on:
+  push:
+    branches: [codex/prepared-mod-launcher]
+    paths:
+      - 'tools/Installer/authoring.py'
+      - 'tools/Installer/validate_msi.py'
+      - 'tools/Installer/build-msi.ps1'
+      - 'tools/PreparedLoading/*.py'
+      - 'tools/PreparedLoading/*.ps1'
+      - 'tools/PreparedLoading/launcher.spec'
+      - 'tools/PreparedLoading/launcher-version.txt'
+      - 'tests/test_installer*.py'
+      - 'src/xxmi_launcher/**'
+      - 'requirements.txt'
+      - 'Themes/**'
+      - 'Locale/**'
+      - 'LICENSE'
+      - '.github/workflows/launcher-installer.yml'
   workflow_dispatch:
     inputs:
       version:
