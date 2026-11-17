@@ -167,9 +167,12 @@ int main(int argc, char**) {
 		gate.unlock();
 		holder.join();
 	}
-	PumpIncrementalRelease(&device); // takes every slot first
-	std::printf("drain while another thread holds the lock: occupied=%d destroyed=%d\n", Occupied(), destroyed);
+	childReleases = 0;
+	PumpIncrementalRelease(&device); // takes every slot first, before any paced release
+	std::printf("drain while another thread holds the lock: occupied=%d destroyed=%d child releases=%d\n",
+		Occupied(), destroyed, childReleases);
 	CHECK(Occupied() == 0 && destroyed == 2 && !IncrementalDrainRequested().load());
+	CHECK(childReleases == 0);
 	std::printf(failures ? "FAILED\n" : "OK\n");
 	return failures ? 1 : 0;
 }
