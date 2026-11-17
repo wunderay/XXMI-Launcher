@@ -125,7 +125,7 @@ def _referenced_files(ini_path: str, stop: threading.Event | None = None):
                 return
             if len(raw_line) == MAX_LINE_BYTES and not raw_line.endswith(b'\n'):
                 # Over-long line: discard the rest of it
-                while (rest := file.readline(MAX_LINE_BYTES)) and not rest.endswith(b'\n'):
+                while not _stopped(stop) and (rest := file.readline(MAX_LINE_BYTES)) and not rest.endswith(b'\n'):
                     pass
                 continue
             line = raw_line.decode('utf-8', errors='replace').strip()
@@ -154,13 +154,23 @@ def iter_mod_files(d3dx_ini_path: Path, stop: threading.Event | None = None):
             yield from _iter_ini_files(folder, settings.exclude_patterns, recursive=True, stop=stop)
 
     seen = set()
+
+    def first_visit(path):
+        key = os.path.normcase(os.path.abspath(path))
+        if key in seen:
+            return False
+        seen.add(key)
+        return True
+
     for ini_path in ini_files():
         if _stopped(stop):
             return
-        for path in (ini_path, *_referenced_files(ini_path, stop)):
-            key = os.path.normcase(os.path.abspath(path))
-            if key not in seen:
-                seen.add(key)
+        # The INI first, then its references one at a time: the consumer's budget or stop check
+        # runs before the INI is parsed and between references
+        if first_visit(ini_path):
+            yield ini_path
+        for path in _referenced_files(ini_path, stop):
+            if first_visit(path):
                 yield path
 
 
@@ -230,7 +240,8 @@ def prefetch_files(paths, budget: int, stop: threading.Event | None = None) -> P
         stats.files += 1
         stats.bytes += size
     else:
-        stats.completed = True
+        # A stop can also end collection itself, which ends this loop normally
+        stats.completed = not _stopped(stop)
     stats.seconds = time.perf_counter() - started
     stats.cpu_seconds = time.thread_time() - cpu_started
     return stats

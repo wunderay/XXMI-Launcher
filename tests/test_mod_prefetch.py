@@ -153,5 +153,58 @@ class ModPrefetchTests(unittest.TestCase):
         self.assertLessEqual(max(reads), mod_prefetch.MAX_LINE_BYTES)
 
 
+    def test_over_budget_ini_is_not_parsed(self):
+        self.write('Mods/Big/mod.ini', '[ResourceA]\n' + 'filename = x.buf\n' * 2000)
+        readlines = []
+        real_open = open
+
+        class Counting:
+            def __init__(self, file):
+                self.file = file
+
+            def readline(self, limit=-1):
+                readlines.append(limit)
+                return self.file.readline(limit)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                self.file.close()
+
+        settings = self.importer / 'only-big.ini'
+        settings.write_text('[Include]\ninclude_recursive = Mods/Big\n', encoding='utf-8')
+        with mock.patch('builtins.open', lambda path, mode='r', *a, **k: Counting(real_open(path, mode, *a, **k))):
+            stats = mod_prefetch.prefetch_files(mod_prefetch.iter_mod_files(settings), budget=1)
+        self.assertEqual(stats.bytes, 0)
+        self.assertEqual(readlines, [])
+
+    def test_stop_interrupts_an_oversized_line(self):
+        path = self.write('Mods/Long/mod.ini', 'x' * (mod_prefetch.MAX_LINE_BYTES * 3) + '\nfilename = after.buf\n')
+        stop = threading.Event()
+        reads = []
+        real_open = open
+
+        class StopAfterFirstRead:
+            def __init__(self, file):
+                self.file = file
+
+            def readline(self, limit=-1):
+                reads.append(limit)
+                stop.set()
+                return self.file.readline(limit)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                self.file.close()
+
+        with mock.patch('builtins.open', lambda p, mode='r', *a, **k: StopAfterFirstRead(real_open(p, mode, *a, **k))):
+            found = list(mod_prefetch._referenced_files(str(path), stop))
+        self.assertEqual(found, [])
+        self.assertEqual(len(reads), 1)
+
+
 if __name__ == '__main__':
     unittest.main()
