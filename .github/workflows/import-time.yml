@@ -21,8 +21,11 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
-      - name: Install the Linux-installable runtime dependencies used by core
-        run: python -m pip install --disable-pip-version-check cryptography==50.0.2 psutil==7.2.2
+      - name: Install the portable runtime dependencies
+        # Everything in requirements.txt except Windows-only packages, the Windows PyAV wheel URL and the build tool
+        run: |
+          grep -viE '^(pywin32|wmi|winshell|nuitka)==|^av @' requirements.txt > "$RUNNER_TEMP/portable-requirements.txt"
+          python -m pip install --disable-pip-version-check -r "$RUNNER_TEMP/portable-requirements.txt"
       - name: Measure core module import times
         env:
           PYTHONPYCACHEPREFIX: ${{ runner.temp }}/pycache
