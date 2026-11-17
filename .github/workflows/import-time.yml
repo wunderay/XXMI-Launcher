@@ -1,0 +1,45 @@
+name: Import time
+# Records how long launcher core modules take to import (a proxy for startup
+# cost) and uploads the raw -X importtime traces. Informational: it has no
+# thresholds, so runner noise cannot fail it.
+on:
+  pull_request:
+    paths:
+      - 'src/xxmi_launcher/core/**'
+      - 'tools/ci/import_time_report.py'
+      - '.github/workflows/import-time.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src/xxmi_launcher/core/**'
+      - 'tools/ci/import_time_report.py'
+      - '.github/workflows/import-time.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: import-time-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Install the Linux-installable runtime dependencies used by core
+        run: python -m pip install --disable-pip-version-check cryptography==50.0.2 psutil==7.2.2
+      - name: Measure core module import times
+        env:
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/pycache
+        run: python tools/ci/import_time_report.py --output-dir "$RUNNER_TEMP/import-time" --runs 5
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: import-time
+          path: ${{ runner.temp }}/import-time/
+          retention-days: 14
+          if-no-files-found: error
