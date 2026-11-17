@@ -71,6 +71,22 @@ class ExitStatusTests(unittest.TestCase):
         self.assertEqual([item['module'] for item in data['skipped']], ['core.windows'])
         self.assertEqual([item['module'] for item in data['measured']], ['core.good'])
 
+    def test_a_module_that_never_reports_a_time_fails_the_run(self):
+        # The warm-up import succeeds, but no measured run yields an importtime line
+        def fake_run_once(module, env):
+            return None, None, ''
+
+        with tempfile.TemporaryDirectory() as out, \
+                mock.patch.object(report, 'discover', return_value=['core.silent']), \
+                mock.patch.object(report, 'run_once', fake_run_once), \
+                mock.patch.object(sys, 'argv', ['import_time_report.py', '--output-dir', out, '--runs', '2']), \
+                mock.patch.dict(os.environ, {}, clear=False), mock.patch('builtins.print'):
+            os.environ.pop('GITHUB_STEP_SUMMARY', None)
+            self.assertEqual(report.main(), 1)
+            data = json.loads((Path(out) / 'import-times.json').read_text(encoding='utf-8'))
+        self.assertEqual([item['module'] for item in data['failed']], ['core.silent'])
+        self.assertEqual(data['skipped'], [])
+
     def test_only_platform_exclusions_pass(self):
         status, data = self.run_main({
             'core.good': (1500, None),
