@@ -25,7 +25,16 @@ from gui.classes.resources import LazyModule, PreparedImageCache, PreparedImageD
 from gui.classes.windows import UIWindow
 
 # PyAV (FFmpeg) is needed only for video/animated theme backgrounds; the default theme has none
-av = LazyModule('av')
+
+
+def _import_av():
+    import av
+    import av.error
+    import av.filter
+    return av
+
+
+av = LazyModule(_import_av)
 
 logging.getLogger('PIL').setLevel(logging.INFO)
 

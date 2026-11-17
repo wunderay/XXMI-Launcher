@@ -21,7 +21,14 @@ from gui.classes.widgets import UIText, UIImageButton
 from gui.classes.resources import LazyMarkdown, LazyModule
 
 # HTML rendering is needed only once a message is shown
-tkinterweb = LazyModule('tkinterweb')
+
+
+def _import_tkinterweb():
+    import tkinterweb
+    return tkinterweb
+
+
+tkinterweb = LazyModule(_import_tkinterweb)
 
 
 markdown_parser = LazyMarkdown()

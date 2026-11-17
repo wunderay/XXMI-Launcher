@@ -11,7 +11,14 @@ from typing import Any, Callable, Union
 from gui.classes.resources import LazyMarkdown, LazyModule
 
 # HTML rendering is needed only once a tooltip is shown
-tkinterweb = LazyModule('tkinterweb')
+
+
+def _import_tkinterweb():
+    import tkinterweb
+    return tkinterweb
+
+
+tkinterweb = LazyModule(_import_tkinterweb)
 
 
 class ToolTipStatus(Enum):

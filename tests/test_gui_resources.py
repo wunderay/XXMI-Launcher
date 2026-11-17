@@ -14,7 +14,12 @@ class LazyModuleTests(unittest.TestCase):
     def test_imports_only_on_first_attribute_access(self):
         name = 'json.tool'
         sys.modules.pop(name, None)
-        module = LazyModule(name)
+
+        def load():
+            import json.tool
+            return json.tool
+
+        module = LazyModule(load)
         self.assertNotIn(name, sys.modules)
         self.assertTrue(callable(module.main))
         self.assertIn(name, sys.modules)

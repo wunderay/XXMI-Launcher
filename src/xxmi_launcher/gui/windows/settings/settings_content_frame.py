@@ -19,7 +19,14 @@ from gui.classes.widgets import UILabel, UIButton, UIEntry, UICheckbox,  UIOptio
 from gui.classes.resources import LazyMarkdown, LazyModule
 
 # HTML rendering is needed only once a setting description is shown
-tkinterweb = LazyModule('tkinterweb')
+
+
+def _import_tkinterweb():
+    import tkinterweb
+    return tkinterweb
+
+
+tkinterweb = LazyModule(_import_tkinterweb)
 
 
 MARKDOWN_PARSER = LazyMarkdown()

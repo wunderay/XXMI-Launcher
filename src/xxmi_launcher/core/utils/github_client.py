@@ -13,7 +13,15 @@ from core.utils.proxy import ProxyConfig, ProxyManager
 from core.utils.lazy_module import LazyModule
 
 # Update checks run on a background thread after the window opens; keep requests off startup
-requests = LazyModule('requests')
+
+
+def _import_requests():
+    import requests
+    import requests.exceptions
+    return requests
+
+
+requests = LazyModule(_import_requests)
 
 log = logging.getLogger(__name__)
 
