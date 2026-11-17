@@ -60,6 +60,26 @@ def make_env(tree: Path, venv: Path, windows: bool) -> Path:
     return python
 
 
+def pinned_versions(text: str, names=REPORTED) -> dict:
+    """The exact versions `text` (a requirements.txt) pins for `names`."""
+    pins = {}
+    for raw in text.splitlines():
+        name, separator, version = raw.strip().partition('==')
+        if separator and name.strip().lower() in names:
+            pins[name.strip().lower()] = version.strip()
+    return pins
+
+
+def check_pins(installed: dict, pinned: dict, tree: Path) -> None:
+    """Fail unless the environment holds exactly the tree's pins (so neither side silently runs
+    the other side's versions)."""
+    wrong = {name: (installed.get(name), version) for name, version in pinned.items()
+             if installed.get(name) != version}
+    if wrong:
+        raise RuntimeError(f'environment for {tree} does not match its requirements.txt '
+                           f'(installed, pinned): {wrong}')
+
+
 def installed_versions(python: Path, names=REPORTED) -> dict:
     code = ('import json, importlib.metadata as m; '
             f'print(json.dumps({{n: m.version(n) for n in {list(names)!r}}}))')
@@ -91,7 +111,9 @@ def main(argv=None) -> int:
                  'each version in its own environment)', '']
     for side, tree in (('base', args.base.resolve()), ('this change', args.head.resolve())):
         python = make_env(tree, args.work / f'venv-{"base" if side == "base" else "head"}', windows)
-        versions = ', '.join(f'{name} {version}' for name, version in installed_versions(python).items())
+        installed = installed_versions(python)
+        check_pins(installed, pinned_versions((tree / 'requirements.txt').read_text(encoding='utf-8')), tree)
+        versions = ', '.join(f'{name} {version}' for name, version in installed.items())
         print(f'{side}: {versions}', flush=True)
         result = startup(python, tree, args.runs, args.launches)
         lines.append(f'- {side} ({versions}): `{json.dumps(result)}`')
