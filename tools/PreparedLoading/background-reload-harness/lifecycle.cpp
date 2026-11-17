@@ -1,5 +1,6 @@
-// Mock lifecycle harness: the exact slot/pump/drain code and the exact RetireRuntimeDevice
-// from the patched sources, compiled against mock graph/device/runtime types. Not a D3D test.
+// Mock lifecycle harness: the exact pacing constant, slot/pump/drain code, RuntimeOwnerScope and
+// RetireRuntimeDevice from the patched sources (extracted by tests/test_background_reload_patch.py),
+// compiled against mock graph/device/runtime types. Not a D3D test.
 #include <array>
 #include <atomic>
 #include <cstdio>
@@ -27,7 +28,6 @@ static std::function<void()> releaseHook;
 static int childReleases = 0;
 
 namespace {
-constexpr size_t IncrementalReleasePerFrame = 16; // same value as the patch
 void ReleaseResourceChildren(CustomResource&) { ++childReleases; if (releaseHook) releaseHook(); }
 void ReleaseShaderChildren(CustomShader&) { ++childReleases; }
 #include EXACT
@@ -55,6 +55,8 @@ static void UpdatePreparationStatus(const PreparationStatus&, int) {}
 static std::shared_ptr<RuntimeState> Current() { return std::make_shared<RuntimeState>(); }
 static thread_local bool runtimeBusy = false;
 static thread_local bool retiringDevice = false;
+void RetireRuntimeDevice(ID3D11Device* device);
+#include OWNER
 #include RETIRE
 
 static int failures = 0;
@@ -109,12 +111,46 @@ int main(int argc, char**) {
 	std::printf("after next pump: occupied=%d destroyed=%d\n", Occupied(), destroyed);
 	CHECK(Occupied() == 0 && destroyed == 2);
 
-	// 3. The table is reusable afterwards and paced release still completes
+	// 3. The table is reusable afterwards; release is paced at the patch's per-frame budget
 	destroyed = 0; childReleases = 0;
 	Queue(MakeGraph(40, &destroyed), &device);
+	PumpIncrementalRelease(&device);
+	const int firstFrame = childReleases;
 	for (int i = 0; i < 10 && Occupied(); ++i) PumpIncrementalRelease(&device);
-	std::printf("paced release: child releases=%d destroyed=%d\n", childReleases, destroyed);
-	CHECK(childReleases == 40 && destroyed == 1);
+	std::printf("paced release: first frame=%d child releases=%d destroyed=%d\n", firstFrame, childReleases, destroyed);
+	CHECK(firstFrame == 16 && childReleases == 40 && destroyed == 1);
+
+	// 4. Retirement deferred to RuntimeOwnerScope: requested on the thread inside the scope
+	destroyed = 0;
+	for (int i = 0; i < 4; ++i) Queue(MakeGraph(8, &destroyed), &device);
+	{
+		std::unique_lock<std::recursive_mutex> lock(Services().plannerMutex);
+		RuntimeOwnerScope scope(lock);
+		RetireRuntimeDevice(&device); // runtimeBusy: deferred to the scope
+		CHECK(Occupied() == 4);
+	}
+	std::printf("deferred retirement, same thread: occupied=%d destroyed=%d\n", Occupied(), destroyed);
+	CHECK(Occupied() == 0 && destroyed == 4);
+
+	// 5. ... and requested from another thread while the scope holds the planner lock
+	destroyed = 0;
+	for (int i = 0; i < 4; ++i) Queue(MakeGraph(8, &destroyed), &device);
+	{
+		std::unique_lock<std::recursive_mutex> lock(Services().plannerMutex);
+		RuntimeOwnerScope scope(lock);
+		std::thread([&] { RetireRuntimeDevice(&device); }).join(); // try_lock fails: deferred
+		CHECK(Occupied() == 4);
+	}
+	std::printf("deferred retirement, other thread: occupied=%d destroyed=%d\n", Occupied(), destroyed);
+	CHECK(Occupied() == 0 && destroyed == 4);
+
+	// 6. A replacement device presented from another thread still reaches the cleanup
+	destroyed = 0;
+	ID3D11Device replacement;
+	for (int i = 0; i < 2; ++i) Queue(MakeGraph(40, &destroyed), &device);
+	std::thread([&] { PumpIncrementalRelease(&replacement); PumpIncrementalRelease(&replacement); }).join();
+	std::printf("replacement device, other thread: occupied=%d destroyed=%d\n", Occupied(), destroyed);
+	CHECK(Occupied() == 0 && destroyed == 2);
 	std::printf(failures ? "FAILED\n" : "OK\n");
 	return failures ? 1 : 0;
 }

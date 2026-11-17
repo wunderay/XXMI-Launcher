@@ -12,19 +12,15 @@ Status
   * Applies ON TOP OF the tree produced by native.patch (pinned base
     3DMigoto/XXMI-Libs a7847eae82aaac32175c9a7d199673d5c9323bcd plus
     native.patch). It is not a patch against the upstream base.
-  * Hunks for files that native.patch creates (DirectX11/ModLoading/*,
-    docs/mod-loading/prepared-loading.md, tools/preparation-capabilities.py,
-    tests/preparation_capabilities/test_cli.py) were generated against those
-    files as reconstructed from native.patch and were checked to apply with
-    `patch --dry-run`. The DirectX11/IniHandler.cpp hunks were written by hand;
-    their context lines were checked against the post-image lines that
-    native.patch itself contains, but the full upstream IniHandler.cpp was not
-    available, so line offsets may need fuzz.
-  * Identifiers not visible in native.patch and assumed from upstream 3DMigoto:
-    RegisterKeyBinding(iniKey, keyName, down, up, auto_repeat, private_data),
-    G->gWipeUserConfig, CustomResource::resource/view, and the member names of
-    CustomShader stage/state pointers (taken from native.patch's ATTACH_SHADER).
-    A build may need small signature fixes.
+  * Every hunk, including DirectX11/IniHandler.cpp, is generated with git diff
+    against the full pinned upstream tree with native.patch applied, and
+    `git apply --check` passes on that tree.
+  * Upstream identifiers used here were checked against that tree:
+    RegisterKeyBinding(iniKey, keyName, shared_ptr<InputListener>, auto_repeat,
+    down_delay, up_delay, scope, configuration_owned) with InputCallbacks,
+    G->gWipeUserConfig, CustomResource::resource/view, and the CustomShader
+    stage/state members (from native.patch's ATTACH_SHADER). Nothing has been
+    compiled, so a build may still need small fixes.
   * Expected usage after a build:
         git apply --check background-reload.patch   (on the post-native tree)
         git apply background-reload.patch
@@ -140,9 +136,12 @@ legacy vs background, at least 20 F10 presses each, several mod sets)
     background reload; repeated presses while a build is in flight.
 
 diff --git a/DirectX11/IniHandler.cpp b/DirectX11/IniHandler.cpp
+index 2480dd0..958377e 100644
 --- a/DirectX11/IniHandler.cpp
 +++ b/DirectX11/IniHandler.cpp
-@@ -4781,9 +4781,20 @@ void FlagConfigReload(HackerDevice *device, void *private_data)
+@@ -4779,6 +4779,9 @@ void FlagConfigReload(HackerDevice *device, void *private_data)
+ 	// We defer wiping the user config (if requested) until the reload in
+ 	// case something marks the user config as dirty between now and then:
  	G->gWipeUserConfig = !!private_data;
 +	// background-reload.patch: only an explicit reload key press may become a
 +	// background reload; the delayed initial load and other callers stay legacy.
@@ -150,12 +149,10 @@ diff --git a/DirectX11/IniHandler.cpp b/DirectX11/IniHandler.cpp
  }
  
  static void RequestFullPreparationRescanAction(HackerDevice*, void*) { ModLoading::RequestFullPreparationRescan(); }
- 
- static void RequestResourceFilenameRefresh(HackerDevice*, void*)
- {
+@@ -4788,6 +4791,14 @@ static void RequestResourceFilenameRefresh(HackerDevice*, void*)
  	ModLoading::RequestPreparedRefresh();
  }
-+
+ 
 +// background-reload.patch: separate key that always runs the legacy full
 +// reload/reset, also while [ModLoading] background_reload = 1.
 +static void RequestLegacyForcedReload(HackerDevice *device, void *private_data)
@@ -163,7 +160,11 @@ diff --git a/DirectX11/IniHandler.cpp b/DirectX11/IniHandler.cpp
 +	ModLoading::ForceLegacyReload();
 +	FlagConfigReload(device, NULL);
 +}
-@@ -5941,6 +5952,15 @@ void LoadConfigFile()
++
+ void ToggleInput(HackerDevice *device, void *private_data)
+ {
+ 	G->disable_input = !G->disable_input;
+@@ -5941,6 +5952,17 @@ void LoadConfigFile()
  	// No default key; this action is distinct from legacy reload/reset semantics.
  	RegisterIniKeyBinding(L"ModLoading", L"refresh_key", RequestResourceFilenameRefresh, NULL, 0, NULL);
      RegisterIniKeyBinding(L"ModLoading", L"full_rescan_key", RequestFullPreparationRescanAction, NULL, 0, NULL);
@@ -174,12 +175,14 @@ diff --git a/DirectX11/IniHandler.cpp b/DirectX11/IniHandler.cpp
 +		GetIniString(L"ModLoading", L"legacy_reload_key", L"", legacy_key, MAX_PATH);
 +		if (!legacy_key[0])
 +			wcscpy_s(legacy_key, L"ctrl no_alt no_shift VK_F10");
-+		RegisterKeyBinding(L"legacy_reload_key", legacy_key, RequestLegacyForcedReload, NULL, 0, NULL);
++		RegisterKeyBinding(L"legacy_reload_key", legacy_key,
++			make_shared<InputCallbacks>(RequestLegacyForcedReload, nullptr, nullptr),
++			0, 0, 0, InputDisableScope::INVALID, false);
 +	}
  }
  
  static void ResetUnknownSettingsCache()
-@@ -6169,6 +6189,12 @@ static void MarkAllShadersDeferredUnprocessed()
+@@ -6169,6 +6191,12 @@ static void MarkAllShadersDeferredUnprocessed()
  void ReloadConfig(HackerDevice *device)
  {
  	ScopedIniThreadLocale localeScope;
@@ -884,10 +887,29 @@ index 784b57f..779fed5 100644
  }
  #endif
 diff --git a/DirectX11/ModLoading/Runtime.cpp b/DirectX11/ModLoading/Runtime.cpp
-index b4778ae..72cfe96 100644
+index b4778ae..e51549f 100644
 --- a/DirectX11/ModLoading/Runtime.cpp
 +++ b/DirectX11/ModLoading/Runtime.cpp
-@@ -936,6 +936,7 @@ bool SourcesCurrent(const std::shared_ptr<RuntimeState>& state) {
+@@ -232,6 +232,8 @@ struct TryGlobalConfigGuard {
+ 	explicit TryGlobalConfigGuard(bool enter = true) : acquired(enter && TryEnterCriticalSection(&G->mCriticalSection) != FALSE) {}
+ 	~TryGlobalConfigGuard() { if (acquired) LeaveCriticalSection(&G->mCriticalSection); }
+ };
++// background-reload.patch: defined in BackgroundReload.inl (same anonymous namespace)
++void DrainIncrementalRelease();
+ struct RuntimeOwnerScope {
+ 	std::unique_lock<std::recursive_mutex>& lock;
+ 	explicit RuntimeOwnerScope(std::unique_lock<std::recursive_mutex>& held) : lock(held) { runtimeBusy = true; }
+@@ -253,6 +255,9 @@ struct RuntimeOwnerScope {
+ 			service.epoch = 0;
+ 			service.plannerGeneration = 0;
+ 			retired.reset();
++			// background-reload.patch: a retirement deferred to this scope (busy runtime or
++			// planner lock held) must free paced old generations too, without another Present
++			DrainIncrementalRelease();
+ 			retiringDevice = false;
+ 		}
+ 		// A foreign Release may request retirement after the final exchange
+@@ -936,6 +941,7 @@ bool SourcesCurrent(const std::shared_ptr<RuntimeState>& state) {
  }
  
  #include "GeneralConfigPipeline.inl"
@@ -895,7 +917,7 @@ index b4778ae..72cfe96 100644
  
  unsigned PreparedWICFlags(const std::vector<uint8_t>& bytes,
  	CustomColorSpace colorSpace, bool detectPngSRGB) {
-@@ -1036,6 +1037,10 @@ bool CompleteGraphRetirement(size_t slot, const std::shared_ptr<ConfigGeneration
+@@ -1036,6 +1042,10 @@ bool CompleteGraphRetirement(size_t slot, const std::shared_ptr<ConfigGeneration
  		discarded = std::move(entry);
  		entry = {};
  	}
@@ -906,7 +928,7 @@ index b4778ae..72cfe96 100644
  	return true;
  }
  void SubmitGraphRetirement(int slot, ConfigGenerationPin previous)
-@@ -1226,6 +1231,8 @@ static void ConfigureRuntimeImpl() {
+@@ -1226,6 +1236,8 @@ static void ConfigureRuntimeImpl() {
  	GetIniString(L"ModLoading", L"mode", L"off", mode, 64);
  	const bool enabledMode = !_wcsicmp(mode, L"adaptive") || !_wcsicmp(mode, L"prepared_profile");
  	auto state = enabledMode ? Disposal().Make<RuntimeState>() : std::make_shared<RuntimeState>();
@@ -915,7 +937,7 @@ index b4778ae..72cfe96 100644
  	state->graph = PinConfiguration();
  	state->generation = ++Services().nextGeneration;
  	state->legacyConfigEpoch = Services().legacyConfigEpoch.load();
-@@ -1303,6 +1310,7 @@ static void ConfigureRuntimeImpl() {
+@@ -1303,6 +1315,7 @@ static void ConfigureRuntimeImpl() {
  		state->gpuLimits.milliseconds = (std::max)(0.1f, (std::min)(50.0f,
  			GetIniFloat(L"ModLoading", L"create_budget_ms", 2.0f, nullptr)));
  		state->loadingWindow = GetIniBool(L"ModLoading", L"preparation_loading_window", false, nullptr);
@@ -923,7 +945,7 @@ index b4778ae..72cfe96 100644
  		if (GetIniBool(L"ModLoading", L"auto_activate", false, nullptr))
  			LogOverlayW(LOG_WARNING, L"ModLoading auto_activate is unsupported; use explicit compatible reload\n");
  		static int statusModuleAnchor;
-@@ -1526,6 +1534,7 @@ std::shared_ptr<const PreparedAsset> TryGetPreparedAsset(const std::wstring& pat
+@@ -1526,6 +1539,7 @@ std::shared_ptr<const PreparedAsset> TryGetPreparedAsset(const std::wstring& pat
  }
  static void PumpRuntimeImpl(ID3D11Device* device, DeviceEpoch epoch, ID3D11DeviceContext* realContext) {
  	PollGraphRetirement(device);
@@ -931,7 +953,7 @@ index b4778ae..72cfe96 100644
  	auto state = Current();
  	if (!state || !state->enabled.load() || !device || !epoch || runtimeBusy) return;
  	// The same global lock protects legacy config destruction. Never retain
-@@ -1578,6 +1587,7 @@ static void PumpRuntimeImpl(ID3D11Device* device, DeviceEpoch epoch, ID3D11Devic
+@@ -1578,6 +1592,7 @@ static void PumpRuntimeImpl(ID3D11Device* device, DeviceEpoch epoch, ID3D11Devic
  		}
  	}
  	if (state->generalEnabled) {
@@ -939,7 +961,7 @@ index b4778ae..72cfe96 100644
  		PumpGeneralConfiguration(state, device, epoch, realContext);
  		return;
  	}
-@@ -1735,6 +1745,11 @@ void RetireRuntimeDevice(ID3D11Device* device) {
+@@ -1735,6 +1750,11 @@ void RetireRuntimeDevice(ID3D11Device* device) {
  	// application device release. Keeping one aggregate retirement flag avoids
  	// losing a concurrent current-device request behind a probe-device release.
  	(void)device;

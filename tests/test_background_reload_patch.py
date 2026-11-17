@@ -75,17 +75,24 @@ class BackgroundReloadPatchTests(unittest.TestCase):
             helpers_end = len(between(inl, 'void ReleaseShaderChildren', 'void ReleaseShaderChildren'))
             helpers_end += inl.index('void ReleaseShaderChildren')
             pump_and_drain = between(inl[helpers_end:], '\n', 'void DrainIncrementalRelease()')
-            (Path(work) / 'exact.inc').write_text(slots + pump_and_drain, encoding='utf-8')
+            constant = re.search(r'^constexpr size_t IncrementalReleasePerFrame = .*$', inl, re.M).group(0)
+            (Path(work) / 'exact.inc').write_text(constant + '\n' + slots + pump_and_drain, encoding='utf-8')
+            (Path(work) / 'owner.inc').write_text(
+                between(runtime, 'struct RuntimeOwnerScope {', 'struct RuntimeOwnerScope {') + ';\n', encoding='utf-8')
             (Path(work) / 'retire.inc').write_text(
                 between(runtime, 'void RetireRuntimeDevice(', 'void RetireRuntimeDevice('), encoding='utf-8')
             binary = Path(work) / 'lifecycle'
             build = subprocess.run(['g++', '-std=c++17', '-O1', f'-I{work}', '-DEXACT="exact.inc"',
-                                    '-DRETIRE="retire.inc"', str(HARNESS), '-o', str(binary), '-pthread'],
+                                    '-DRETIRE="retire.inc"', '-DOWNER="owner.inc"', str(HARNESS), '-o', str(binary), '-pthread'],
                                    capture_output=True, text=True)
             self.assertEqual(build.returncode, 0, build.stderr)
             run = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60)
             self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
-            self.assertIn('early-return retirement: occupied=0 destroyed=4', run.stdout)
+            for line in ('early-return retirement: occupied=0 destroyed=4',
+                         'deferred retirement, same thread: occupied=0 destroyed=4',
+                         'deferred retirement, other thread: occupied=0 destroyed=4',
+                         'replacement device, other thread: occupied=0 destroyed=2'):
+                self.assertIn(line, run.stdout)
 
 
 if __name__ == '__main__':
