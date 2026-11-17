@@ -74,6 +74,11 @@ def self_test(root: Path) -> None:
 
 def main() -> None:
     multiprocessing.freeze_support()
+    if '--mod-state-worker' in sys.argv[1:]:
+        if len(sys.argv) != 3 or sys.argv[1] != '--mod-state-worker':
+            raise SystemExit('Use --mod-state-worker REQUEST_FILE without other arguments')
+        from core.mod_state_worker import worker_main
+        raise SystemExit(worker_main(sys.argv[2]))
     root = Path(sys.executable).resolve().parent.parent.parent
     if sys.argv[1:] == ['--self-test']:
         report = None

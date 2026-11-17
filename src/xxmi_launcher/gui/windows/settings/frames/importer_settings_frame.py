@@ -240,6 +240,36 @@ class ModelImporterSettingsFrame(SettingsContentFrame):
                 ),
 
                 SettingsSection(
+                    label_text=L('mod_backup_section', 'Mod backups'),
+                    options=(
+                        SettingsOption(
+                            label_text=L('mod_backup_label', 'Mods and saved settings'),
+                            widget=OptionWidget.BUTTON,
+                            value_variable='',
+                            button_text=L('mod_backup_button', 'Back up...'),
+                            button_command=lambda: Events.Fire(Events.Application.BackupModState()),
+                            load_if=Condition(predicate=lambda: Config.Launcher.active_importer == 'ZZMI'),
+                            tooltip=L('mod_backup_tooltip',
+                                'Back up the entire launcher folder, including Mods, saved mod choices and '
+                                'all contained games and settings. Save choices with F10 and close games first. '
+                                'The launcher closes while the backup runs.'),
+                        ),
+                        SettingsOption(
+                            label_text=L('mod_restore_label', 'Restore a saved setup'),
+                            widget=OptionWidget.BUTTON,
+                            value_variable='',
+                            button_text=L('mod_restore_button', 'Restore...'),
+                            button_command=lambda: Events.Fire(Events.Application.RestoreModState()),
+                            load_if=Condition(predicate=lambda: Config.Launcher.active_importer == 'ZZMI'),
+                            tooltip=L('mod_restore_tooltip',
+                                'Restore a verified backup to its original launcher location. This replaces '
+                                'the entire launcher folder and keeps the current folder for rollback. '
+                                'Close all games first; the launcher closes while restoration runs.'),
+                        ),
+                    ),
+                ),
+
+                SettingsSection(
                     label_text=L("importer_settings_usability_section_label", "Usability"),
                     options=(
 

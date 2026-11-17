@@ -83,6 +83,13 @@ if __name__ == '__main__':
     # Multiprocessing support for Pyinstaller
     multiprocessing.freeze_support()
 
+    # A copied helper must never initialize paths, logging, config or the GUI in the target folder.
+    if '--mod-state-worker' in sys.argv[1:]:
+        if len(sys.argv) != 3 or sys.argv[1] != '--mod-state-worker':
+            raise SystemExit('Use --mod-state-worker REQUEST_FILE without other arguments')
+        from core.mod_state_worker import worker_main
+        raise SystemExit(worker_main(sys.argv[2]))
+
     if '__compiled__' in globals():
         # Nuitka (release build): `XXMI Launcher\Resources\Bin\XXMI Launcher.exe`
         root_path = Path(sys.argv[0]).resolve().parent.parent.parent
