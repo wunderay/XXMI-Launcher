@@ -123,6 +123,12 @@ class MeasureCommandTests(unittest.TestCase):
         self.assertEqual(gui_command[gui_command.index('--assets') + 1], str(Path('/trees/base')))
         self.assertEqual(gui_command[gui_command.index('--src') + 1], str(src))
 
+    def test_without_an_interpreter_every_benchmark_uses_this_one(self):
+        calls = self.measure(Path('/trees/head/src/xxmi_launcher'))
+        for name, (command, _) in calls.items():
+            with self.subTest(benchmark=name):
+                self.assertEqual(command[0], sys.executable)
+
     def test_each_benchmark_runs_with_the_versions_interpreter(self):
         calls = self.measure(Path('/trees/head/src/xxmi_launcher'), python='/venvs/head/bin/python')
         for name, (command, _) in calls.items():

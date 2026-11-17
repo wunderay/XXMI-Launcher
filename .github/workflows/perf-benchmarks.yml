@@ -77,7 +77,7 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
-      - name: Benchmark real launcher startup (base vs this change)
+      - name: Benchmark real launcher startup (base vs this change, each in its own environment)
         shell: pwsh
         env:
           # A pull request is checked out as its merge commit; its first parent is the base it was
@@ -89,16 +89,7 @@ jobs:
           $base = if ($env:EVENT_NAME -eq 'pull_request') { git rev-parse 'HEAD^1' } else { git rev-parse origin/main }
           Write-Output "Base: $base"
           git worktree add --detach (Join-Path $work 'base') $base
-          # Base requirements are a superset (they still list pyglet); the build-only Nuitka is skipped
-          Get-Content (Join-Path $work 'base/requirements.txt') | Where-Object { $_ -notmatch '^Nuitka' } |
-            Set-Content (Join-Path $work 'requirements.txt')
-          python -m pip install --disable-pip-version-check -r (Join-Path $work 'requirements.txt')
+          # Each version starts in its own environment with its own pins (a dependency update is
+          # started with the new version); the helper writes both results to the job summary
+          python tools/perf/gui_startup_ab.py --base (Join-Path $work 'base') --head . --work $work --runs 4 --launches 2
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $summary = @('', '### Launcher window startup (real launcher, 4 installs x 2 starts)', '')
-          foreach ($variant in @(@('base', (Join-Path $work 'base/src/xxmi_launcher')), @('this change', 'src/xxmi_launcher'))) {
-            $result = python tools/perf/bench_gui_startup.py --runs 4 --launches 2 --src $variant[1]
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            $summary += "- $($variant[0]): ``$result``"
-          }
-          $summary | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
-          $summary | Write-Output
