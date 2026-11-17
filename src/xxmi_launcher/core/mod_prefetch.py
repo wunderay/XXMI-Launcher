@@ -72,10 +72,17 @@ def _is_excluded(name: str, patterns: list[str]) -> bool:
     return any(fnmatch.fnmatch(name, pattern) for pattern in patterns)
 
 
-def _iter_ini_files(folder: Path, patterns: list[str], recursive: bool):
+MAX_LINE_BYTES = 64 * 1024
+
+
+def _stopped(stop: threading.Event | None) -> bool:
+    return stop is not None and stop.is_set()
+
+
+def _iter_ini_files(folder: Path, patterns: list[str], recursive: bool, stop: threading.Event | None = None):
     pending = [folder]
     visited = set()
-    while pending:
+    while pending and not _stopped(stop):
         current = pending.pop()
         try:
             real = os.path.realpath(current)
@@ -99,41 +106,66 @@ def _iter_ini_files(folder: Path, patterns: list[str], recursive: bool):
         pending.extend(reversed(subfolders))
 
 
-def _referenced_files(ini_path: str):
-    """Files named by `filename = ...` options, relative to the INI's folder."""
+def _referenced_files(ini_path: str, stop: threading.Event | None = None):
+    """Files named by `filename = ...` options, relative to the INI's folder.
+
+    Streams the INI with bounded line reads (an oversized line is skipped in pieces), so parsing
+    never holds a whole file in memory."""
     try:
-        with open(ini_path, 'rb', buffering=0) as file:
-            text = file.read().decode('utf-8', errors='replace')
+        file = open(ini_path, 'rb')
     except OSError:
         return
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if line[:8].lower() != 'filename':
-            continue
-        key, separator, value = line.partition('=')
-        if not separator or key.strip().lower() != 'filename':
-            continue
-        value = value.strip().strip('"')
-        if value:
-            yield os.path.join(os.path.dirname(ini_path), value.replace('\\', os.sep))
+    with file:
+        while not _stopped(stop):
+            try:
+                raw_line = file.readline(MAX_LINE_BYTES)
+            except OSError:
+                return
+            if not raw_line:
+                return
+            if len(raw_line) == MAX_LINE_BYTES and not raw_line.endswith(b'\n'):
+                # Over-long line: discard the rest of it
+                while (rest := file.readline(MAX_LINE_BYTES)) and not rest.endswith(b'\n'):
+                    pass
+                continue
+            line = raw_line.decode('utf-8', errors='replace').strip()
+            if line[:8].lower() != 'filename':
+                continue
+            key, separator, value = line.partition('=')
+            if not separator or key.strip().lower() != 'filename':
+                continue
+            value = value.strip().strip('"')
+            if value:
+                yield os.path.join(os.path.dirname(ini_path), value.replace('\\', os.sep))
 
 
-def collect_mod_files(d3dx_ini_path: Path) -> list[str]:
-    """INI and resource files in the order the DLL loads them, without duplicates."""
+def iter_mod_files(d3dx_ini_path: Path, stop: threading.Event | None = None):
+    """INI and resource files in the order the DLL loads them, without duplicates.
+
+    A generator: folders are listed and INIs parsed only as the caller consumes it, so a stop
+    request or an exhausted budget ends collection too."""
     settings = read_include_settings(d3dx_ini_path)
-    ini_files = [str(path) for path in settings.files if path.is_file()]
-    for folder in settings.folders:
-        ini_files.extend(_iter_ini_files(folder, settings.exclude_patterns, recursive=False))
-    for folder in settings.recursive_folders:
-        ini_files.extend(_iter_ini_files(folder, settings.exclude_patterns, recursive=True))
-    ordered, seen = [], set()
-    for ini_path in ini_files:
-        for path in (ini_path, *_referenced_files(ini_path)):
+
+    def ini_files():
+        yield from (str(path) for path in settings.files if path.is_file())
+        for folder in settings.folders:
+            yield from _iter_ini_files(folder, settings.exclude_patterns, recursive=False, stop=stop)
+        for folder in settings.recursive_folders:
+            yield from _iter_ini_files(folder, settings.exclude_patterns, recursive=True, stop=stop)
+
+    seen = set()
+    for ini_path in ini_files():
+        if _stopped(stop):
+            return
+        for path in (ini_path, *_referenced_files(ini_path, stop)):
             key = os.path.normcase(os.path.abspath(path))
             if key not in seen:
                 seen.add(key)
-                ordered.append(path)
-    return ordered
+                yield path
+
+
+def collect_mod_files(d3dx_ini_path: Path, stop: threading.Event | None = None) -> list[str]:
+    return list(iter_mod_files(d3dx_ini_path, stop))
 
 
 def memory_budget() -> int:
@@ -167,15 +199,16 @@ def _leave_background_mode():
         kernel32.SetThreadPriority(kernel32.GetCurrentThread(), THREAD_MODE_BACKGROUND_END)
 
 
-def prefetch_files(paths: list[str], budget: int, stop: threading.Event | None = None) -> PrefetchStats:
-    """Read files in order until done, stopped or the byte budget is reached."""
+def prefetch_files(paths, budget: int, stop: threading.Event | None = None) -> PrefetchStats:
+    """Read files (any iterable, consumed lazily) in order until done, stopped or the budget
+    is used up; collection behind a generator ends at the same point."""
     stats = PrefetchStats()
     started = time.perf_counter()
     cpu_started = time.thread_time()
     buffer = bytearray(CHUNK_SIZE)
     view = memoryview(buffer)
     for path in paths:
-        if stop is not None and stop.is_set():
+        if _stopped(stop) or stats.bytes >= budget:
             break
         try:
             size = os.stat(path).st_size
@@ -183,8 +216,9 @@ def prefetch_files(paths: list[str], budget: int, stop: threading.Event | None =
             stats.skipped_files += 1
             continue
         if stats.bytes + size > budget:
+            # Budget used up: stop here (later files in load order matter least) and end collection
             stats.skipped_files += 1
-            continue
+            break
         try:
             with open(path, 'rb', buffering=0) as file:
                 while file.readinto(view):
@@ -234,7 +268,9 @@ class ModPrefetcher:
             if budget <= 0:
                 log.debug('Mod prefetch skipped: no memory budget')
                 return
-            paths = collect_mod_files(self.d3dx_ini_path)
+            if self.stop_event.is_set():
+                return
+            paths = iter_mod_files(self.d3dx_ini_path, self.stop_event)
             self.stats = prefetch_files(paths, budget, self.stop_event)
             log.debug(f'Mod prefetch: {self.stats.files} files, {self.stats.bytes / 1e6:.1f} MB in '
                       f'{self.stats.seconds:.2f}s (skipped {self.stats.skipped_files}, completed={self.stats.completed})')

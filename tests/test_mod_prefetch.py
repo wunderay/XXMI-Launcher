@@ -3,6 +3,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from core import mod_prefetch
 
@@ -70,6 +71,86 @@ class ModPrefetchTests(unittest.TestCase):
         second.thread.join(10)
         self.assertTrue(second.stats.completed)
         self.assertGreater(second.stats.bytes, 0)
+
+
+    def test_stopped_run_does_not_collect(self):
+        stop = threading.Event()
+        stop.set()
+        with mock.patch.object(mod_prefetch, '_referenced_files', side_effect=AssertionError('parsed')):
+            self.assertEqual(mod_prefetch.collect_mod_files(self.importer / 'd3dx.ini', stop), [])
+
+    def test_stop_during_collection_ends_scanning(self):
+        for index in range(30):
+            self.write(f'Mods/Many/{index:02d}/mod.ini', '[ResourceX]\nfilename = x.buf\n')
+        stop = threading.Event()
+        parsed = []
+        original = mod_prefetch._referenced_files
+
+        def parse_then_stop(path, stop_event=None):
+            parsed.append(path)
+            if len(parsed) == 2:
+                stop.set()
+            return original(path, stop_event)
+
+        with mock.patch.object(mod_prefetch, '_referenced_files', parse_then_stop):
+            mod_prefetch.prefetch_files(mod_prefetch.iter_mod_files(self.importer / 'd3dx.ini', stop), 10 ** 9, stop)
+        self.assertLessEqual(len(parsed), 3)
+
+    def test_exhausted_budget_ends_collection(self):
+        for index in range(30):
+            self.write(f'Mods/Many/{index:02d}/mod.ini', '[ResourceX]\n' + 'x' * 1000 + '\n')
+        parsed = []
+        original = mod_prefetch._referenced_files
+        with mock.patch.object(mod_prefetch, '_referenced_files',
+                               lambda path, stop=None: (parsed.append(path), original(path, stop))[1]):
+            stats = mod_prefetch.prefetch_files(mod_prefetch.iter_mod_files(self.importer / 'd3dx.ini'), budget=1)
+        self.assertLessEqual(len(parsed), 2)
+        self.assertFalse(stats.completed)
+
+    def test_replaced_run_stops_collecting(self):
+        started, release = threading.Event(), threading.Event()
+        original = mod_prefetch._referenced_files
+
+        def blocking(path, stop=None):
+            started.set()
+            release.wait(5)
+            return original(path, stop)
+
+        with mock.patch.object(mod_prefetch, '_referenced_files', blocking):
+            first = mod_prefetch.ModPrefetcher.start(self.importer / 'd3dx.ini', budget=10 ** 9)
+            self.assertTrue(started.wait(5))
+            second = mod_prefetch.ModPrefetcher.start(self.importer / 'd3dx.ini', budget=10 ** 9)
+            release.set()
+            first.thread.join(5)
+            second.thread.join(5)
+        self.assertFalse(first.thread.is_alive())
+        self.assertFalse(first.stats.completed)
+        self.assertTrue(second.stats.completed)
+
+    def test_oversized_ini_line_is_skipped_with_bounded_reads(self):
+        self.write('Mods/Huge/mod.ini', 'x' * (mod_prefetch.MAX_LINE_BYTES * 3) + '\nfilename = after.buf\n')
+        reads = []
+        real_open = open
+
+        class Recording:
+            def __init__(self, file):
+                self.file = file
+
+            def readline(self, limit=-1):
+                line = self.file.readline(limit)
+                reads.append(len(line))
+                return line
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                self.file.close()
+
+        with mock.patch('builtins.open', lambda path, mode='r', *a, **k: Recording(real_open(path, mode, *a, **k))):
+            found = list(mod_prefetch._referenced_files(str(self.importer / 'Mods/Huge/mod.ini')))
+        self.assertTrue(found[0].endswith('after.buf'))
+        self.assertLessEqual(max(reads), mod_prefetch.MAX_LINE_BYTES)
 
 
 if __name__ == '__main__':
