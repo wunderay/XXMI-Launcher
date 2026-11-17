@@ -125,6 +125,34 @@ class PreparedImageDiskCacheTests(unittest.TestCase):
             os.utime(path, (1000 + index, 1000 + index))
         self.assertEqual(len(list(self.cache.folder.glob('*.webp'))), 2)
 
+    def test_flush_waits_for_every_queued_write(self):
+        images = [self.Image.new('RGBA', (256, 256), (index, 0, 0, 255)) for index in range(3)]
+        for index, image in enumerate(images):
+            self.cache.store_async(('q', index), image)
+        self.assertTrue(self.cache.flush(timeout=10))
+        for index, image in enumerate(images):
+            self.assertEqual(self.cache.load(('q', index)).tobytes(), image.tobytes())
+        self.assertEqual(list(self.cache.folder.glob('*.tmp')), [])
+
+    def test_flush_gives_up_after_its_timeout(self):
+        import threading
+        release = threading.Event()
+        original = self.cache._store
+
+        def blocked(key, image, prune=True):
+            release.wait(10)
+            return original(key, image, prune)
+
+        self.cache._store = blocked
+        self.cache.store_async(('slow', 1), self.Image.new('RGBA', (4, 4)))
+        self.assertFalse(self.cache.flush(timeout=0.1))
+        release.set()
+        self.assertTrue(self.cache.flush(timeout=10))
+        self.assertIsNotNone(self.cache.load(('slow', 1)))
+
+    def test_flush_without_writes_returns_at_once(self):
+        self.assertTrue(self.cache.flush(timeout=0))
+
 
 class PrivateFontTests(unittest.TestCase):
     def setUp(self):

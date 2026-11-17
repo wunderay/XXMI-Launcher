@@ -108,17 +108,39 @@ class PreparedImageDiskCache:
             self._writer.start()
         self._queue.put((key, image))
 
+    def flush(self, timeout: float = 5.0) -> bool:
+        """Wait until every queued image is written (or `timeout` passes); True if none remain.
+
+        The writer is a daemon thread, so without this an exiting launcher (or a test removing
+        the folder) can cut a write short and leave a `.tmp` file behind."""
+        import time
+        if self._queue is None:
+            return True
+        deadline = time.monotonic() + timeout
+        with self._queue.all_tasks_done:
+            while self._queue.unfinished_tasks:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._queue.all_tasks_done.wait(remaining)
+        return True
+
     def _write_queued(self):
         import queue
+        pruned = True
         while True:
-            key, image = self._queue.get()
-            self._store(key, image, prune=False)
             try:
                 # Prune once the burst of startup writes is over
-                key, image = self._queue.get(timeout=1.0)
-                self._queue.put((key, image))
+                key, image = self._queue.get(timeout=None if pruned else 1.0)
             except queue.Empty:
                 self._prune()
+                pruned = True
+                continue
+            try:
+                self._store(key, image, prune=False)
+            finally:
+                self._queue.task_done()
+            pruned = False
 
     def _store(self, key, image, prune=True):
         path = self.path(key)
