@@ -160,28 +160,6 @@ class WWMIPackage(ModelImporterPackage):
         exe_path = game_path / 'Wuthering Waves.exe'
         if not exe_path.is_file():
             raise ValueError(L('error_wwmi_game_folder_missing_files', 'Game folder must contain `Wuthering Waves.exe` and `Client` & `Engine` folders!'))
-        else:
-            common_folder = self.get_parent_directory(game_path, 'common')
-            if common_folder is not None and common_folder.parent.name == 'steamapps':
-                # Steam installation detected
-                if game_path.parent.name != 'common':
-                    # Invalid file structure, most likely caused by manual folder relocation
-                    Events.Fire(Events.Application.ShowError(
-                        modal=True,
-                        confirm_text=L('message_button_ok', 'OK'),
-                        message=L('message_text_wwmi_invalid_steam_installation', """
-                            Invalid Wuthering Waves installation detected for Steam:
-                            {game_path}
-                            
-                            {folder_name} folder with {exe_name} must be directly placed in:
-                            {common_folder}
-                            
-                            Please run game file repair via Steam or fix it manually.
-                        """).format(
-                            game_path=game_path, folder_name=game_path.name, exe_name=exe_path.name, common_folder=common_folder
-                        )
-                    ))
-                    raise ValueError(L('error_steam_game_repair_required', 'Game installation must be repaired via Steam!'))
         for dir_name in ['Client', 'Engine']:
             if dir_name not in [x.name for x in game_path.iterdir() if x.is_dir()]:
                 raise ValueError(L('error_game_folder_missing_folder', 'Game folder must contain {dir_name} folder!').format(dir_name=dir_name))
@@ -193,12 +171,15 @@ class WWMIPackage(ModelImporterPackage):
         game_path: Path | None,
         game_exe_path: Path | None,
     ) -> None:
-        if Config.Importers.WWMI.Importer.game_launch != GameLaunch.DIRECT:
+        if Config.Importers.WWMI.Importer.game_launch not in [GameLaunch.DIRECT, GameLaunch.EPIC_GAMES, GameLaunch.STEAM]:
             return
 
         if not Config.Importers.WWMI.Importer.use_launch_options or "krqlv" not in Config.Importers.WWMI.Importer.launch_options:
-            self.notify_resource_tier()
+            self.ensure_resource_tier(game_path)
             launch_context.target.cmd_args += f" -krqlv={Config.Importers.WWMI.Importer.resource_tier.name.lower()}"
+
+        if Config.Importers.WWMI.Importer.game_launch != GameLaunch.DIRECT:
+            return
 
         if not Config.Importers.WWMI.Importer.use_launch_options:
             # Start WW via wrapper exe (solves crashes for NVidia Optimus and some Steam version users).
@@ -209,41 +190,90 @@ class WWMIPackage(ModelImporterPackage):
             pass
 
     @staticmethod
-    def notify_resource_tier():
-        if Config.Importers.WWMI.Importer.resource_tier_warned:
+    def detect_resource_tiers(game_path: Path) -> list[WuWaResourceTier]:
+        content_path = game_path / "Client" / "Content"
+
+        resource_tiers = []
+
+        for tier in WuWaResourceTier:
+            if (content_path / tier.name).is_dir():
+                resource_tiers.append(tier)
+
+        return resource_tiers
+
+    @staticmethod
+    def ensure_resource_tier(game_path: Path | None) -> None:
+        if game_path is None:
+            # Game installation location is unknown. Ask user once to select a resource tier.
+            if not Config.Importers.WWMI.Importer.resource_tier_warned:
+                WWMIPackage.notify_resource_tier_selection()
             return
 
-        resource_tiers = {item: item.value for item in WuWaResourceTier}
+        detected_resource_tiers = WWMIPackage.detect_resource_tiers(game_path)
+
+        # Automatically select resource tier if only one is installed.
+        if len(detected_resource_tiers) == 1:
+            Config.Importers.WWMI.Importer.resource_tier = detected_resource_tiers[0]
+            return
+
+        # Show error if no installed resource tier detected.
+        if len(detected_resource_tiers) == 0:
+            raise ValueError(L('error_no_resource_tier_detected', """
+                Cannot find any resource tier available for configured {game_name} installation:
+                
+                ```
+                {game_path}
+                ```
+                
+                Please repair {game_name} with official launcher.
+            """).format(
+                game_name=Game.WUTHERING_WAVES.value,
+                game_path=game_path,
+            ))
+
+        # Ask user to select a resource tier from detection results.
+        if (
+            Config.Importers.WWMI.Importer.resource_tier not in detected_resource_tiers
+            or not Config.Importers.WWMI.Importer.resource_tier_warned
+        ):
+            WWMIPackage.notify_resource_tier_selection(detected_resource_tiers)
+
+    @staticmethod
+    def notify_resource_tier_selection(detected_resource_tiers: list[WuWaResourceTier] | None = None) -> None:
+        resource_tiers = {item: item.value for item in detected_resource_tiers or WuWaResourceTier}
+
+        if Config.Importers.WWMI.Importer.resource_tier in resource_tiers:
+            # Set default tier selection to currently configured tier.
+            selected_tier = list(resource_tiers.keys()).index(Config.Importers.WWMI.Importer.resource_tier)
+        else:
+            # Select best available quality tier.
+            selected_tier = 0
 
         (user_confirmed_resource_tier, resource_tier_id) = Events.Call(Events.Application.ShowWarning(
             title=L('message_title_resource_tier_selection', "Select Resource Quality"),
             message=L('message_text_resource_tier_selection', """
-                **{game}** requires **[Resource Quality]({page_link})** to be selected to avoid game crash on loading.
-                
-                For **Steam** and **Epic Games** installations select **{default_tier}**.
-                
-                For **official launcher** installation select **any actually downloaded** tier (default is usually **{default_tier}**):
+                **{game}** requires **[Resource Quality]({page_link})** to be selected.
             
                 {radio_widget}
                 
-                You can also change it later with **{general_settings_wuwa_resource_tier_label}** in **General Settings**.
+                Selected tier must be **actually installed**, otherwise the game will crash on loading.
+                
+                You can change it later with **{general_settings_wuwa_resource_tier_label}** in **General Settings**.
             """).format(
                 game=Config.Importers.WWMI.Importer.game.value,
                 page_link=r"https://wutheringwaves.kurogames.com/en/main/news/detail/5513",
-                default_tier=WuWaResourceTier.HD.value,
             ),
             confirm_text=L('message_button_confirm', 'Confirm'),
             cancel_text=L('message_button_open_settings', 'Open Settings'),
             radio_options=list(resource_tiers.values()),
-            selected_id=1,
+            selected_id=selected_tier,
             modal=True,
         ))
 
         if user_confirmed_resource_tier is not None:
             Config.Importers.WWMI.Importer.resource_tier_warned = True
 
-            if user_confirmed_resource_tier is True:
-                Config.Importers.WWMI.Importer.resource_tier = list(resource_tiers.keys())[resource_tier_id]
+        Config.Importers.WWMI.Importer.resource_tier = list(resource_tiers.keys())[resource_tier_id]
 
     def configure_game_settings(self, game_path: Path | None, game_exe_path: Path | None):
         # Auto-config below requires reliably detectable installation location.
@@ -260,8 +290,8 @@ class WWMIPackage(ModelImporterPackage):
         if Config.Importers.WWMI.Importer.configure_game or Config.Importers.WWMI.Importer.unlock_fps:
             self.configure_settings(game_path)
 
-        # Prevent further configuration if WWMI isn't going to be used.
-        if not Config.Active.Importer.is_xxmi_dll_used():
+        # Prevent further configuration if WWMI isn't going to be used or auto-config is disabled.
+        if not Config.Active.Importer.is_xxmi_dll_used() or not Config.Importers.WWMI.Importer.configure_game:
             return
 
         # Configure Engine.ini.
@@ -355,6 +385,7 @@ class WWMIPackage(ModelImporterPackage):
             Paths.App.write_file(engine_ini_path, '')
 
         Events.Fire(Events.PathManager.VerifyFileAccess(path=engine_ini_path, write=True))
+
         with open(engine_ini_path, 'r', encoding='utf-8') as f:
             ini = IniHandler(IniHandlerSettings(option_value_spacing=False, inline_comments=True, add_section_spacing=True, right_split=True), f)
 
@@ -368,27 +399,6 @@ class WWMIPackage(ModelImporterPackage):
         #         ini.set_option(section_name, option_name, option_value)
         # console_variables = Config.Importers.WWMI.Importer.engine_ini.get('ConsoleVariables', None)
         # default_streaming_boost = console_variables.get('r.Streaming.Boost', None) if console_variables else None
-
-        ini.remove_option('r.Kuro.SkeletalMesh.DistanceLODBaseFOV', section_name='ConsoleVariables')
-
-        if ini.is_modified():
-            Paths.App.write_file(engine_ini_path, ini.to_string())
-
-
-    def update_user_engine_ini(self, game_path: Path):
-        engine_ini_path = game_path / 'Client' / 'Config' / 'UserEngine.ini'
-
-        Events.Fire(Events.Application.StatusUpdate(
-            status=L('status_updating_file', 'Updating {file_name}...').format(file_name=engine_ini_path.name))
-        )
-
-        if not engine_ini_path.exists():
-            Paths.verify_path(engine_ini_path.parent)
-            Paths.App.write_file(engine_ini_path, '')
-
-        Events.Fire(Events.PathManager.VerifyFileAccess(path=engine_ini_path, write=True))
-        with open(engine_ini_path, 'r', encoding='utf-8') as f:
-            ini = IniHandler(IniHandlerSettings(option_value_spacing=False, inline_comments=True, add_section_spacing=True, right_split=True), f)
 
         console_variables_options = {
             # Controls minimal camera FOV value when engine switches character LOD0 mesh to LOD1+.
@@ -405,6 +415,26 @@ class WWMIPackage(ModelImporterPackage):
                 ini.remove_option(option_name, section_name=section_name, option_value=option_value, not_equal=True)
             # Set option value
             ini.set_option(section_name, option_name, option_value)
+
+        if ini.is_modified():
+            Paths.App.write_file(engine_ini_path, ini.to_string())
+
+    def update_user_engine_ini(self, game_path: Path):
+        engine_ini_path = game_path / 'Client' / 'Config' / 'UserEngine.ini'
+
+        if not engine_ini_path.exists():
+            return
+
+        Events.Fire(Events.Application.StatusUpdate(
+            status=L('status_updating_file', 'Updating {file_name}...').format(file_name=engine_ini_path.name))
+        )
+
+        Events.Fire(Events.PathManager.VerifyFileAccess(path=engine_ini_path, write=True))
+
+        with open(engine_ini_path, 'r', encoding='utf-8') as f:
+            ini = IniHandler(IniHandlerSettings(option_value_spacing=False, inline_comments=True, add_section_spacing=True, right_split=True), f)
+
+        ini.remove_option('r.Kuro.SkeletalMesh.DistanceLODBaseFOV')
 
         if ini.is_modified():
             Paths.App.write_file(engine_ini_path, ini.to_string())

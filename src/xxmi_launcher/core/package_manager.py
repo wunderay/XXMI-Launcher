@@ -454,7 +454,7 @@ class PackageManagerConfig:
 
 class PackageManager:
     def __init__(self, packages: list[Package] | None = None):
-        self.github_client = GitHubClient()
+        self.github_client = GitHubClient(cache_path=Paths.App.Resources / 'Cache' / 'GitHub')
         self.packages: dict[str, Package] = {}
         if packages is not None:
             for package in packages:

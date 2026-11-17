@@ -1,0 +1,130 @@
+name: Upstream sync
+# Proposes SpectrumQT/XXMI-Launcher main as a pull request into this fork's
+# main. It only ever pushes the sync/upstream-main branch; main is changed
+# solely by merging that pull request.
+#
+# Requirements and limits:
+# - Settings > Actions > General > "Allow GitHub Actions to create and approve
+#   pull requests" must be enabled, or the PR step fails (the branch is still
+#   pushed and can be opened by hand).
+# - Pull requests opened with GITHUB_TOKEN do not trigger other workflows.
+#   Re-run CI by closing and reopening the PR, or by pushing to the branch.
+# - GITHUB_TOKEN cannot push commits that change .github/workflows. Upstream
+#   has no workflows today; if it adds some, the push step will be refused.
+on:
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      UPSTREAM_URL: https://github.com/SpectrumQT/XXMI-Launcher.git
+      UPSTREAM_BRANCH: main
+      SYNC_BRANCH: sync/upstream-main
+      BASE_BRANCH: main
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch upstream and build the sync branch
+        id: build
+        run: |
+          set -euo pipefail
+          # Byte-for-byte merge: no line-ending or whitespace conversion, so
+          # protected files (native.patch, development-builds/) stay exact.
+          git config core.autocrlf false
+          git config core.safecrlf false
+          # Sync merges are authored as the repository owner, like every other commit here
+          git config user.name 'Raymond Wu'
+          git config user.email '60483832+wunderay@users.noreply.github.com'
+
+          git fetch --no-tags "$UPSTREAM_URL" "+refs/heads/$UPSTREAM_BRANCH:refs/remotes/upstream/$UPSTREAM_BRANCH"
+          upstream_sha=$(git rev-parse "refs/remotes/upstream/$UPSTREAM_BRANCH")
+          behind=$(git rev-list --count "HEAD..$upstream_sha")
+          echo "upstream_sha=$upstream_sha" >> "$GITHUB_OUTPUT"
+          echo "behind=$behind" >> "$GITHUB_OUTPUT"
+          if [ "$behind" -eq 0 ]; then
+            echo "mode=none" >> "$GITHUB_OUTPUT"
+            echo "main already contains upstream $upstream_sha." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          git switch --create "$SYNC_BRANCH"
+          if git merge --no-ff --no-edit -m "Merge upstream SpectrumQT/XXMI-Launcher $UPSTREAM_BRANCH (${upstream_sha:0:12})" "$upstream_sha"; then
+            echo "mode=merge" >> "$GITHUB_OUTPUT"
+          else
+            git diff --name-only --diff-filter=U > "$RUNNER_TEMP/conflicts.txt" || true
+            git merge --abort
+            git reset --hard "$upstream_sha"
+            echo "mode=conflict" >> "$GITHUB_OUTPUT"
+          fi
+          # A rebuilt merge gets a new commit (new date) even when nothing changed: compare the
+          # content and parents with the pushed branch, and leave it alone when they match
+          if git fetch --no-tags origin "+refs/heads/$SYNC_BRANCH:refs/remotes/origin/$SYNC_BRANCH" 2>/dev/null &&
+             [ "$(git rev-parse "HEAD^{tree}") $(git rev-parse HEAD^@)" = \
+               "$(git rev-parse "origin/$SYNC_BRANCH^{tree}") $(git rev-parse "origin/$SYNC_BRANCH^@")" ]; then
+            echo "unchanged=true" >> "$GITHUB_OUTPUT"
+            echo "$SYNC_BRANCH already holds this sync; nothing pushed." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Push sync branch
+        if: steps.build.outputs.mode != 'none' && steps.build.outputs.unchanged != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "$SYNC_BRANCH" = "$BASE_BRANCH" ]; then
+            echo '::error::Refusing to push to the base branch.'
+            exit 1
+          fi
+          # The sync branch is rebuilt from main on every run, so it is
+          # force-pushed. Only refs/heads/sync/upstream-main is ever written.
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/$SYNC_BRANCH"
+      - name: Open or update pull request
+        if: steps.build.outputs.mode != 'none'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODE: ${{ steps.build.outputs.mode }}
+          UPSTREAM_SHA: ${{ steps.build.outputs.upstream_sha }}
+          BEHIND: ${{ steps.build.outputs.behind }}
+        run: |
+          set -euo pipefail
+          body="$RUNNER_TEMP/pr-body.md"
+          {
+            echo "Automated sync of [SpectrumQT/XXMI-Launcher@${UPSTREAM_SHA:0:12}](https://github.com/SpectrumQT/XXMI-Launcher/commit/$UPSTREAM_SHA): $BEHIND upstream commit(s) not yet in \`$BASE_BRANCH\`."
+            echo
+            if [ "$MODE" = "merge" ]; then
+              echo "The branch is \`$BASE_BRANCH\` with upstream merged in cleanly (plain \`git merge\`, no line-ending conversion)."
+            else
+              echo "**The merge had conflicts**, so this branch is upstream \`$UPSTREAM_BRANCH\` as-is. Resolve the conflicts locally (merge \`$SYNC_BRANCH\` into a branch from \`$BASE_BRANCH\`) before merging. Conflicting paths:"
+              echo
+              echo '```'
+              cat "$RUNNER_TEMP/conflicts.txt" 2>/dev/null || true
+              echo '```'
+            fi
+            echo
+            echo "Before merging, check that protected files are unchanged unless upstream changed them: \`tools/PreparedLoading/native.patch\`, \`development-builds/\`, \`.gitattributes\`."
+            echo
+            echo "Pull requests opened with \`GITHUB_TOKEN\` do not start other workflows; close and reopen this PR (or push to the branch) to run CI."
+          } > "$body"
+
+          title="Sync with upstream SpectrumQT/XXMI-Launcher (${UPSTREAM_SHA:0:12})"
+          existing=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$SYNC_BRANCH" --base "$BASE_BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --repo "$GITHUB_REPOSITORY" --title "$title" --body-file "$body"
+            echo "Updated PR #$existing ($MODE)." >> "$GITHUB_STEP_SUMMARY"
+          else
+            gh pr create --repo "$GITHUB_REPOSITORY" --head "$SYNC_BRANCH" --base "$BASE_BRANCH" --title "$title" --body-file "$body"
+            echo "Opened a sync PR ($MODE)." >> "$GITHUB_STEP_SUMMARY"
+          fi

@@ -1,0 +1,186 @@
+name: Release
+# Builds `XXMI Launcher.exe` with tools/PreparedLoading/build-launcher.ps1, runs its
+# frozen self-test and the packaged launcher tests, and zips the installation payload
+# as XXMI-Launcher-<version>-win-x64.zip with a .sha256 file.
+#  - Push of a tag vX.Y.Z: build and publish a GitHub Release for that tag.
+#  - workflow_dispatch: build; publish v<version> only when `publish` is true
+#    (from the default branch, and only if that tag does not exist yet).
+#  - pull_request touching this file: dry-run build, never publishes.
+# No workflow artifacts are uploaded; the release assets are the only output.
+# The dry-run and publish jobs share the same build steps through YAML anchors, so
+# a dry run exercises exactly what a release builds; only the publish job can write.
+on:
+  push:
+    tags: ['v*.*.*']
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (canonical X.Y.Z; the tag is vX.Y.Z)'
+        required: true
+        type: string
+      publish:
+        description: 'Publish a GitHub Release (false = dry run: build and verify only)'
+        required: false
+        default: false
+        type: boolean
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  dry-run:
+    name: Build and verify (dry run)
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && !inputs.publish)
+    runs-on: windows-2022
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - &checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - &resolve-version
+        name: Resolve and validate the release version
+        id: version
+        shell: pwsh
+        env:
+          # Tag pushes use the tag name; pull_request dry runs use the 0.0.0 development version.
+          REQUESTED_VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version || '0.0.0' }}
+        run: |
+          $version = $env:REQUESTED_VERSION -replace '^v', ''
+          # Same rule as validate_version() in tools/PreparedLoading/package-launcher.py,
+          # which build-launcher.ps1 enforces again.
+          if ($version -notmatch '^(0|[1-9][0-9]{0,4})\.(0|[1-9][0-9]{0,4})\.(0|[1-9][0-9]{0,4})$' -or
+              ($version.Split('.') | Where-Object { [int]$_ -gt 65535 })) {
+            throw "Invalid release version '$env:REQUESTED_VERSION' (expected X.Y.Z, each 0-65535)"
+          }
+          New-Item -ItemType Directory -Force (Join-Path $env:GITHUB_WORKSPACE 'work\release-temp') | Out-Null
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Output "Release version: $version"
+      - &setup-python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - &build
+        name: Build the launcher payload and run its frozen self-test
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          TEMP: ${{ github.workspace }}\work\release-temp
+          TMP: ${{ github.workspace }}\work\release-temp
+        run: |
+          & ./tools/PreparedLoading/build-launcher.ps1 -OutputDirectory ./work/launcher-package -Version $env:RELEASE_VERSION
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - &verify
+        name: Verify build receipts
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $package = Join-Path $env:GITHUB_WORKSPACE 'work\launcher-package'
+          $report = Get-Content -Raw (Join-Path $package 'LAUNCHER-PACKAGING.json') | ConvertFrom-Json
+          $manifest = Get-Content -Raw (Join-Path $package 'install-payload\LAUNCHER-BUILD.json') | ConvertFrom-Json
+          if ($report.self_test_result.passed -ne $true) { throw 'Frozen self-test did not pass' }
+          if ($manifest.version -ne $env:RELEASE_VERSION) { throw "Payload version $($manifest.version) is not $env:RELEASE_VERSION" }
+          if ($manifest.source_has_local_changes) { throw "Release source has local changes:`n$($manifest.source_input_status)" }
+          if ($manifest.launcher_source -ne $env:GITHUB_SHA) { throw "Payload source $($manifest.launcher_source) is not $env:GITHUB_SHA" }
+          $exe = Join-Path $package 'install-payload\Resources\Bin\XXMI Launcher.exe'
+          $fileVersion = (Get-Item -LiteralPath $exe).VersionInfo.FileVersion
+          if ($fileVersion -ne "$env:RELEASE_VERSION.0") { throw "PE FileVersion $fileVersion is not $env:RELEASE_VERSION.0" }
+          Write-Output "PASS: frozen self-test, PE and manifest version $env:RELEASE_VERSION, clean source $env:GITHUB_SHA"
+      - &packaged-tests
+        name: Test packaged launcher settings, layout and backup worker
+        shell: pwsh
+        env:
+          TEMP: ${{ github.workspace }}\work\release-temp
+          TMP: ${{ github.workspace }}\work\release-temp
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'src\xxmi_launcher'
+          $env:XXMI_MOD_STATE_TEST_BUNDLE = Join-Path $env:GITHUB_WORKSPACE 'work\launcher-package\install-payload'
+          $python = Join-Path $env:GITHUB_WORKSPACE 'work\launcher-package\build\venv\Scripts\python.exe'
+          & $python -c 'import subprocess, sys; subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_launcher*.py", "-v"], check=True, timeout=300)'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - &archive
+        name: Zip the payload and compute SHA-256
+        id: archive
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $payload = Join-Path $env:GITHUB_WORKSPACE 'work\launcher-package\install-payload'
+          $release = Join-Path $env:GITHUB_WORKSPACE 'work\release'
+          New-Item -ItemType Directory -Force $release | Out-Null
+          $name = "XXMI-Launcher-$env:RELEASE_VERSION-win-x64.zip"
+          $zip = Join-Path $release $name
+          # One top-level 'XXMI Launcher' folder holding the supported installation
+          # layout: Resources/Bin/XXMI Launcher.exe, Themes, Locale, LICENSE, LAUNCHER-BUILD.json.
+          python -c 'import pathlib, sys, zipfile; src, dst = pathlib.Path(sys.argv[1]), sys.argv[2]; z = zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED, compresslevel=9); [z.write(p, "XXMI Launcher/" + p.relative_to(src).as_posix()) for p in sorted(src.rglob("*")) if p.is_file()]; z.close(); z = zipfile.ZipFile(dst); assert z.testzip() is None; assert "XXMI Launcher/Resources/Bin/XXMI Launcher.exe" in z.namelist(); print(f"{len(z.namelist())} files archived")' $payload $zip
+          if ($LASTEXITCODE -ne 0) { throw 'Release archive creation failed' }
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
+          $sha256File = "$zip.sha256"
+          [IO.File]::WriteAllText($sha256File, "$hash  $name`n")
+          $size = (Get-Item -LiteralPath $zip).Length
+          Write-Output "Release archive: $name"
+          Write-Output "Size: $size bytes ($([math]::Round($size / 1MB, 2)) MiB)"
+          Write-Output "SHA256: $hash"
+          "zip=$zip" >> $env:GITHUB_OUTPUT
+          "sha256-file=$sha256File" >> $env:GITHUB_OUTPUT
+          "sha256=$hash" >> $env:GITHUB_OUTPUT
+          "### $name`n`n- Size: $size bytes`n- SHA256: ``$hash``" >> $env:GITHUB_STEP_SUMMARY
+  publish:
+    name: Build, verify and publish
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    runs-on: windows-2022
+    timeout-minutes: 30
+    permissions:
+      contents: write # gh release create
+    steps:
+      - name: Require the default branch for manual publishing
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          REF: ${{ github.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if ($env:REF -ne "refs/heads/$env:DEFAULT_BRANCH") { throw "Manual publishing is only allowed from $env:DEFAULT_BRANCH, not $env:REF" }
+      - *checkout
+      - *resolve-version
+      - *setup-python
+      - *build
+      - *verify
+      - *packaged-tests
+      - *archive
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+          ZIP: ${{ steps.archive.outputs.zip }}
+          SHA256_FILE: ${{ steps.archive.outputs.sha256-file }}
+          SHA256: ${{ steps.archive.outputs.sha256 }}
+        run: |
+          $tag = "v$env:VERSION"
+          $notes = @"
+          Windows x64 build of XXMI Launcher $env:VERSION from commit $env:GITHUB_SHA.
+
+          Extract the zip and run ``XXMI Launcher/Resources/Bin/XXMI Launcher.exe``. The executable is not code-signed.
+
+          SHA256 (``$(Split-Path -Leaf $env:ZIP)``): ``$env:SHA256``
+          "@
+          if ($env:EVENT_NAME -eq 'push') {
+            $target = @('--verify-tag')
+          } else {
+            gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag" --silent 2>$null
+            if ($LASTEXITCODE -eq 0) { throw "Tag $tag already exists; push the tag to release it, or choose a new version" }
+            $global:LASTEXITCODE = 0
+            $target = @('--target', $env:GITHUB_SHA)
+          }
+          gh release create $tag $env:ZIP $env:SHA256_FILE --repo $env:GITHUB_REPOSITORY --title "XXMI Launcher $env:VERSION" --notes $notes @target
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

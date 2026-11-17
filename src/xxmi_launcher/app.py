@@ -1,9 +1,23 @@
+import os
 import sys
 import logging
 import multiprocessing
 import time
 
 from pathlib import Path
+
+
+LOG_ROTATE_BYTES = 8 * 1024 * 1024
+
+
+def rotate_log(log_path: Path, max_bytes: int = LOG_ROTATE_BYTES):
+    """Keep the append-only log bounded: past `max_bytes`, it becomes `<name>.old.txt`
+    (replacing the previous one) and a new log starts. Never fails the launch."""
+    try:
+        if log_path.stat().st_size > max_bytes:
+            os.replace(log_path, log_path.with_name(log_path.stem + '.old' + log_path.suffix))
+    except OSError:
+        pass
 
 
 def verify_msvc_integrity():
@@ -101,6 +115,8 @@ if __name__ == '__main__':
         root_path = Path(__file__).resolve().parent.parent.parent
 
     instance_id = int(time.time() * 1000) % 1000000
+
+    rotate_log(root_path / 'XXMI Launcher Log.txt')
 
     logging.basicConfig(filename=root_path / 'XXMI Launcher Log.txt',
                         encoding='utf-8',

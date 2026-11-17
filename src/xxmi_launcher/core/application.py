@@ -1,4 +1,5 @@
 import sys
+import contextlib
 import logging
 import os
 import argparse
@@ -88,9 +89,21 @@ class Application:
             args = [arg for arg in sys.argv[1:] if arg != '&&']  # Filter out shell operator '&&'
             self.args, self.unknown_args = parser.parse_known_args(args)
             logging.debug(f'Arguments: {self.args}')
+
             if self.args.help:
                 parser.print_help()
                 return
+
+            # Resume interrupted nogui session.
+            context = Config.Launcher.nogui_context
+            if context:
+                if context.get("interrupted"):
+                    if not args:
+                        self.args = argparse.Namespace(**context["args"])
+                        self.unknown_args = list(context["unknown_args"])
+                Config.Launcher.nogui_context.clear()
+                Config.Manager.save()
+
         except BaseException:
             raise ValueError(L('application_failed_parse_args', 'Failed to parse args: {args}').format(args=sys.argv))
 
@@ -155,6 +168,12 @@ class Application:
             if self.update_scheduled():
                 # Force update_packages call below to install the latest updates
                 self.args.update = True
+                # Persist args to resume --nogui start after launcher update.
+                Config.Launcher.nogui_context = {
+                    "args": vars(self.args).copy(),
+                    "unknown_args": list(self.unknown_args),
+                    "interrupted": False,
+                }
             else:
                 # Async run update_packages in check-for-updates mode to save available updates versions to config
                 # It allows to go straight to game launch at the cost of update notification being delayed by 1 restart
@@ -352,9 +371,10 @@ class Application:
         cfg_backup_path = Paths.App.Backups / Config.Manager.config_path.name
         try:
             Config.Manager.load()
-            # Backup last successfully loaded config
+            # Backup last successfully loaded config (unless the backup already is identical)
             if Config.Manager.config_path.is_file():
-                Paths.App.copy_file(Config.Manager.config_path, cfg_backup_path)
+                if not Config.Manager._file_matches(cfg_backup_path, Config.Manager.config_path.read_bytes()):
+                    Paths.App.copy_file(Config.Manager.config_path, cfg_backup_path)
         except Exception as e:
             if Config.Manager.config_path.is_file():
                 error_dialogue = Events.Application.ShowError(
@@ -480,6 +500,8 @@ class Application:
         self.args.update = False
         # Resume interrupted Quick Start
         if self.args.nogui:
+            if Config.Launcher.nogui_context:
+                Config.Launcher.nogui_context.clear()
             Events.Fire(Events.Application.Launch())
 
     def load_importer(self, importer_id, update=True, reload=False):
@@ -573,8 +595,17 @@ class Application:
                 message=L('message_text_already_up_to_date', 'No updates available!'),
             ))
 
+    @staticmethod
+    def _iter_log_lines():
+        """Lines of the rotated log (if any), then the current one, read lazily."""
+        log_path = Paths.App.Root / 'XXMI Launcher Log.txt'
+        for path in (log_path.with_name(log_path.stem + '.old' + log_path.suffix), log_path):
+            if path.is_file():
+                with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                    yield from f
+
     def get_launch_counters_from_log(self, exclude_failed = True):
-        with (open(Paths.App.Root / 'XXMI Launcher Log.txt', 'r', encoding='utf-8', errors='ignore') as f):
+        with contextlib.nullcontext(self._iter_log_lines()) as f:
             launch_counters = { 'GIMI': 0, 'SRMI': 0,  'WWMI': 0, 'ZZMI': 0, 'HIMI': 0, 'EFMI': 0 }
 
             def parse_active_package(line):
@@ -595,7 +626,7 @@ class Application:
             active_package = ''
             launch_in_progress = False
 
-            for line_id, line in enumerate(map(str.strip, f.readlines())):
+            for line_id, line in enumerate(map(str.strip, f)):
                 # Detect which model importer is used for launch event
                 package = parse_active_package(line)
                 if package:

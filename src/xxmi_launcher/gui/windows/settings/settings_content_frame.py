@@ -1,6 +1,5 @@
 import os
 import webbrowser
-import markdown
 import re
 
 from dataclasses import dataclass
@@ -10,8 +9,6 @@ from textwrap import dedent
 from pathlib import Path
 
 from customtkinter import ThemeManager, Variable
-from tkinterweb import HtmlLabel
-from mdx_gfm import GithubFlavoredMarkdownExtension
 
 import gui.vars as Vars
 
@@ -19,9 +16,20 @@ from core.locale_manager import L, Locale, LocaleString
 
 from gui.classes.containers import UIFrame, UIScrollableFrame
 from gui.classes.widgets import UILabel, UIButton, UIEntry, UICheckbox,  UIOptionMenu, UITextbox
+from gui.classes.resources import LazyMarkdown, LazyModule
+
+# HTML rendering is needed only once a setting description is shown
 
 
-MARKDOWN_PARSER = markdown.Markdown(extensions=[GithubFlavoredMarkdownExtension()])
+def _import_tkinterweb():
+    import tkinterweb
+    return tkinterweb
+
+
+tkinterweb = LazyModule(_import_tkinterweb)
+
+
+MARKDOWN_PARSER = LazyMarkdown()
 
 
 class OptionWidget(Enum):
@@ -421,7 +429,7 @@ class InfoFrame(UIFrame):
             webbrowser.open(url)
 
     def _render_info_text(self):
-        self._info_label = HtmlLabel(
+        self._info_label = tkinterweb.HtmlLabel(
             master=self,
             messages_enabled=False,
             caches_enabled=False,

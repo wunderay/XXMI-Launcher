@@ -1,8 +1,6 @@
 from typing import Any, Self
 from enum import Enum
 
-from customtkinter import ScalingTracker
-
 from core.locale_manager import L
 
 
