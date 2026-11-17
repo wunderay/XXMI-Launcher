@@ -105,11 +105,9 @@ int main(int argc, char**) {
 	PumpIncrementalRelease(&device);
 	releaseHook = nullptr;
 	const bool deferred = IncrementalDrainRequested().load();
-	std::printf("reentrant drain: deferred=%d occupied=%d\n", deferred, Occupied());
-	CHECK(deferred);
-	PumpIncrementalRelease(&device); // the next pump takes every slot first
-	std::printf("after next pump: occupied=%d destroyed=%d\n", Occupied(), destroyed);
-	CHECK(Occupied() == 0 && destroyed == 2);
+	// The same pump honours the request before it returns: no further Present is needed
+	std::printf("reentrant drain: deferred=%d occupied=%d destroyed=%d\n", deferred, Occupied(), destroyed);
+	CHECK(!deferred && Occupied() == 0 && destroyed == 2);
 
 	// 3. The table is reusable afterwards; release is paced at the patch's per-frame budget
 	destroyed = 0; childReleases = 0;
@@ -151,6 +149,27 @@ int main(int argc, char**) {
 	std::thread([&] { PumpIncrementalRelease(&replacement); PumpIncrementalRelease(&replacement); }).join();
 	std::printf("replacement device, other thread: occupied=%d destroyed=%d\n", Occupied(), destroyed);
 	CHECK(Occupied() == 0 && destroyed == 2);
+	// 7. A drain that loses the slot mutex to another thread is recorded, not dropped
+	destroyed = 0;
+	for (int i = 0; i < 2; ++i) Queue(MakeGraph(8, &destroyed), &device);
+	{
+		std::mutex held, released;
+		std::unique_lock<std::mutex> gate(released);
+		bool locked = false;
+		std::thread holder([&] {
+			std::lock_guard<std::mutex> lock(IncrementalReleaseMutex());
+			{ std::lock_guard<std::mutex> signal(held); locked = true; }
+			std::lock_guard<std::mutex> wait(released); // until the drain below has run
+		});
+		while (true) { std::lock_guard<std::mutex> check(held); if (locked) break; }
+		DrainIncrementalRelease();
+		CHECK(IncrementalDrainRequested().load() && Occupied() == 2);
+		gate.unlock();
+		holder.join();
+	}
+	PumpIncrementalRelease(&device); // takes every slot first
+	std::printf("drain while another thread holds the lock: occupied=%d destroyed=%d\n", Occupied(), destroyed);
+	CHECK(Occupied() == 0 && destroyed == 2 && !IncrementalDrainRequested().load());
 	std::printf(failures ? "FAILED\n" : "OK\n");
 	return failures ? 1 : 0;
 }

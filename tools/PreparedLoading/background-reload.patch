@@ -10,7 +10,7 @@ Status
     unchanged and remains the qualified source patch; nothing here is part of
     the candidate described in COMPLETION-STATUS.md.
   * Applies ON TOP OF the tree produced by native.patch (pinned base
-    3DMigoto/XXMI-Libs a7847eae82aaac32175c9a7d199673d5c9323bcd plus
+    SpectrumQT/XXMI-Libs-Package a7847eae82aaac32175c9a7d199673d5c9323bcd plus
     native.patch). It is not a patch against the upstream base.
   * Every hunk, including DirectX11/IniHandler.cpp, is generated with git diff
     against the full pinned upstream tree with native.patch applied, and
@@ -93,13 +93,15 @@ Design
       original one-shot release.
       Slots never outlive their owner: a device mismatch is detected before
       the owner-thread check (so a replacement owner/device still reaches the
-      cleanup), and RetireRuntimeDevice and a legacy reload drain every slot
-      back to the one-shot release. The drain never blocks (a COM Release
-      inside the pump can reenter device retirement); if the slot mutex is
-      busy, the next pump takes every slot first. Slots are not drained at
-      process exit. A mock-type C++ harness of these functions (not D3D)
-      showed 4 of 4 graphs pinned after 100 replacement-owner pumps before
-      this, and none pinned with all four slots reusable after.
+      cleanup), and every retirement path drains every slot back to the
+      one-shot release: RetireRuntimeDevice (before its early return),
+      RuntimeOwnerScope when it carries out a deferred retirement, and a
+      legacy reload. The drain never blocks (a COM Release inside the pump can
+      reenter device retirement): on the pump's own thread it is recorded and
+      done by that pump before it returns; if another thread holds the slot
+      mutex, the next pump takes every slot first. Slots are not drained at
+      process exit. tests/test_background_reload_patch.py compiles these exact
+      functions into a mock-type C++ harness (not D3D) and checks each path.
 
 Risks
   * Worker creation and the render thread contend for the driver and for the
@@ -197,10 +199,10 @@ index 2480dd0..958377e 100644
  	if (!configuration_write) { ModLoading::CancelConfigurationRetirement(); return; } // Keep pending: retry at a quiescent frame.
 diff --git a/DirectX11/ModLoading/BackgroundReload.inl b/DirectX11/ModLoading/BackgroundReload.inl
 new file mode 100644
-index 0000000..f2aae4d
+index 0000000..0cf7489
 --- /dev/null
 +++ b/DirectX11/ModLoading/BackgroundReload.inl
-@@ -0,0 +1,345 @@
+@@ -0,0 +1,351 @@
 +// background-reload.patch: UNBUILT AND UNTESTED. Private part of Runtime.cpp,
 +// included inside namespace ModLoading after GeneralConfigPipeline.inl.
 +//
@@ -431,7 +433,7 @@ index 0000000..f2aae4d
 +void PumpIncrementalRelease(ID3D11Device* device)
 +{
 +	std::shared_ptr<ConfigGenerationPin> finished;
-+	std::array<std::shared_ptr<ConfigGenerationPin>, 4> drained;
++	std::array<std::shared_ptr<ConfigGenerationPin>, 4> drained, drainedDuringPump;
 +	{
 +		if (pumpHoldsReleaseLock)
 +			return; // Reentered from a Release() below; the outer pump continues.
@@ -473,9 +475,15 @@ index 0000000..f2aae4d
 +				break;
 +			}
 +		}
++		// A Release() above may have retired the device and requested a drain (deferred because
++		// this thread holds the lock); honour it now instead of waiting for the next Present.
++		if (IncrementalDrainRequested().exchange(false))
++			TakeAllIncrementalReleases(drainedDuringPump);
 +	}
 +	finished.reset(); // Outside the lock; the outer pin's deleter is asynchronous.
 +	for (auto& graph : drained)
++		graph.reset();
++	for (auto& graph : drainedDuringPump)
 +		graph.reset();
 +}
 +

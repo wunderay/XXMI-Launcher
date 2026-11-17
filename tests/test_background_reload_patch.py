@@ -91,7 +91,9 @@ class BackgroundReloadPatchTests(unittest.TestCase):
             for line in ('early-return retirement: occupied=0 destroyed=4',
                          'deferred retirement, same thread: occupied=0 destroyed=4',
                          'deferred retirement, other thread: occupied=0 destroyed=4',
-                         'replacement device, other thread: occupied=0 destroyed=2'):
+                         'replacement device, other thread: occupied=0 destroyed=2',
+                         'reentrant drain: deferred=0 occupied=0 destroyed=2',
+                         'drain while another thread holds the lock: occupied=0 destroyed=2'):
                 self.assertIn(line, run.stdout)
 
 
