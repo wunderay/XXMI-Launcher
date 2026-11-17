@@ -1,19 +1,9 @@
 name: Import time
 # Records how long launcher core modules take to import (a proxy for startup
-# cost) and uploads the raw -X importtime traces. Informational: it has no
+# cost) in the job summary (no artifacts). Informational: it has no
 # thresholds, so runner noise cannot fail it.
+# Manual only (Actions minutes are limited); results are written to the job summary.
 on:
-  pull_request:
-    paths:
-      - 'src/xxmi_launcher/core/**'
-      - 'tools/ci/import_time_report.py'
-      - '.github/workflows/import-time.yml'
-  push:
-    branches: [main]
-    paths:
-      - 'src/xxmi_launcher/core/**'
-      - 'tools/ci/import_time_report.py'
-      - '.github/workflows/import-time.yml'
   workflow_dispatch:
 permissions:
   contents: read
@@ -37,9 +27,3 @@ jobs:
         env:
           PYTHONPYCACHEPREFIX: ${{ runner.temp }}/pycache
         run: python tools/ci/import_time_report.py --output-dir "$RUNNER_TEMP/import-time" --runs 5
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: import-time
-          path: ${{ runner.temp }}/import-time/
-          retention-days: 14
-          if-no-files-found: error
