@@ -321,6 +321,40 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(len(journals), 1)
         self.assertEqual(json.loads(journals[0].read_text())["status"], "failed-previous-root-restored")
 
+    def test_recreated_root_during_swap_reports_manual_recovery(self):
+        self.make_archive()
+        original = Path.rename
+        def recreate_root(path, target):
+            if ".restore-stage-" in path.name:
+                self.root.mkdir()
+                raise OSError("simulated rename failure")
+            return original(path, target)
+        with mock.patch.object(Path, "rename", recreate_root):
+            with self.assertRaisesRegex(snapshot.SnapshotError, "Previous root remains at .*rollback"):
+                snapshot.restore(self.archive, self.root, apply=True)
+        journals = list(self.parent.glob("*.restore-*.json"))
+        self.assertEqual(json.loads(journals[0].read_text())["status"], "failed-manual-recovery-required")
+        self.assertEqual(len(list(self.parent.glob("*.rollback-*"))), 1)
+
+    @unittest.skipIf(os.name == "nt", "POSIX mode bits")
+    def test_restored_root_keeps_inherited_permissions(self):
+        os.chmod(self.root, 0o755)
+        self.make_archive()
+        snapshot.restore(self.archive, self.root, apply=True)
+        expected = 0o777 & ~self.umask()
+        self.assertEqual(stat.S_IMODE(self.root.stat().st_mode), expected)
+
+    @staticmethod
+    def umask():
+        mask = os.umask(0)
+        os.umask(mask)
+        return mask
+
+    def test_reserved_device_names_refused(self):
+        for name in ("CONIN$", "conout$.txt", "COM0", "lpt0.ini"):
+            with self.assertRaises(snapshot.SnapshotError):
+                snapshot.safe_relative(f"ZZMI/{name}")
+
     def test_staged_disk_corruption_detected_before_swap(self):
         self.make_archive()
         original = snapshot._verify_files

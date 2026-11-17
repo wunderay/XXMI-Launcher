@@ -32,8 +32,8 @@ MANIFEST = "SNAPSHOT-MANIFEST.json"
 CONFIG = "XXMI Launcher Config.json"
 CHUNK = 1024 * 1024
 MAX_MANIFEST = 64 * 1024 * 1024
-RESERVED = {"CON", "PRN", "AUX", "NUL", "CLOCK$"} | {
-    f"{prefix}{digit}" for prefix in ("COM", "LPT") for digit in "123456789¹²³"
+RESERVED = {"CON", "PRN", "AUX", "NUL", "CLOCK$", "CONIN$", "CONOUT$"} | {
+    f"{prefix}{digit}" for prefix in ("COM", "LPT") for digit in "0123456789¹²³"
 }
 PROCESS_NAMES = {
     "zenlesszonezero.exe", "xxmi launcher.exe", "xxmi launcher no console.exe",
@@ -511,6 +511,10 @@ def _verify_files(archive: zipfile.ZipFile, manifest: dict, stage: Path | None =
                     digest.update(chunk)
                     if output:
                         output.write(chunk)
+            if output:
+                # Data must be durable before the swap marks the journal complete.
+                output.flush()
+                os.fsync(output.fileno())
             if total != entry["size"] or digest.hexdigest() != entry["sha256"]:
                 fail(f"Hash/size mismatch: {entry['path']}")
         finally:
@@ -552,10 +556,14 @@ def verify(archive: Path | str, root: Path | str | None = None) -> dict:
 
 
 def _write_journal(path: Path, data: dict, first=False):
-    with path.open("x" if first else "w", encoding="utf-8") as output:
+    # Replace atomically: a crash mid-write must never leave an empty recovery record.
+    target = path if first else path.with_name(path.name + ".tmp")
+    with target.open("x" if first else "w", encoding="utf-8") as output:
         output.write(json.dumps(data, indent=2) + "\n")
         output.flush()
         os.fsync(output.fileno())
+    if not first:
+        os.replace(target, path)
 
 
 def restore(archive: Path | str, root: Path | str, apply=False) -> dict:
@@ -580,7 +588,10 @@ def restore(archive: Path | str, root: Path | str, apply=False) -> dict:
                   "plan": "Replace entire root; retain existing root in a sibling rollback folder."}
         if not apply:
             return result
-        stage = Path(tempfile.mkdtemp(prefix=f".{root.name}.restore-stage-", dir=root.parent))
+        # Plain mkdir inherits the parent's permissions (mkdtemp would make the restored root private),
+        # and a short name keeps staged paths close to the original length.
+        stage = root.parent / f".s.restore-stage-{uuid.uuid4().hex[:8]}"
+        stage.mkdir()
         try:
             for entry in sorted(manifest["directories"], key=lambda x: len(PurePosixPath(x["path"]).parts)):
                 (stage / entry["path"]).mkdir()
@@ -608,7 +619,7 @@ def restore(archive: Path | str, root: Path | str, apply=False) -> dict:
                 if (root / CONFIG).exists():
                     guard_processes(_read_json(root / CONFIG), root)
         except BaseException:
-            shutil.rmtree(stage)
+            shutil.rmtree(stage, ignore_errors=True)
             raise
     token = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
     rollback = root.with_name(root.name + ".rollback-" + token)
@@ -618,7 +629,7 @@ def restore(archive: Path | str, root: Path | str, apply=False) -> dict:
     try:
         _write_journal(journal, record, first=True)
     except OSError as exc:
-        shutil.rmtree(stage)
+        shutil.rmtree(stage, ignore_errors=True)
         fail(f"Cannot write restore recovery journal; live root was untouched: {exc}")
     moved = False
     try:
@@ -638,6 +649,10 @@ def restore(archive: Path | str, root: Path | str, apply=False) -> dict:
             except OSError as rollback_exc:
                 recovery = f" Previous root remains at {rollback}; recovery rename failed: {rollback_exc}."
                 record["status"] = "failed-manual-recovery-required"
+        elif moved:
+            # Something recreated the root path: never report it as unchanged or hide the rollback.
+            recovery = f" Previous root remains at {rollback}; {root} was recreated by another process."
+            record["status"] = "failed-manual-recovery-required"
         else:
             record["status"] = "failed-live-root-unchanged"
         record["error"] = str(exc)
