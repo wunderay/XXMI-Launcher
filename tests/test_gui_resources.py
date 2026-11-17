@@ -161,6 +161,20 @@ class PreparedImageDiskCacheTests(unittest.TestCase):
         # max_files=2: the folder is in its final state, nothing is left for a later prune
         self.assertEqual(len(list(self.cache.folder.glob('*.webp'))), 2)
 
+    def test_spaced_writes_are_pruned_once_per_burst(self):
+        import time
+        prunes = []
+        original = self.cache._prune
+        self.cache._prune = lambda: (prunes.append(1), original())
+        for index in range(20):
+            self.cache.store_async(('s', index), self.Image.new('RGBA', (8, 8), (index, 0, 0, 255)))
+            time.sleep(0.01)  # the writer keeps up, so the queue is empty between images
+        self.assertTrue(self.cache.flush(timeout=10))
+        self.assertEqual(len(prunes), 1)
+        self.assertEqual(len(list(self.cache.folder.glob('*.webp'))), 2)
+        time.sleep(1.2)  # the idle timer finds nothing left to prune
+        self.assertEqual(len(prunes), 1)
+
 
 class ShutdownFlushTests(unittest.TestCase):
     def test_application_exit_flushes_image_writes_before_os_exit(self):
