@@ -85,22 +85,27 @@ def main():
     ap.add_argument("--boot-delay", type=float, default=0.0,
                     help="seconds between game start and the DLL loading mods")
     ap.add_argument("--prefetch", action="store_true",
-                    help="read referenced files in a background thread during the boot delay")
+                    help="run the launcher's core.mod_prefetch during the boot delay (needs PYTHONPATH=src/xxmi_launcher)")
     args = ap.parse_args()
     runs = []
     for _ in range(args.repeat):
         if args.cold:
             evict(args.importer)
-        worker = None
+        prefetcher = None
         if args.prefetch:
-            import threading
-            worker = threading.Thread(target=load, args=(args.importer,), daemon=True)
-            worker.start()
+            from core.mod_prefetch import ModPrefetcher
+            prefetcher = ModPrefetcher.start(args.importer / "d3dx.ini")
         time.sleep(args.boot_delay)
-        runs.append(load(args.importer))
-        if worker:
-            worker.join()
+        run = load(args.importer)
+        if prefetcher:
+            prefetcher.thread.join()
+            stats = prefetcher.stats
+            run["prefetch"] = {"files": stats.files, "mb": round(stats.bytes / 1e6, 1), "s": round(stats.seconds, 3),
+                               "completed": stats.completed, "thread_cpu_s": round(stats.cpu_seconds, 3)}
+        runs.append(run)
+    import resource
     best = min(runs, key=lambda r: r["load_s"])
+    best["max_rss_mb"] = round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1)
     best["median_load_s"] = sorted(r["load_s"] for r in runs)[len(runs) // 2]
     best["mode"] = "cold" if args.cold else "warm"
     print(json.dumps(best))

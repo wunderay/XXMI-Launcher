@@ -32,6 +32,8 @@ class LauncherManagerConfig:
     pre_release: bool = False
     update_channel: UpdateChannel = UpdateChannel.AUTO
     auto_close: bool = True
+    # Warm the OS file cache with mod files while the game starts (see core/mod_prefetch.py)
+    prefetch_mod_files: bool = True
     start_timeout: int = 30
     gui_theme: str = 'Default'
     theme_mode: str = 'System'
