@@ -95,6 +95,15 @@ Design
       the owner thread before the remaining CPU-only teardown takes the
       existing Disposal() path. A full table, or a recreated device, keeps the
       original one-shot release.
+      Slots never outlive their owner: a device mismatch is detected before
+      the owner-thread check (so a replacement owner/device still reaches the
+      cleanup), and RetireRuntimeDevice and a legacy reload drain every slot
+      back to the one-shot release. The drain never blocks (a COM Release
+      inside the pump can reenter device retirement); if the slot mutex is
+      busy, the next pump takes every slot first. Slots are not drained at
+      process exit. A mock-type C++ harness of these functions (not D3D)
+      showed 4 of 4 graphs pinned after 100 replacement-owner pumps before
+      this, and none pinned with all four slots reusable after.
 
 Risks
   * Worker creation and the render thread contend for the driver and for the
@@ -185,9 +194,10 @@ diff --git a/DirectX11/IniHandler.cpp b/DirectX11/IniHandler.cpp
  	if (!configuration_write) { ModLoading::CancelConfigurationRetirement(); return; } // Keep pending: retry at a quiescent frame.
 diff --git a/DirectX11/ModLoading/BackgroundReload.inl b/DirectX11/ModLoading/BackgroundReload.inl
 new file mode 100644
+index 0000000..2ea216a
 --- /dev/null
 +++ b/DirectX11/ModLoading/BackgroundReload.inl
-@@ -0,0 +1,279 @@
+@@ -0,0 +1,331 @@
 +// background-reload.patch: UNBUILT AND UNTESTED. Private part of Runtime.cpp,
 +// included inside namespace ModLoading after GeneralConfigPipeline.inl.
 +//
@@ -390,25 +400,51 @@ new file mode 100644
 +	shader.substantiated = false;
 +}
 +
++std::atomic<bool>& IncrementalDrainRequested()
++{
++	static std::atomic<bool> requested{false};
++	return requested;
++}
++
++// Moves every queued graph out of the slots; caller holds IncrementalReleaseMutex().
++void TakeAllIncrementalReleases(std::array<std::shared_ptr<ConfigGenerationPin>, 4>& drained)
++{
++	size_t index = 0;
++	for (auto& slot : IncrementalReleaseSlots()) {
++		if (!slot.graph)
++			continue;
++		drained[index++].swap(slot.graph);
++		slot = IncrementalRelease();
++	}
++}
++
 +// Owner thread, every Present. Releases at most IncrementalReleasePerFrame
 +// resource/shader entries; the remaining CPU-only teardown keeps Disposal().
 +void PumpIncrementalRelease(ID3D11Device* device)
 +{
 +	std::shared_ptr<ConfigGenerationPin> finished;
++	std::array<std::shared_ptr<ConfigGenerationPin>, 4> drained;
 +	{
 +		std::unique_lock<std::mutex> lock(IncrementalReleaseMutex(), std::try_to_lock);
 +		if (!lock.owns_lock())
 +			return;
++		// A drain that could not take the lock (see DrainIncrementalRelease) is done here.
++		if (IncrementalDrainRequested().exchange(false))
++			TakeAllIncrementalReleases(drained);
 +		size_t budget = IncrementalReleasePerFrame;
 +		for (auto& slot : IncrementalReleaseSlots()) {
-+			if (!slot.graph || !budget || slot.owner != std::this_thread::get_id())
++			if (!slot.graph || !budget)
 +				continue;
++			// Checked before the owner thread: a replacement owner/device must still reach this
++			// cleanup, or the slot would pin the retired graph indefinitely.
 +			if (slot.device && slot.device != device) {
 +				// Device recreated: no pacing benefit; keep the original release.
 +				finished.swap(slot.graph);
 +				slot = IncrementalRelease();
 +				break;
 +			}
++			if (slot.owner != std::this_thread::get_id())
++				continue;
 +			auto& graph = **slot.graph;
 +			if (!slot.started) {
 +				slot.resource = graph.resources.begin();
@@ -427,6 +463,32 @@ new file mode 100644
 +		}
 +	}
 +	finished.reset(); // Outside the lock; the outer pin's deleter is asynchronous.
++	for (auto& graph : drained)
++		graph.reset();
++}
++
++// Any thread. Hands every queued graph back to the normal
++// Disposal() release, like the device-recreated case above. Called when the runtime
++// device is retired and when a legacy reload disables background reload, so slots never
++// wait for a Present that may not come and all four are free again afterwards. At process
++// exit the (intentionally leaked) slots are not drained; process teardown releases them.
++// Never blocks: a COM Release() inside PumpIncrementalRelease (which holds the mutex) can
++// reenter RetireRuntimeDevice on the same thread. If the mutex is busy, the drain is left
++// to the next pump, which takes every slot before releasing anything else.
++void DrainIncrementalRelease()
++{
++	std::array<std::shared_ptr<ConfigGenerationPin>, 4> drained;
++	{
++		std::unique_lock<std::mutex> lock(IncrementalReleaseMutex(), std::try_to_lock);
++		if (!lock.owns_lock()) {
++			IncrementalDrainRequested().store(true);
++			return;
++		}
++		IncrementalDrainRequested().store(false);
++		TakeAllIncrementalReleases(drained);
++	}
++	for (auto& graph : drained)
++		graph.reset(); // Outside the lock; the outer pin's deleter is asynchronous.
 +}
 +} // namespace
 +
@@ -468,9 +530,10 @@ new file mode 100644
 +	}
 +}
 diff --git a/DirectX11/ModLoading/GeneralConfigPipeline.inl b/DirectX11/ModLoading/GeneralConfigPipeline.inl
+index b09bc81..e37cc6f 100644
 --- a/DirectX11/ModLoading/GeneralConfigPipeline.inl
 +++ b/DirectX11/ModLoading/GeneralConfigPipeline.inl
-@@ -4,6 +4,12 @@
+@@ -4,6 +4,12 @@ namespace {
  int ReserveGraphRetirement(ID3D11Device* device);
  void CancelGraphRetirement(int slot);
  void SubmitGraphRetirement(int slot, ConfigGenerationPin previous);
@@ -483,7 +546,7 @@ diff --git a/DirectX11/ModLoading/GeneralConfigPipeline.inl b/DirectX11/ModLoadi
  
  // A slot is reserved when an object is allocated, so its final deleter never
  // allocates or joins a watcher on a rendering thread. Capacity is bounded.
-@@ -707,7 +713,9 @@
+@@ -707,7 +713,9 @@ bool AttachGeneralAsset(GeneralAsset& asset, ID3D11Device* device) {
  bool PrepareGeneralIni(GeneralBuildResult& candidate, ID3D11Device* device) {
  	auto& graph = *candidate.next->graph;
  	if (candidate.iniPrepared) return true;
@@ -494,7 +557,7 @@ diff --git a/DirectX11/ModLoading/GeneralConfigPipeline.inl b/DirectX11/ModLoadi
  	graph.iniDevice = device;
  	if (graph.iniParams.empty()) { graph.ownsIniResources = true; candidate.iniPrepared = true; return true; }
  	const uint64_t bytes = graph.iniParams.size() * sizeof(DirectX::XMFLOAT4) + 128 * 1024;
-@@ -771,6 +779,7 @@
+@@ -771,6 +779,7 @@ void PumpGeneralConfiguration(const std::shared_ptr<RuntimeState>& state, ID3D11
  		return;
  	}
  	if (!candidate->valid) {
@@ -502,7 +565,7 @@ diff --git a/DirectX11/ModLoading/GeneralConfigPipeline.inl b/DirectX11/ModLoadi
  		service.refreshActivation.SetReady(0); service.refreshActivation.Consume();
  		GeneralStatus(state, candidate, PreparationStatusState::Compatibility, candidate->reason, statusTicket);
  		return;
-@@ -785,6 +794,7 @@
+@@ -785,6 +794,7 @@ void PumpGeneralConfiguration(const std::shared_ptr<RuntimeState>& state, ID3D11
  		return;
  	}
  	if (!state->gpuEnabled || !state->generalGpuBytes || (device->GetCreationFlags() & D3D11_CREATE_DEVICE_SINGLETHREADED)) {
@@ -510,7 +573,7 @@ diff --git a/DirectX11/ModLoading/GeneralConfigPipeline.inl b/DirectX11/ModLoadi
  		GeneralStatus(state, candidate, PreparationStatusState::Compatibility, "Complete GPU preparation disabled or device owner unsupported", statusTicket); return;
  	}
  	service.device = device; service.epoch = epoch; service.owner = std::this_thread::get_id();
-@@ -814,10 +824,16 @@
+@@ -814,10 +824,16 @@ void PumpGeneralConfiguration(const std::shared_ptr<RuntimeState>& state, ID3D11
  			profile.source = asset.source; profile.pinnedGpu = asset.gpu; profile.observedGpu = asset.gpu; profile.key = asset.key;
  		}
  	}
@@ -529,7 +592,7 @@ diff --git a/DirectX11/ModLoading/GeneralConfigPipeline.inl b/DirectX11/ModLoadi
  		if (pumped.deviceRemoved) { candidate->valid = false; candidate->reason = "Device was removed during candidate preparation"; return; }
  		if (candidate->readyAssets == candidate->assets.size() && !candidate->iniPrepared) PrepareGeneralIni(*candidate, device);
  		// Query allocation occurs before Ready, never within the final source
-@@ -842,6 +858,8 @@
+@@ -842,6 +858,8 @@ void PumpGeneralConfiguration(const std::shared_ptr<RuntimeState>& state, ID3D11
  	if (!readyProof) { service.refreshActivation.SetReady(0); return; }
  	const auto requested = service.refreshActivation.Consume();
  	if (requested == candidate->id && state->transactionalActivation) candidate->activationRequested = true;
@@ -538,7 +601,7 @@ diff --git a/DirectX11/ModLoading/GeneralConfigPipeline.inl b/DirectX11/ModLoadi
  	if (!candidate->activationRequested) return;
  	// Activation duration measures one owner-side attempt, excluding preparation
  	// and readiness waits: 0 = published, 1 = retry, -1 = compatible reload needed.
-@@ -895,9 +913,11 @@
+@@ -895,9 +913,11 @@ void PumpGeneralConfiguration(const std::shared_ptr<RuntimeState>& state, ID3D11
  		service.refreshActivation.SetReady(0); service.pendingGeneral.reset();
  		GeneralStatus(candidate->next, {}, PreparationStatusState::Ready, "Complete prepared configuration activated", statusTicket);
  		LoadTrace::Get().RecordInstant(LoadStage::Activation, candidate->id, 0, 0);
@@ -551,6 +614,7 @@ diff --git a/DirectX11/ModLoading/GeneralConfigPipeline.inl b/DirectX11/ModLoadi
  	}
  }
 diff --git a/DirectX11/ModLoading/PreparationPlanner.cpp b/DirectX11/ModLoading/PreparationPlanner.cpp
+index 38942ec..827b25b 100644
 --- a/DirectX11/ModLoading/PreparationPlanner.cpp
 +++ b/DirectX11/ModLoading/PreparationPlanner.cpp
 @@ -4,6 +4,7 @@
@@ -561,7 +625,7 @@ diff --git a/DirectX11/ModLoading/PreparationPlanner.cpp b/DirectX11/ModLoading/
  #include <cstring>
  #include <limits>
  #include <mutex>
-@@ -355,6 +356,88 @@
+@@ -355,6 +356,88 @@ PreparationPlanner::PreparationPlanner(uint64_t cacheBytes, size_t maxQueued, ui
  	: cache_(cacheBytes), maxQueued_((std::min)(size_t(4096), maxQueued)), maxShaderBytecodeBytes_(maxRetainedShaderBytecodeBytes), enabled_(cacheBytes != 0) {}
  PreparationPlanner::~PreparationPlanner() { RetireDevice(); }
  bool PreparationPlanner::OnOwner() const { return owner_ == std::this_thread::get_id(); }
@@ -650,7 +714,7 @@ diff --git a/DirectX11/ModLoading/PreparationPlanner.cpp b/DirectX11/ModLoading/
  bool PreparationPlanner::BeginDevice(ID3D11Device* device, DeviceEpoch epoch) {
  	if (!device || !epoch || (device_ && !OnOwner())) return false;
  	if (device_ == device && cache_.Epoch() == epoch) return true;
-@@ -365,6 +448,7 @@
+@@ -365,6 +448,7 @@ bool PreparationPlanner::BeginDevice(ID3D11Device* device, DeviceEpoch epoch) {
  	return true;
  }
  void PreparationPlanner::RetireDevice() {
@@ -658,7 +722,7 @@ diff --git a/DirectX11/ModLoading/PreparationPlanner.cpp b/DirectX11/ModLoading/
  	queue_.clear(); resolvedKeys_.clear(); failedKeys_.clear(); queuedBytes_ = 0; queuedShaderBytecodeBytes_ = 0; budget_ = MemoryBudgetController(128ull * 1024 * 1024, safetyHeadroom_);
  	cache_.BeginEpoch(0); device_ = nullptr; singleThreaded_ = false; concurrentCreates_ = false;
  }
-@@ -678,6 +762,103 @@
+@@ -678,6 +762,103 @@ GpuPumpResult PreparationPlanner::Pump(bool knownLoadingWindow, GpuPumpLimits li
  	}
  	return result;
  }
@@ -763,9 +827,10 @@ diff --git a/DirectX11/ModLoading/PreparationPlanner.cpp b/DirectX11/ModLoading/
  	if (!device_ || !OnOwner()) return false;
  	const auto resolved = resolvedKeys_.find(key);
 diff --git a/DirectX11/ModLoading/PreparationPlanner.h b/DirectX11/ModLoading/PreparationPlanner.h
+index 784b57f..779fed5 100644
 --- a/DirectX11/ModLoading/PreparationPlanner.h
 +++ b/DirectX11/ModLoading/PreparationPlanner.h
-@@ -120,8 +120,10 @@
+@@ -120,8 +120,10 @@ bool AttachPreparedAllocation(ID3D11DeviceChild* child, uint64_t bytes,
  // Conservative encoded metadata estimate; zero means unsupported/malformed.
  uint64_t EstimateEncodedTextureBytes(const SourceSnapshot& source, GpuPreparationKind kind);
  struct GpuPumpResult { size_t created = 0, failed = 0, compatibilitySkipped = 0; bool deviceRemoved = false; };
@@ -777,7 +842,7 @@ diff --git a/DirectX11/ModLoading/PreparationPlanner.h b/DirectX11/ModLoading/Pr
  class PreparationPlanner {
  public:
  	explicit PreparationPlanner(uint64_t cacheBytes = 256ull * 1024 * 1024, size_t maxQueued = 32,
-@@ -140,6 +142,18 @@
+@@ -140,6 +142,18 @@ public:
  	// stall inside the driver; adaptive budgets cannot preempt one driver call.
  	// Default strict gate executes zero driver calls outside loading windows.
  	GpuPumpResult Pump(bool knownLoadingWindow, GpuPumpLimits limits = {});
@@ -796,7 +861,7 @@ diff --git a/DirectX11/ModLoading/PreparationPlanner.h b/DirectX11/ModLoading/Pr
  	std::shared_ptr<PreparedGpuObject> TryAcquire(const DeviceResourceKey& key);
  	bool Protect(const DeviceResourceKey& key);
  	void Unprotect(const DeviceResourceKey& key);
-@@ -172,6 +186,7 @@
+@@ -172,6 +186,7 @@ private:
  	uint64_t maxShaderBytecodeBytes_, queuedShaderBytecodeBytes_ = 0;
  	uint64_t queuedBytes_ = 0, safetyHeadroom_ = 128ull * 1024 * 1024;
  	bool singleThreaded_ = false, concurrentCreates_ = false, enabled_ = true;
@@ -805,9 +870,10 @@ diff --git a/DirectX11/ModLoading/PreparationPlanner.h b/DirectX11/ModLoading/Pr
  }
  #endif
 diff --git a/DirectX11/ModLoading/Runtime.cpp b/DirectX11/ModLoading/Runtime.cpp
+index b4778ae..cecfac3 100644
 --- a/DirectX11/ModLoading/Runtime.cpp
 +++ b/DirectX11/ModLoading/Runtime.cpp
-@@ -936,6 +936,7 @@
+@@ -936,6 +936,7 @@ bool SourcesCurrent(const std::shared_ptr<RuntimeState>& state) {
  }
  
  #include "GeneralConfigPipeline.inl"
@@ -815,7 +881,7 @@ diff --git a/DirectX11/ModLoading/Runtime.cpp b/DirectX11/ModLoading/Runtime.cpp
  
  unsigned PreparedWICFlags(const std::vector<uint8_t>& bytes,
  	CustomColorSpace colorSpace, bool detectPngSRGB) {
-@@ -1036,6 +1037,10 @@
+@@ -1036,6 +1037,10 @@ bool CompleteGraphRetirement(size_t slot, const std::shared_ptr<ConfigGeneration
  		discarded = std::move(entry);
  		entry = {};
  	}
@@ -826,15 +892,16 @@ diff --git a/DirectX11/ModLoading/Runtime.cpp b/DirectX11/ModLoading/Runtime.cpp
  	return true;
  }
  void SubmitGraphRetirement(int slot, ConfigGenerationPin previous)
-@@ -1226,6 +1231,7 @@
+@@ -1226,6 +1231,8 @@ static void ConfigureRuntimeImpl() {
  	GetIniString(L"ModLoading", L"mode", L"off", mode, 64);
  	const bool enabledMode = !_wcsicmp(mode, L"adaptive") || !_wcsicmp(mode, L"prepared_profile");
  	auto state = enabledMode ? Disposal().Make<RuntimeState>() : std::make_shared<RuntimeState>();
 +	DisableBackgroundReload(); // A legacy reload supersedes any background request.
++	DrainIncrementalRelease();
  	state->graph = PinConfiguration();
  	state->generation = ++Services().nextGeneration;
  	state->legacyConfigEpoch = Services().legacyConfigEpoch.load();
-@@ -1303,6 +1309,7 @@
+@@ -1303,6 +1310,7 @@ static void ConfigureRuntimeImpl() {
  		state->gpuLimits.milliseconds = (std::max)(0.1f, (std::min)(50.0f,
  			GetIniFloat(L"ModLoading", L"create_budget_ms", 2.0f, nullptr)));
  		state->loadingWindow = GetIniBool(L"ModLoading", L"preparation_loading_window", false, nullptr);
@@ -842,7 +909,7 @@ diff --git a/DirectX11/ModLoading/Runtime.cpp b/DirectX11/ModLoading/Runtime.cpp
  		if (GetIniBool(L"ModLoading", L"auto_activate", false, nullptr))
  			LogOverlayW(LOG_WARNING, L"ModLoading auto_activate is unsupported; use explicit compatible reload\n");
  		static int statusModuleAnchor;
-@@ -1526,6 +1533,7 @@
+@@ -1526,6 +1534,7 @@ std::shared_ptr<const PreparedAsset> TryGetPreparedAsset(const std::wstring& pat
  }
  static void PumpRuntimeImpl(ID3D11Device* device, DeviceEpoch epoch, ID3D11DeviceContext* realContext) {
  	PollGraphRetirement(device);
@@ -850,7 +917,7 @@ diff --git a/DirectX11/ModLoading/Runtime.cpp b/DirectX11/ModLoading/Runtime.cpp
  	auto state = Current();
  	if (!state || !state->enabled.load() || !device || !epoch || runtimeBusy) return;
  	// The same global lock protects legacy config destruction. Never retain
-@@ -1578,6 +1586,7 @@
+@@ -1578,6 +1587,7 @@ static void PumpRuntimeImpl(ID3D11Device* device, DeviceEpoch epoch, ID3D11Devic
  		}
  	}
  	if (state->generalEnabled) {
@@ -858,10 +925,19 @@ diff --git a/DirectX11/ModLoading/Runtime.cpp b/DirectX11/ModLoading/Runtime.cpp
  		PumpGeneralConfiguration(state, device, epoch, realContext);
  		return;
  	}
+@@ -1749,6 +1759,7 @@ void RetireRuntimeDevice(ID3D11Device* device) {
+ 	auto retired = std::move(service.planner);
+ 	service.device = nullptr; service.epoch = 0; service.plannerGeneration = 0;
+ 	retired.reset();
++	DrainIncrementalRelease(); // Paced old generations must not outlive the device
+ 	service.retirementRequested.store(false);
+ 	retiringDevice = false;
+ }
 diff --git a/DirectX11/ModLoading/Runtime.h b/DirectX11/ModLoading/Runtime.h
+index a3d0650..f807ce4 100644
 --- a/DirectX11/ModLoading/Runtime.h
 +++ b/DirectX11/ModLoading/Runtime.h
-@@ -21,6 +21,15 @@
+@@ -21,6 +21,15 @@ void ConfigureRuntime();
  void CancelRuntimeGeneration();
  void RequestPreparedRefresh();
  void RequestFullPreparationRescan();
@@ -878,9 +954,10 @@ diff --git a/DirectX11/ModLoading/Runtime.h b/DirectX11/ModLoading/Runtime.h
  void CancelConfigurationRetirement();
  void RetainRetiredConfiguration(ConfigGenerationPin generation);
 diff --git a/docs/mod-loading/prepared-loading.md b/docs/mod-loading/prepared-loading.md
+index a5f4a96..b1f2c94 100644
 --- a/docs/mod-loading/prepared-loading.md
 +++ b/docs/mod-loading/prepared-loading.md
-@@ -125,6 +125,18 @@
+@@ -125,6 +125,18 @@ unqualified dynamic expressions retain the last-good generation and report a
  compatibility reason. F10 remains the explicit full legacy reload/reset route.
  The selected profile never authorizes a partial configuration publication.
  
@@ -900,9 +977,10 @@ diff --git a/docs/mod-loading/prepared-loading.md b/docs/mod-loading/prepared-lo
  real-game qualification. Prepared readiness is an internal proof boundary, not
  evidence of first-correct-frame timing or visual correctness. Incremental parsing
 diff --git a/tests/preparation_capabilities/test_cli.py b/tests/preparation_capabilities/test_cli.py
+index 01161ed..ffc2eb6 100644
 --- a/tests/preparation_capabilities/test_cli.py
 +++ b/tests/preparation_capabilities/test_cli.py
-@@ -58,6 +58,7 @@
+@@ -58,6 +58,7 @@ class PreparationCapabilitiesCliTests(unittest.TestCase):
                      "full_rescan_key",
                      "profile_members",
                      "profile_name",
@@ -911,9 +989,10 @@ diff --git a/tests/preparation_capabilities/test_cli.py b/tests/preparation_capa
              )
              self.assertEqual(metadata["package_version"], "1.2.3-rc1")
 diff --git a/tools/preparation-capabilities.py b/tools/preparation-capabilities.py
+index aa8511d..618f862 100644
 --- a/tools/preparation-capabilities.py
 +++ b/tools/preparation-capabilities.py
-@@ -46,6 +46,7 @@
+@@ -46,6 +46,7 @@ def build_metadata(dll_path: Path, package_version: str) -> dict:
              "full_rescan_key",
              "profile_members",
              "profile_name",
