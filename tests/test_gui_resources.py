@@ -1,3 +1,4 @@
+import ast
 import os
 import sys
 import tempfile
@@ -65,6 +66,36 @@ class PreparedImageCacheTests(unittest.TestCase):
         self.assertLessEqual(cache.used_bytes, cache.max_bytes)
         cache.put('huge', FakeImage(11, 10))
         self.assertIsNone(cache.get('huge'))
+
+
+class StaticImagePreparationTests(unittest.TestCase):
+    """widgets._prepare_static_image keys its cache by every input that changes the result."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.file = Path(temp.name) / 'icon.png'
+        self.file.write_bytes(b'png')
+        source = Path(__file__).resolve().parents[1] / 'src' / 'xxmi_launcher' / 'gui' / 'classes' / 'widgets.py'
+        tree = ast.parse(source.read_text(encoding='utf-8'))
+        node = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == '_prepare_static_image')
+        disk = SimpleNamespace(load=lambda key: None, store_async=lambda key, image: None)
+        namespace = {'Image': SimpleNamespace(Image=object), '_prepared_images': PreparedImageCache(),
+                     '_disk_cache': lambda: disk, '_StaticImageSource': type('Source', (), {})}
+        exec(compile(ast.Module(body=[node], type_ignores=[]), str(source), 'exec'), namespace)
+        self.prepare_static = namespace['_prepare_static_image']
+
+    def widget(self, opacity=1, brightness=1, width=8):
+        return SimpleNamespace(opacity=opacity, brightness=brightness, _width=width, _height=8,
+                               _apply_widget_scaling=lambda value: value,
+                               _prepare_image=lambda image: FakeImage(width, 8))
+
+    def test_widgets_differing_in_any_input_get_their_own_result(self):
+        image = FakeImage(4, 4, str(self.file))
+        first = self.prepare_static(self.widget(), image)
+        self.assertIs(self.prepare_static(self.widget(), image), first)
+        for other in (self.widget(opacity=0.5), self.widget(brightness=0.5), self.widget(width=9)):
+            self.assertIsNot(self.prepare_static(other, image), first)
 
 
 class PreparedImageDiskCacheTests(unittest.TestCase):

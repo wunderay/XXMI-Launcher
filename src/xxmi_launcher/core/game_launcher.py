@@ -318,10 +318,7 @@ class GameLauncher:
             Events.Fire(Events.ModelImporter.OptimizeMods())
 
             # Read the mod files the DLL is about to load while the game boots (background priority)
-            if Config.Launcher.prefetch_mod_files:
-                d3dx_ini_path = Config.Active.Importer.importer_path / 'd3dx.ini'
-                if d3dx_ini_path.is_file():
-                    ModPrefetcher.start(d3dx_ini_path)
+            ModPrefetcher.start_for_importer(Config.Active.Importer.importer_path, Config.Launcher.prefetch_mod_files)
 
         # Configure game settings.
         Events.Fire(Events.Application.StatusUpdate(

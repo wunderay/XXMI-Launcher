@@ -205,6 +205,14 @@ class ModPrefetchTests(unittest.TestCase):
         self.assertEqual(found, [])
         self.assertEqual(len(reads), 1)
 
+    def test_setting_switches_prefetch_off(self):
+        with mock.patch.object(mod_prefetch.ModPrefetcher, 'start') as start:
+            self.assertIsNone(mod_prefetch.ModPrefetcher.start_for_importer(self.importer, enabled=False))
+            self.assertIsNone(mod_prefetch.ModPrefetcher.start_for_importer(self.importer / 'missing', enabled=True))
+            start.assert_not_called()
+            mod_prefetch.ModPrefetcher.start_for_importer(self.importer, enabled=True)
+            start.assert_called_once_with(self.importer / 'd3dx.ini')
+
 
 if __name__ == '__main__':
     unittest.main()
