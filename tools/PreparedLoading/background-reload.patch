@@ -194,10 +194,10 @@ diff --git a/DirectX11/IniHandler.cpp b/DirectX11/IniHandler.cpp
  	if (!configuration_write) { ModLoading::CancelConfigurationRetirement(); return; } // Keep pending: retry at a quiescent frame.
 diff --git a/DirectX11/ModLoading/BackgroundReload.inl b/DirectX11/ModLoading/BackgroundReload.inl
 new file mode 100644
-index 0000000..2ea216a
+index 0000000..f2aae4d
 --- /dev/null
 +++ b/DirectX11/ModLoading/BackgroundReload.inl
-@@ -0,0 +1,331 @@
+@@ -0,0 +1,345 @@
 +// background-reload.patch: UNBUILT AND UNTESTED. Private part of Runtime.cpp,
 +// included inside namespace ModLoading after GeneralConfigPipeline.inl.
 +//
@@ -400,6 +400,11 @@ index 0000000..2ea216a
 +	shader.substantiated = false;
 +}
 +
++// Set while this thread's PumpIncrementalRelease holds IncrementalReleaseMutex(). A COM
++// Release() inside the pump can reenter a drain on the same thread, and try_lock on a
++// std::mutex the caller already owns is undefined behaviour, so reentry is detected here.
++thread_local bool pumpHoldsReleaseLock = false;
++
 +std::atomic<bool>& IncrementalDrainRequested()
 +{
 +	static std::atomic<bool> requested{false};
@@ -425,9 +430,13 @@ index 0000000..2ea216a
 +	std::shared_ptr<ConfigGenerationPin> finished;
 +	std::array<std::shared_ptr<ConfigGenerationPin>, 4> drained;
 +	{
++		if (pumpHoldsReleaseLock)
++			return; // Reentered from a Release() below; the outer pump continues.
 +		std::unique_lock<std::mutex> lock(IncrementalReleaseMutex(), std::try_to_lock);
 +		if (!lock.owns_lock())
 +			return;
++		pumpHoldsReleaseLock = true;
++		struct ClearFlag { ~ClearFlag() { pumpHoldsReleaseLock = false; } } clearFlag;
 +		// A drain that could not take the lock (see DrainIncrementalRelease) is done here.
 +		if (IncrementalDrainRequested().exchange(false))
 +			TakeAllIncrementalReleases(drained);
@@ -473,12 +482,17 @@ index 0000000..2ea216a
 +// wait for a Present that may not come and all four are free again afterwards. At process
 +// exit the (intentionally leaked) slots are not drained; process teardown releases them.
 +// Never blocks: a COM Release() inside PumpIncrementalRelease (which holds the mutex) can
-+// reenter RetireRuntimeDevice on the same thread. If the mutex is busy, the drain is left
-+// to the next pump, which takes every slot before releasing anything else.
++// reenter RetireRuntimeDevice on the same thread. On that thread the mutex is not touched
++// (see pumpHoldsReleaseLock); if it is busy on another thread, the drain is left to the next
++// pump, which takes every slot before releasing anything else.
 +void DrainIncrementalRelease()
 +{
 +	std::array<std::shared_ptr<ConfigGenerationPin>, 4> drained;
 +	{
++		if (pumpHoldsReleaseLock) {
++			IncrementalDrainRequested().store(true);
++			return;
++		}
 +		std::unique_lock<std::mutex> lock(IncrementalReleaseMutex(), std::try_to_lock);
 +		if (!lock.owns_lock()) {
 +			IncrementalDrainRequested().store(true);
@@ -870,7 +884,7 @@ index 784b57f..779fed5 100644
  }
  #endif
 diff --git a/DirectX11/ModLoading/Runtime.cpp b/DirectX11/ModLoading/Runtime.cpp
-index b4778ae..cecfac3 100644
+index b4778ae..72cfe96 100644
 --- a/DirectX11/ModLoading/Runtime.cpp
 +++ b/DirectX11/ModLoading/Runtime.cpp
 @@ -936,6 +936,7 @@ bool SourcesCurrent(const std::shared_ptr<RuntimeState>& state) {
@@ -925,14 +939,18 @@ index b4778ae..cecfac3 100644
  		PumpGeneralConfiguration(state, device, epoch, realContext);
  		return;
  	}
-@@ -1749,6 +1759,7 @@ void RetireRuntimeDevice(ID3D11Device* device) {
- 	auto retired = std::move(service.planner);
- 	service.device = nullptr; service.epoch = 0; service.plannerGeneration = 0;
- 	retired.reset();
-+	DrainIncrementalRelease(); // Paced old generations must not outlive the device
- 	service.retirementRequested.store(false);
- 	retiringDevice = false;
- }
+@@ -1735,6 +1745,11 @@ void RetireRuntimeDevice(ID3D11Device* device) {
+ 	// application device release. Keeping one aggregate retirement flag avoids
+ 	// losing a concurrent current-device request behind a probe-device release.
+ 	(void)device;
++	// Paced old generations must not outlive the device, even when they are the only
++	// preparation ownership left (the early return below does not look at them).
++	retiringDevice = true;
++	DrainIncrementalRelease();
++	retiringDevice = false;
+ 	if (!service.planner && !service.refreshPlanner && !service.pendingRefresh && !service.pendingGeneral && service.profileGpuPins.empty()) {
+ 		service.retirementRequested.store(false); return;
+ 	}
 diff --git a/DirectX11/ModLoading/Runtime.h b/DirectX11/ModLoading/Runtime.h
 index a3d0650..f807ce4 100644
 --- a/DirectX11/ModLoading/Runtime.h
