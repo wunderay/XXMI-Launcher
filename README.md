@@ -21,6 +21,7 @@
 - **Custom Launch** — Can be configured to start game in almost every possible way via Advanced Settings
 - **Automatic Updates** — Always keeps XXMI instances and itself up-to date
 - **Safe to Use** — Verifies authenticity of XXMI libraries and own downloads
+- **Mod Backups** — Back up and restore ZZZ mods with their saved choices and original folder layout from **Settings → ZZMI → Mod backups**. See the [backup guide](docs/mod-backups.md) for the full-folder scope and recovery details.
 
 ![xxmi-launcher](https://github.com/SpectrumQT/XXMI-Launcher/blob/main/public-media/XXMI%20Launcher.jpg)
 

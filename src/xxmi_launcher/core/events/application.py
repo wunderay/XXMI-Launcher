@@ -21,6 +21,14 @@ class ApplicationEvents:
         save: bool = False
 
     @dataclass
+    class BackupModState:
+        pass
+
+    @dataclass
+    class RestoreModState:
+        pass
+
+    @dataclass
     class LoadImporter:
         importer_id: str
         reload: bool = False
