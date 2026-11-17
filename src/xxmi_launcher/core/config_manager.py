@@ -82,11 +82,23 @@ class ConfigManager:
             log.exception("Failed to serialize configuration")
             raise RuntimeError("Failed to serialize configuration") from exc
 
+        # Saving is frequent (every exit, every settings change); skip the fsynced rewrite when the
+        # file already holds exactly this configuration
+        if self._file_matches(self.config_path, config_json.encode('utf-8')):
+            return
+
         try:
             Paths.App.write_file(self.config_path, config_json)
         except OSError as exc:
             log.exception("Failed to write configuration to %s", self.config_path)
             raise RuntimeError(f"Failed to write configuration to {self.config_path}") from exc
+
+    @staticmethod
+    def _file_matches(path: Path, data: bytes) -> bool:
+        try:
+            return path.stat().st_size == len(data) and path.read_bytes() == data
+        except OSError:
+            return False
 
     def validate_config(self):
         wrong_signatures = self.security.validate_config()

@@ -2,8 +2,15 @@ name: Performance benchmarks (Windows)
 # Measures launch-path changes on Windows/NTFS with Defender, where file-system calls cost the
 # most: the pre-launch Mods optimizer (base branch vs this change) and cold-cache mod loading
 # with and without the launcher's prefetch. Informational only; results go to the job summary.
-# Manual only (Actions minutes are limited): Actions > Performance benchmarks > Run workflow.
 on:
+  pull_request:
+    paths:
+      - 'src/xxmi_launcher/core/mod_manager.py'
+      - 'src/xxmi_launcher/core/mod_prefetch.py'
+      - 'src/xxmi_launcher/gui/**'
+      - 'requirements.txt'
+      - 'tools/perf/**'
+      - '.github/workflows/perf-benchmarks.yml'
   workflow_dispatch:
 permissions:
   contents: read

@@ -1,4 +1,5 @@
 import sys
+import contextlib
 import logging
 import os
 import argparse
@@ -352,9 +353,10 @@ class Application:
         cfg_backup_path = Paths.App.Backups / Config.Manager.config_path.name
         try:
             Config.Manager.load()
-            # Backup last successfully loaded config
+            # Backup last successfully loaded config (unless the backup already is identical)
             if Config.Manager.config_path.is_file():
-                Paths.App.copy_file(Config.Manager.config_path, cfg_backup_path)
+                if not Config.Manager._file_matches(cfg_backup_path, Config.Manager.config_path.read_bytes()):
+                    Paths.App.copy_file(Config.Manager.config_path, cfg_backup_path)
         except Exception as e:
             if Config.Manager.config_path.is_file():
                 error_dialogue = Events.Application.ShowError(
@@ -573,8 +575,17 @@ class Application:
                 message=L('message_text_already_up_to_date', 'No updates available!'),
             ))
 
+    @staticmethod
+    def _iter_log_lines():
+        """Lines of the rotated log (if any), then the current one, read lazily."""
+        log_path = Paths.App.Root / 'XXMI Launcher Log.txt'
+        for path in (log_path.with_name(log_path.stem + '.old' + log_path.suffix), log_path):
+            if path.is_file():
+                with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                    yield from f
+
     def get_launch_counters_from_log(self, exclude_failed = True):
-        with (open(Paths.App.Root / 'XXMI Launcher Log.txt', 'r', encoding='utf-8', errors='ignore') as f):
+        with contextlib.nullcontext(self._iter_log_lines()) as f:
             launch_counters = { 'GIMI': 0, 'SRMI': 0,  'WWMI': 0, 'ZZMI': 0, 'HIMI': 0, 'EFMI': 0 }
 
             def parse_active_package(line):
@@ -595,7 +606,7 @@ class Application:
             active_package = ''
             launch_in_progress = False
 
-            for line_id, line in enumerate(map(str.strip, f.readlines())):
+            for line_id, line in enumerate(map(str.strip, f)):
                 # Detect which model importer is used for launch event
                 package = parse_active_package(line)
                 if package:
