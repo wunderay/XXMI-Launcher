@@ -46,8 +46,9 @@ jobs:
           # protected files (native.patch, development-builds/) stay exact.
           git config core.autocrlf false
           git config core.safecrlf false
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          # Sync merges are authored as the repository owner, like every other commit here
+          git config user.name 'Raymond Wu'
+          git config user.email '60483832+wunderay@users.noreply.github.com'
 
           git fetch --no-tags "$UPSTREAM_URL" "+refs/heads/$UPSTREAM_BRANCH:refs/remotes/upstream/$UPSTREAM_BRANCH"
           upstream_sha=$(git rev-parse "refs/remotes/upstream/$UPSTREAM_BRANCH")
@@ -69,8 +70,16 @@ jobs:
             git reset --hard "$upstream_sha"
             echo "mode=conflict" >> "$GITHUB_OUTPUT"
           fi
+          # A rebuilt merge gets a new commit (new date) even when nothing changed: compare the
+          # content and parents with the pushed branch, and leave it alone when they match
+          if git fetch --no-tags origin "+refs/heads/$SYNC_BRANCH:refs/remotes/origin/$SYNC_BRANCH" 2>/dev/null &&
+             [ "$(git rev-parse "HEAD^{tree}") $(git rev-parse HEAD^@)" = \
+               "$(git rev-parse "origin/$SYNC_BRANCH^{tree}") $(git rev-parse "origin/$SYNC_BRANCH^@")" ]; then
+            echo "unchanged=true" >> "$GITHUB_OUTPUT"
+            echo "$SYNC_BRANCH already holds this sync; nothing pushed." >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Push sync branch
-        if: steps.build.outputs.mode != 'none'
+        if: steps.build.outputs.mode != 'none' && steps.build.outputs.unchanged != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
