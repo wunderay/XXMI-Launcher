@@ -14,7 +14,7 @@ concurrency:
 jobs:
   compare:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -39,6 +39,6 @@ jobs:
           # (requirements.txt has no trailing newline: separate the files explicitly)
           { cat requirements.txt; echo; cat "$RUNNER_TEMP/base/requirements.txt"; echo; } |
             grep -viE '^(pywin32|wmi|winshell|nuitka)==|^av @' | sort -u > "$RUNNER_TEMP/perf-requirements.txt"
-          python -m pip install --disable-pip-version-check -r "$RUNNER_TEMP/perf-requirements.txt" av
+          python -m pip install --disable-pip-version-check -r "$RUNNER_TEMP/perf-requirements.txt" av==19.0.1
       - name: Compare base and head
         run: python tools/perf/compare.py --base "$RUNNER_TEMP/base/src/xxmi_launcher" --head src/xxmi_launcher --runs 7

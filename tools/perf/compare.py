@@ -2,7 +2,8 @@
 """Mandatory before/after performance comparison of two launcher source trees.
 
 Runs the tools/perf benchmarks (this checkout's versions) against BASE and HEAD sources on the
-same machine, prints a Markdown table (also appended to $GITHUB_STEP_SUMMARY) and exits 1 if
+same machine in interleaved rounds (base/head, then head/base, ...) after an unmeasured warm-up of
+each, keeping each metric's best round so neither side gains from running second, prints a Markdown table (also appended to $GITHUB_STEP_SUMMARY) and exits 1 if
 HEAD regresses any metric beyond its tolerance. Deterministic metrics (file-system syscalls,
 image resizes, update-check traffic) get a tight tolerance; timings and memory get a relative
 tolerance plus an absolute noise floor.
@@ -46,7 +47,8 @@ METRICS = {
     'gui_rss_repeat_mb': Metric('Memory after startup, repeat start', 'MB', 0.05, 5.0),
     'gui_image_resizes_repeat': Metric('Image resizes, repeat start', '', 0.0, 2),
     'update_bytes': Metric('Update checks: bytes for 3 checks (both channels)', 'B', 0.01, 64),
-    'update_counted_requests': Metric('Update checks: rate-limited requests', '', 0.0, 0),
+    # The benchmark's mock server applies GitHub's documented rule (a 304 is free only with a token)
+    'update_counted_requests': Metric('Update checks: requests charged by the mock rate limit', '', 0.0, 0),
 }
 
 
@@ -77,8 +79,9 @@ def measure(src: Path, mods: Path, game_mods: Path, runs: int) -> dict:
         game.append('--prefetch')
     values['game_load_cold_s'] = run_json(game, env)['median_load_s']
 
+    # Each version starts with its own Themes and Locale (from the tree that holds `src`)
     gui = run_json([python, PERF / 'bench_gui_startup.py', '--runs', str(max(3, runs // 2)), '--launches', '2',
-                    '--src', src], xvfb=True)
+                    '--src', src, '--assets', src.parents[1]], xvfb=True)
     values['gui_open_first_s'] = gui['first_start']['gui_open_s']
     values['gui_open_repeat_s'] = gui['later_starts']['gui_open_s']
     values['gui_cpu_repeat_s'] = gui['later_starts']['cpu_s']
@@ -93,13 +96,32 @@ def measure(src: Path, mods: Path, game_mods: Path, runs: int) -> dict:
     return values
 
 
+def best_of(rounds: list[dict]) -> dict:
+    """Each metric's lowest value over the rounds (lower is better for every metric)."""
+    return {key: min(values[key] for values in rounds) for key in rounds[0]}
+
+
+def measure_interleaved(base_src: Path, head_src: Path, mods: Path, game_mods: Path, runs: int, rounds: int,
+                        measure_fn=None) -> tuple[dict, dict]:
+    measure_fn = measure_fn or measure
+    # Warm-up: the first process to import a fresh tree pays cold-disk costs; measure neither
+    for src in (base_src, head_src):
+        measure_fn(src, mods, game_mods, 1)
+    results = {base_src: [], head_src: []}
+    for index in range(rounds):
+        order = (base_src, head_src) if index % 2 == 0 else (head_src, base_src)
+        for src in order:
+            results[src].append(measure_fn(src, mods, game_mods, runs))
+    return best_of(results[base_src]), best_of(results[head_src])
+
+
 def regressed(metric: Metric, base: float, head: float) -> bool:
     increase = head - base
     return increase > metric.floor and increase > base * metric.rel
 
 
 def report(base: dict, head: dict) -> tuple[str, list[str]]:
-    lines = ['## Performance comparison (base → head, same runner)', '',
+    lines = ['## Performance comparison (base → head, same runner, best of interleaved rounds)', '',
              '| Metric | Base | Head | Change | Result |', '| --- | ---: | ---: | ---: | --- |']
     failures = []
     for key, metric in METRICS.items():
@@ -123,6 +145,7 @@ def main():
     ap.add_argument('--base', type=Path, required=True, help='base src/xxmi_launcher')
     ap.add_argument('--head', type=Path, required=True, help='head src/xxmi_launcher')
     ap.add_argument('--runs', type=int, default=7)
+    ap.add_argument('--rounds', type=int, default=4, help='interleaved measurement rounds per version')
     ap.add_argument('--json', type=Path, help='also write raw values here')
     args = ap.parse_args()
     for tool in ('strace', 'xvfb-run'):
@@ -135,8 +158,8 @@ def main():
         subprocess.run([sys.executable, PERF / 'make_mods.py', game_mods, '--mods', '200', '--scale', '0.25', '--seed', '3'],
                        check=True, capture_output=True)
         # Same generated mod sets and machine for both versions
-        base = measure(args.base.resolve(), mods, game_mods, args.runs)
-        head = measure(args.head.resolve(), mods, game_mods, args.runs)
+        base, head = measure_interleaved(args.base.resolve(), args.head.resolve(), mods, game_mods,
+                                         args.runs, args.rounds)
     if args.json:
         args.json.write_text(json.dumps({'base': base, 'head': head}, indent=2), encoding='utf-8')
     summary, failures = report(base, head)
