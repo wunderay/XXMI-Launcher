@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Measure launcher GUI startup: seconds until the main window opens, CPU seconds, peak RSS and
-image work, with Windows-only modules stubbed so it runs headless on Linux (Xvfb).
+"""Measure launcher GUI startup: seconds until the main window opens, CPU seconds, peak memory
+(RSS, or peak working set on Windows) and image work. On Windows it runs the real launcher; on
+Linux Windows-only modules are stubbed so it runs headless (Xvfb).
 
 The launcher is Windows-only, so absolute numbers differ from Windows; use it for A/B
 comparisons of the same machine and Python. Excludes the network update check.
@@ -25,14 +26,17 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 
 CHILD = r'''
-import sys, os, time, json, resource, threading, runpy, ctypes, importlib.abc, importlib.machinery
+import sys, os, time, json, threading, runpy, ctypes, importlib.abc, importlib.machinery
+if sys.platform != 'win32':
+    import resource
 from unittest import mock
 from pathlib import Path
 T0 = time.perf_counter()
 app_dir = sys.argv[1]
 sys.path.insert(0, app_dir); os.chdir(app_dir)
 
-# --- Windows stubs ---------------------------------------------------------------------------
+# --- Windows stubs (other platforms only) -----------------------------------------------------
+WINDOWS = sys.platform == 'win32'
 STUBBED = {'win32api', 'win32gui', 'win32process', 'win32crypt', 'win32con', 'pywintypes', 'winshell',
            'wmi', 'msvcrt', 'pythoncom'}
 class Stubs(importlib.abc.MetaPathFinder, importlib.abc.Loader):
@@ -43,7 +47,8 @@ class Stubs(importlib.abc.MetaPathFinder, importlib.abc.Loader):
         module = mock.MagicMock(name=spec.name); module.__spec__ = spec; module.__path__ = []
         module.__name__ = spec.name; return module
     def exec_module(self, module): pass
-sys.meta_path.insert(0, Stubs())
+if not WINDOWS:
+    sys.meta_path.insert(0, Stubs())
 import types
 winreg = types.ModuleType('winreg')
 def _missing(*a, **k): raise FileNotFoundError('registry stub')
@@ -53,22 +58,23 @@ for _n in ('OpenKey', 'OpenKeyEx', 'QueryValueEx', 'EnumKey', 'EnumValue', 'Crea
 winreg.CloseKey = lambda *a: None
 winreg.HKEYType = type('HKEYType', (), {})
 winreg.__getattr__ = lambda name: 0
-sys.modules['winreg'] = winreg
 def _windll(name, *a, **k):
     library = mock.MagicMock(); library._handle = 1; return library
-ctypes.WinDLL = _windll
-ctypes.windll = mock.MagicMock(); ctypes.WINFUNCTYPE = ctypes.CFUNCTYPE
-ctypes.windll.user32.GetSystemMetrics.side_effect = lambda i: 1920 if i == 0 else 1080
-ctypes.windll.user32.GetParent.return_value = 0
-ctypes.windll.user32.GetWindowLongW.return_value = 0
-os.getlogin = lambda: 'bench'
-import tkinter
-for _name in ('attributes', 'iconbitmap', 'iconphoto'):
-    _orig = getattr(tkinter.Wm, _name)
-    def _tolerant(self, *a, _orig=_orig, **k):
-        try: return _orig(self, *a, **k)
-        except tkinter.TclError: return None
-    setattr(tkinter.Wm, _name, _tolerant); setattr(tkinter.Wm, 'wm_' + _name, _tolerant)
+if not WINDOWS:
+    sys.modules['winreg'] = winreg
+    ctypes.WinDLL = _windll
+    ctypes.windll = mock.MagicMock(); ctypes.WINFUNCTYPE = ctypes.CFUNCTYPE
+    ctypes.windll.user32.GetSystemMetrics.side_effect = lambda i: 1920 if i == 0 else 1080
+    ctypes.windll.user32.GetParent.return_value = 0
+    ctypes.windll.user32.GetWindowLongW.return_value = 0
+    os.getlogin = lambda: 'bench'
+    import tkinter
+    for _name in ('attributes', 'iconbitmap', 'iconphoto'):
+        _orig = getattr(tkinter.Wm, _name)
+        def _tolerant(self, *a, _orig=_orig, **k):
+            try: return _orig(self, *a, **k)
+            except tkinter.TclError: return None
+        setattr(tkinter.Wm, _name, _tolerant); setattr(tkinter.Wm, 'wm_' + _name, _tolerant)
 
 # --- Launcher setup in the order app.py uses ----------------------------------------------------
 import core.locale_manager as Locale
@@ -76,9 +82,10 @@ import core.path_manager as Paths
 Locale.initialize(Path(app_dir).parent.parent)
 Paths.initialize(Path(app_dir).parent.parent)
 Locale.initialize = Paths.initialize = lambda root: None
-Paths.is_read_only = lambda path: False   # NTFS attribute check
-import gui.classes.windows as W
-W.get_monitor_dpi = lambda: (96, 96)
+if not WINDOWS:
+    Paths.is_read_only = lambda path: False   # NTFS attribute check
+    import gui.classes.windows as W
+    W.get_monitor_dpi = lambda: (96, 96)
 
 # --- Image work counters ------------------------------------------------------------------------
 from PIL import Image
@@ -94,8 +101,15 @@ import gui.windows.main.main_window as MW
 def bench_open(self, *a, **k):
     marks = {'gui_open_s': round(time.perf_counter() - T0, 3)}
     def done():
-        usage = resource.getrusage(resource.RUSAGE_SELF)
-        marks.update(cpu_s=round(usage.ru_utime + usage.ru_stime, 3), max_rss_mb=round(usage.ru_maxrss / 1024, 1),
+        if WINDOWS:
+            import psutil
+            process = psutil.Process()
+            times = process.cpu_times()
+            cpu, peak = times.user + times.system, process.memory_info().peak_wset
+        else:
+            usage = resource.getrusage(resource.RUSAGE_SELF)
+            cpu, peak = usage.ru_utime + usage.ru_stime, usage.ru_maxrss * 1024
+        marks.update(cpu_s=round(cpu, 3), max_rss_mb=round(peak / 1024 / 1024, 1),
                      **counts, av_loaded='av' in sys.modules, pyglet_loaded='pyglet' in sys.modules)
         print('BENCH ' + json.dumps(marks), flush=True)
         os._exit(0)
