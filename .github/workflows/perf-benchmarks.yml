@@ -1,0 +1,60 @@
+name: Performance benchmarks (Windows)
+# Measures launch-path changes on Windows/NTFS with Defender, where file-system calls cost the
+# most: the pre-launch Mods optimizer (base branch vs this change) and mod loading on freshly
+# written (never opened) files with and without the launcher's prefetch. Informational only.
+on:
+  pull_request:
+    paths:
+      - 'src/xxmi_launcher/core/mod_manager.py'
+      - 'src/xxmi_launcher/core/mod_prefetch.py'
+      - 'tools/perf/**'
+      - '.github/workflows/perf-benchmarks.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: perf-benchmarks-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install benchmark dependencies
+        run: python -m pip install --disable-pip-version-check psutil==7.2.2 pywin32==312
+      - name: Benchmark
+        shell: pwsh
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha || 'origin/main' }}
+        run: |
+          $work = Join-Path $env:RUNNER_TEMP 'perf'
+          New-Item -ItemType Directory -Force $work | Out-Null
+          git worktree add --detach (Join-Path $work 'base') $env:BASE_REF
+          python tools/perf/make_mods.py (Join-Path $work 'mods') --mods 1000 --scale 0.02 --seed 2
+          $summary = @('## Windows benchmarks', '', '### Pre-launch Mods optimizer (1000 mods, median of 7)', '')
+          foreach ($variant in @(@('base', (Join-Path $work 'base/src/xxmi_launcher')), @('this change', 'src/xxmi_launcher'))) {
+            $env:PYTHONPATH = $variant[1]
+            $result = python tools/perf/bench_prelaunch.py (Join-Path $work 'mods/ZZMI') --runs 7
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $summary += "- $($variant[0]): ``$result``"
+          }
+          $env:PYTHONPATH = 'src/xxmi_launcher'
+          $summary += @('', '### Mod loading on freshly written files (200 mods, 2 s boot, one run each)', '')
+          foreach ($case in @(@('no prefetch', 3, ''), @('launcher prefetch', 4, '--prefetch'))) {
+            $mods = Join-Path $work "fresh-$($case[1])"
+            python tools/perf/make_mods.py $mods --mods 200 --scale 0.25 --seed $case[1] | Out-Null
+            $arguments = @('tools/perf/simulate_game_load.py', (Join-Path $mods 'ZZMI'), '--repeat', '1', '--boot-delay', '2')
+            if ($case[2]) { $arguments += $case[2] }
+            $result = python @arguments
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $summary += "- $($case[0]): ``$result``"
+          }
+          $summary | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          $summary | Write-Output

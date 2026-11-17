@@ -103,9 +103,12 @@ def main():
             run["prefetch"] = {"files": stats.files, "mb": round(stats.bytes / 1e6, 1), "s": round(stats.seconds, 3),
                                "completed": stats.completed, "thread_cpu_s": round(stats.cpu_seconds, 3)}
         runs.append(run)
-    import resource
     best = min(runs, key=lambda r: r["load_s"])
-    best["max_rss_mb"] = round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1)
+    try:
+        import resource
+        best["max_rss_mb"] = round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1)
+    except ImportError:  # Windows
+        pass
     best["median_load_s"] = sorted(r["load_s"] for r in runs)[len(runs) // 2]
     best["mode"] = "cold" if args.cold else "warm"
     print(json.dumps(best))
