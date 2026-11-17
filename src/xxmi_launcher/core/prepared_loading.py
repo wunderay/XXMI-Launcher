@@ -18,6 +18,9 @@ REFRESH_KEYS = {'': 'Disabled', 'ctrl shift no_alt VK_F8': 'Ctrl+Shift+F8',
 FEATURE_FLAGS = ('cpu_cache_enabled', 'gpu_cache_enabled', 'adaptive_learning',
                  'transactional_activation', 'general_fast_refresh')
 V2_FEATURES = (*FEATURE_FLAGS, 'full_rescan_key', 'profile_members', 'profile_name')
+# Optional v2 feature for the unbuilt tools/PreparedLoading/background-reload.patch.
+# Never written unless the signed capability declares it.
+BACKGROUND_RELOAD = 'background_reload'
 LIMITS = {
     'cpu_cache_mb': (0, 4096), 'gpu_cache_mb': (0, 4096),
     'disk_cache_mb': (0, 4096),
@@ -48,6 +51,7 @@ class PreparedLoadingSettings:
     preparation_full_rescan_key: str = ''
     preparation_profile_members: str = ''
     preparation_profile_name: str = ''
+    preparation_background_reload: bool = False
 
 
 @dataclass(frozen=True)
@@ -238,6 +242,17 @@ def reconcile_preparation_settings(settings: PreparedLoadingSettings,
         settings.preparation_full_rescan_key = ''
     if type(settings.preparation_loading_window) is not bool or not capability.supported:
         settings.preparation_loading_window = False
+    if (type(settings.preparation_background_reload) is not bool or not capability.supported
+            or capability.protocol_version < 2 or BACKGROUND_RELOAD not in capability.features):
+        settings.preparation_background_reload = False
+
+
+def _stale_background_reload(ini) -> dict:
+    """Disable a leftover option without ever adding it for an undeclared library."""
+    section = ini.get_section('ModLoading')
+    if section is not None and section.get_option(BACKGROUND_RELOAD) is not None:
+        return {BACKGROUND_RELOAD: 0}
+    return {}
 
 
 def apply_preparation_settings(ini, settings: PreparedLoadingSettings,
@@ -257,6 +272,8 @@ def apply_preparation_settings(ini, settings: PreparedLoadingSettings,
             for key in FEATURE_FLAGS:
                 ini.set_option('ModLoading', key, 0)
             ini.set_option('ModLoading', 'full_rescan_key', '')
+            for key, value in _stale_background_reload(ini).items():
+                ini.set_option('ModLoading', key, value)
         return
     mode = settings.preparation_mode
     if mode not in capability.modes:
@@ -271,6 +288,8 @@ def apply_preparation_settings(ini, settings: PreparedLoadingSettings,
             for key in FEATURE_FLAGS:
                 ini.set_option('ModLoading', key, 0)
             ini.set_option('ModLoading', 'full_rescan_key', '')
+        for key, value in _stale_background_reload(ini).items():
+            ini.set_option('ModLoading', key, value)
         return
     values = {}
     for key in LIMITS:
@@ -310,5 +329,14 @@ def apply_preparation_settings(ini, settings: PreparedLoadingSettings,
                   preparation_loading_window=int(settings.preparation_loading_window is True))
     if capability.protocol_version >= 2 and not values.get('transactional_activation'):
         values['refresh_key'] = ''
+    if type(settings.preparation_background_reload) is not bool:
+        raise ValueError('ModLoading background_reload: expected a boolean.')
+    # Background F10 reuses the detached general pipeline, so it needs both stages.
+    if (settings.preparation_background_reload and capability.protocol_version >= 2
+            and BACKGROUND_RELOAD in capability.features
+            and values.get('general_fast_refresh') and values.get('transactional_activation')):
+        values[BACKGROUND_RELOAD] = 1
+    else:
+        values.update(_stale_background_reload(ini))
     for key, value in values.items():
         ini.set_option('ModLoading', key, value)
