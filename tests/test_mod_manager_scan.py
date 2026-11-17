@@ -189,6 +189,28 @@ class OptimizerCacheTests(ModsFolderTestCase):
         self.assertTrue(self.cache.exists())
         self.assertEqual(self.optimize(), 0)
 
+    def test_disabled_duplicate_library_is_not_validated(self):
+        library = self.mods.parent / 'Core' / 'ZZMI' / 'Libraries' / 'lib.ini'
+        library.parent.mkdir(parents=True)
+        library.write_text('namespace = global\\Pack\n', encoding='utf-8')
+        validated_paths = []
+        original = mod_manager.IniValidator.validate_folder
+
+        def recording(validator, ini_files=None):
+            validated_paths.extend(ini_file.path for ini_file in ini_files or [])
+            return original(validator, ini_files)
+
+        with mock.patch.object(mod_manager.ModManager, 'show_duplicate_libraries_notification', lambda *a: True), \
+                mock.patch.object(mod_manager.IniValidator, 'validate_folder', recording):
+            mod_manager.ModManager().optimize_mods_folder(
+                self.mods, cache_path=self.cache, dry_run=False, use_cache=True, exclude_patterns=self.patterns)
+        duplicate = self.mods / 'Pack' / 'Inner' / 'keep.ini'
+        self.assertFalse(duplicate.exists())
+        self.assertTrue((self.mods / 'Pack' / 'Inner' / 'DISABLED_keep.ini').exists())
+        # The listing taken before disabling is replaced: the renamed library is not validated
+        self.assertNotIn(duplicate, validated_paths)
+        self.assertEqual(sorted(validated_paths), sorted(reference_listing(self.mods, self.patterns)))
+
 
 if __name__ == '__main__':
     unittest.main()

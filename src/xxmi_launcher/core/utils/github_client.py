@@ -47,7 +47,8 @@ class GitHubClient:
         self.access_token = ''
         self.verify_ssl = False
         # Release responses with their ETags: unchanged releases are answered with an empty
-        # `304 Not Modified`, which GitHub does not count against the API rate limit
+        # `304 Not Modified` (no release JSON to download or parse). GitHub skips the rate-limit
+        # charge for a 304 only on token-authenticated requests; without a token it still counts
         self.cache_path = cache_path
 
     def _cache_file(self, repo_owner, repo_name, pre_release) -> Path | None:

@@ -269,6 +269,16 @@ class ModPrefetcher:
         prefetcher.thread.start()
         return prefetcher
 
+    @classmethod
+    def start_for_importer(cls, importer_path: Path, enabled: bool) -> 'ModPrefetcher | None':
+        """Start a prefetch of the importer's mods, unless the setting is off or there is no d3dx.ini."""
+        if not enabled:
+            return None
+        d3dx_ini_path = Path(importer_path) / 'd3dx.ini'
+        if not d3dx_ini_path.is_file():
+            return None
+        return cls.start(d3dx_ini_path)
+
     def stop(self):
         self.stop_event.set()
 
