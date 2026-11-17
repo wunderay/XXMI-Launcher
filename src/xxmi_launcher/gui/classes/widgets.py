@@ -1166,17 +1166,15 @@ class UIImage(AnimationMixin, UICanvasWidget, CTkBaseClass):
         prepared = _prepared_images.get(key) if key else None
         if prepared is not None:
             return prepared
-        # Large images (backgrounds) are kept on disk between launches instead of in memory
-        large = key is not None and size[0] * size[1] * 4 > _prepared_images.max_entry_bytes
-        if large:
-            prepared = _disk_cache().load(key)
-            if prepared is not None:
-                return prepared
-        prepared = self._prepare_image(image)
-        if large:
+        if key is None:
+            return self._prepare_image(image)
+        # Prepared results also persist on disk between launches; large ones (backgrounds) are
+        # kept only there, not in memory
+        from_disk = _disk_cache().load(key)
+        prepared = from_disk if from_disk is not None else self._prepare_image(image)
+        if from_disk is None:
             _disk_cache().store_async(key, prepared)
-        elif key:
-            _prepared_images.put(key, prepared)
+        _prepared_images.put(key, prepared)
         return prepared
 
     def _prepare_image(self, image: Image.Image) -> Image.Image:

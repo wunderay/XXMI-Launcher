@@ -68,17 +68,20 @@ class PreparedImageCache:
 
 
 class PreparedImageDiskCache:
-    """Prepared large images (window backgrounds) stored as lossless WebP between launches.
+    """Prepared static theme images stored as lossless WebP between launches.
 
-    Decoding a full-size theme background and LANCZOS-resizing it costs ~75 ms per image on every
-    start; loading the already prepared, pixel-identical result costs ~16 ms. Entries are keyed
-    by the same inputs as PreparedImageCache plus the Pillow version, written on a background
-    thread, and only the newest `max_files` are kept.
+    Every start used to decode each theme image at full size and LANCZOS-resize it again (a
+    background costs ~75 ms, an icon ~3 ms, ~0.3 s for a default start). Loading the already
+    prepared, pixel-identical result costs ~16 ms for a background and well under 1 ms for an
+    icon. Entries are keyed by the same inputs as PreparedImageCache plus the Pillow version;
+    one background thread writes them and keeps the newest `max_files`.
     """
 
-    def __init__(self, folder, max_files: int = 16):
+    def __init__(self, folder, max_files: int = 128):
         self.folder = folder
         self.max_files = max_files
+        self._queue = None
+        self._writer = None
 
     def path(self, key):
         import hashlib
@@ -97,22 +100,47 @@ class PreparedImageDiskCache:
             return None
 
     def store_async(self, key, image):
+        import queue
         import threading
-        threading.Thread(target=self._store, args=(key, image), name='ImageCacheWrite', daemon=True).start()
+        if self._queue is None:
+            self._queue = queue.Queue()
+            self._writer = threading.Thread(target=self._write_queued, name='ImageCacheWrite', daemon=True)
+            self._writer.start()
+        self._queue.put((key, image))
 
-    def _store(self, key, image):
+    def _write_queued(self):
+        import queue
+        while True:
+            key, image = self._queue.get()
+            self._store(key, image, prune=False)
+            try:
+                # Prune once the burst of startup writes is over
+                key, image = self._queue.get(timeout=1.0)
+                self._queue.put((key, image))
+            except queue.Empty:
+                self._prune()
+
+    def _store(self, key, image, prune=True):
         path = self.path(key)
         try:
             self.folder.mkdir(parents=True, exist_ok=True)
             temporary = path.with_name(path.name + '.tmp')
             image.save(temporary, 'WEBP', lossless=True, method=0, exact=True)
             os.replace(temporary, path)
+        except Exception:
+            return
+        if prune:
+            self._prune()
+
+    def _prune(self):
+        import time
+        try:
             entries = sorted(self.folder.glob('*.webp'), key=lambda entry: entry.stat().st_mtime, reverse=True)
             for stale in entries[self.max_files:]:
                 stale.unlink(missing_ok=True)
             # Writes interrupted by the launcher exiting
             for leftover in self.folder.glob('*.webp.tmp'):
-                if leftover != temporary and leftover.stat().st_mtime < os.path.getmtime(path) - 60:
+                if leftover.stat().st_mtime < time.time() - 60:
                     leftover.unlink(missing_ok=True)
         except Exception:
             pass
