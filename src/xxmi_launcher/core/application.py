@@ -352,9 +352,10 @@ class Application:
         cfg_backup_path = Paths.App.Backups / Config.Manager.config_path.name
         try:
             Config.Manager.load()
-            # Backup last successfully loaded config
+            # Backup last successfully loaded config (unless the backup already is identical)
             if Config.Manager.config_path.is_file():
-                Paths.App.copy_file(Config.Manager.config_path, cfg_backup_path)
+                if not Config.Manager._file_matches(cfg_backup_path, Config.Manager.config_path.read_bytes()):
+                    Paths.App.copy_file(Config.Manager.config_path, cfg_backup_path)
         except Exception as e:
             if Config.Manager.config_path.is_file():
                 error_dialogue = Events.Application.ShowError(
