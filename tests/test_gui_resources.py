@@ -126,13 +126,14 @@ class PreparedImageDiskCacheTests(unittest.TestCase):
         self.assertEqual(len(list(self.cache.folder.glob('*.webp'))), 2)
 
     def test_flush_waits_for_every_queued_write(self):
+        cache = PreparedImageDiskCache(self.cache.folder, max_files=10)
         images = [self.Image.new('RGBA', (256, 256), (index, 0, 0, 255)) for index in range(3)]
         for index, image in enumerate(images):
-            self.cache.store_async(('q', index), image)
-        self.assertTrue(self.cache.flush(timeout=10))
+            cache.store_async(('q', index), image)
+        self.assertTrue(cache.flush(timeout=10))
         for index, image in enumerate(images):
-            self.assertEqual(self.cache.load(('q', index)).tobytes(), image.tobytes())
-        self.assertEqual(list(self.cache.folder.glob('*.tmp')), [])
+            self.assertEqual(cache.load(('q', index)).tobytes(), image.tobytes())
+        self.assertEqual(list(cache.folder.glob('*.tmp')), [])
 
     def test_flush_gives_up_after_its_timeout(self):
         import threading
@@ -152,6 +153,26 @@ class PreparedImageDiskCacheTests(unittest.TestCase):
 
     def test_flush_without_writes_returns_at_once(self):
         self.assertTrue(self.cache.flush(timeout=0))
+
+    def test_pruning_is_finished_when_flush_returns(self):
+        for index in range(4):
+            self.cache.store_async(('p', index), self.Image.new('RGBA', (8, 8), (index, 0, 0, 255)))
+        self.assertTrue(self.cache.flush(timeout=10))
+        # max_files=2: the folder is in its final state, nothing is left for a later prune
+        self.assertEqual(len(list(self.cache.folder.glob('*.webp'))), 2)
+
+
+class ShutdownFlushTests(unittest.TestCase):
+    def test_application_exit_flushes_image_writes_before_os_exit(self):
+        # os._exit skips atexit, so Application.exit() itself must wait for the writes
+        source = Path(__file__).resolve().parents[1] / 'src' / 'xxmi_launcher' / 'core' / 'application.py'
+        tree = ast.parse(source.read_text(encoding='utf-8'))
+        exit_method = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == 'exit')
+        calls = [node for node in ast.walk(exit_method) if isinstance(node, ast.Call)]
+        flush = [c.lineno for c in calls if getattr(c.func, 'attr', None) == 'flush_prepared_image_writes']
+        hard_exit = [c.lineno for c in calls if getattr(c.func, 'attr', None) == '_exit']
+        self.assertTrue(flush and hard_exit)
+        self.assertLess(max(flush), min(hard_exit))
 
 
 class PrivateFontTests(unittest.TestCase):

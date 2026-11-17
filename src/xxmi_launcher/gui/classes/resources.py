@@ -126,21 +126,16 @@ class PreparedImageDiskCache:
         return True
 
     def _write_queued(self):
-        import queue
-        pruned = True
         while True:
-            try:
-                # Prune once the burst of startup writes is over
-                key, image = self._queue.get(timeout=None if pruned else 1.0)
-            except queue.Empty:
-                self._prune()
-                pruned = True
-                continue
+            key, image = self._queue.get()
             try:
                 self._store(key, image, prune=False)
+                # Prune once the burst of startup writes is over, before the write counts as done,
+                # so nothing touches the folder after flush() returns
+                if self._queue.empty():
+                    self._prune()
             finally:
                 self._queue.task_done()
-            pruned = False
 
     def _store(self, key, image, prune=True):
         path = self.path(key)
