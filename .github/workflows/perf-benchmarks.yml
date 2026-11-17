@@ -86,9 +86,9 @@ jobs:
             Set-Content (Join-Path $work 'requirements.txt')
           python -m pip install --disable-pip-version-check -r (Join-Path $work 'requirements.txt')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $summary = @('', '### Launcher window startup (real launcher, median of 5)', '')
+          $summary = @('', '### Launcher window startup (real launcher, 4 installs x 2 starts)', '')
           foreach ($variant in @(@('base', (Join-Path $work 'base/src/xxmi_launcher')), @('this change', 'src/xxmi_launcher'))) {
-            $result = python tools/perf/bench_gui_startup.py --runs 5 --src $variant[1]
+            $result = python tools/perf/bench_gui_startup.py --runs 4 --launches 2 --src $variant[1]
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             $summary += "- $($variant[0]): ``$result``"
           }
