@@ -3,13 +3,22 @@ from __future__ import annotations
 import logging
 import time
 import tkinter as tk
-import markdown
 
 from textwrap import dedent
 from enum import Enum, auto
 from typing import Any, Callable, Union
-from tkinterweb import HtmlLabel
-from mdx_gfm import GithubFlavoredMarkdownExtension
+
+from gui.classes.resources import LazyMarkdown, LazyModule
+
+# HTML rendering is needed only once a tooltip is shown
+
+
+def _import_tkinterweb():
+    import tkinterweb
+    return tkinterweb
+
+
+tkinterweb = LazyModule(_import_tkinterweb)
 
 
 class ToolTipStatus(Enum):
@@ -182,7 +191,7 @@ class UIToolTipEngine(tk.Toplevel):
         # Hide from taskbar
         self.wm_attributes("-toolwindow", True)
 
-        self.markdown_parser = markdown.Markdown(extensions=[GithubFlavoredMarkdownExtension()])
+        self.markdown_parser = LazyMarkdown()
 
         self.tooltip: Union['UIToolTip', None] = None
 
@@ -239,7 +248,7 @@ class UIToolTipEngine(tk.Toplevel):
         if self.message_widget is not None:
             self.message_widget.destroy()
             self.message_widget = None
-        self.message_widget = HtmlLabel(
+        self.message_widget = tkinterweb.HtmlLabel(
             master=self,
             messages_enabled=False,
             caches_enabled=False,

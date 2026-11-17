@@ -1,10 +1,10 @@
+import os
 import sys
 import logging
 import time
 import tkinter
 import re
 import threading
-import av
 
 from typing import Union, Tuple, List, Dict, Optional, Callable, Deque, Iterator
 from pathlib import Path
@@ -21,7 +21,20 @@ from PIL import Image, ImageTk, ImageDraw
 import core.config_manager as Config
 
 from gui.classes.element import UIElementBase
+from gui.classes.resources import LazyModule, PreparedImageCache, PreparedImageDiskCache
 from gui.classes.windows import UIWindow
+
+# PyAV (FFmpeg) is needed only for video/animated theme backgrounds; the default theme has none
+
+
+def _import_av():
+    import av
+    import av.error
+    import av.filter
+    return av
+
+
+av = LazyModule(_import_av)
 
 logging.getLogger('PIL').setLevel(logging.INFO)
 
@@ -590,7 +603,7 @@ class AnimationMixin:
     # region PyAV Video Decoding
 
     @staticmethod
-    def _get_video_stream(container: av.container.InputContainer, source: _PyAVVideoSource):
+    def _get_video_stream(container: "av.container.InputContainer", source: _PyAVVideoSource):
         streams = container.streams.video
         if not streams:
             return None
@@ -599,7 +612,7 @@ class AnimationMixin:
         stream_index = 1 if source.path.lower().endswith(".avif") and len(streams) > 1 else 0
         return streams[stream_index]
 
-    def _get_video_fps(self, video_stream: av.video.stream.VideoStream) -> float:
+    def _get_video_fps(self, video_stream: "av.video.stream.VideoStream") -> float:
         rate = video_stream.average_rate or video_stream.guessed_rate or video_stream.base_rate or 30.0
         return max(1.0, float(rate))
 
@@ -614,11 +627,11 @@ class AnimationMixin:
 
     def _create_video_filter_graph(
         self,
-        video_stream: av.video.stream.VideoStream,
+        video_stream: "av.video.stream.VideoStream",
         output_size: tuple[int, int],
         *,
         fps: float | None = None,
-    ) -> av.filter.Graph:
+    ) -> "av.filter.Graph":
         """Build a PyAV graph that scales frames and converts them to RGBA."""
         width, height = self._validate_output_size(output_size)
         graph = av.filter.Graph()
@@ -667,10 +680,10 @@ class AnimationMixin:
 
     @staticmethod
     def _iter_filtered_frames(
-        container: av.container.InputContainer,
-        video_stream: av.video.stream.VideoStream,
-        graph: av.filter.Graph,
-    ) -> Iterator[av.VideoFrame]:
+        container: "av.container.InputContainer",
+        video_stream: "av.video.stream.VideoStream",
+        graph: "av.filter.Graph",
+    ) -> "Iterator[av.VideoFrame]":
         """Yield all available graph output, including delayed frames at EOF."""
         for decoded_frame in container.decode(video_stream):
             graph.push(decoded_frame)
@@ -865,6 +878,38 @@ class AnimationMixin:
     # endregion
 
 
+_prepared_images = PreparedImageCache()
+# Files already found to be static images in this process: (mtime_ns, size) by path
+_static_image_files: dict[str, tuple[int, int]] = {}
+
+
+class _StaticImageSource:
+    """A theme image already known to be static: opened only if a preparation misses the caches."""
+
+    def __init__(self, filename: str):
+        self.filename = filename
+
+    def open(self) -> Image.Image:
+        return Image.open(self.filename)
+
+
+def _file_identity(path: str) -> tuple[int, int] | None:
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return None
+    return stat.st_mtime_ns, stat.st_size
+_prepared_images_on_disk: PreparedImageDiskCache | None = None
+
+
+def _disk_cache() -> PreparedImageDiskCache:
+    global _prepared_images_on_disk
+    if _prepared_images_on_disk is None:
+        import core.path_manager as Paths
+        _prepared_images_on_disk = PreparedImageDiskCache(Paths.App.Resources / 'Cache' / 'Images')
+    return _prepared_images_on_disk
+
+
 class UIImage(AnimationMixin, UICanvasWidget, CTkBaseClass):
     def __init__(
         self,
@@ -977,8 +1022,15 @@ class UIImage(AnimationMixin, UICanvasWidget, CTkBaseClass):
 
                 image = None
                 if not is_animated:
-                    image = Image.open(str(path))
-                    is_animated = getattr(image, "is_animated", False) and getattr(image, "n_frames", 1) > 1
+                    identity = _file_identity(str(path))
+                    if identity is not None and _static_image_files.get(str(path)) == identity:
+                        # Same static file as before: skip re-reading its header
+                        image = _StaticImageSource(str(path))
+                    else:
+                        image = Image.open(str(path))
+                        is_animated = getattr(image, "is_animated", False) and getattr(image, "n_frames", 1) > 1
+                        if not is_animated and identity is not None:
+                            _static_image_files[str(path)] = identity
 
                 if is_animated:
                     self._image = _PyAVVideoSource(path)
@@ -1002,7 +1054,7 @@ class UIImage(AnimationMixin, UICanvasWidget, CTkBaseClass):
                     log.exception("Unable to decode the initial video frame")
                     self.image = None
             else:
-                self.image = ImageTk.PhotoImage(self._prepare_image(self._image))
+                self.image = ImageTk.PhotoImage(self._prepare_static_image(self._image))
 
             if self.image_tag is None:
                 self._update_attrs(['x', 'y', 'anchor'], kwargs)
@@ -1070,7 +1122,7 @@ class UIImage(AnimationMixin, UICanvasWidget, CTkBaseClass):
         bg_opacity=0,
         padx=None,
         pady=None,
-        scale=4,
+        scale=None,
         secondary_fill_color=None,
         split=0.5,
         split_direction="vertical",
@@ -1081,6 +1133,11 @@ class UIImage(AnimationMixin, UICanvasWidget, CTkBaseClass):
             padded_height = height + self.get_pad_sum(pady) * 2
             bg_opacity = max(0.0, min(1.0, bg_opacity))
             bg_image = Image.new("RGBA", (padded_width, padded_height),(0, 0, 0, int(bg_opacity * 255)))
+
+        if scale is None:
+            # 4x supersampling for small shapes; large panels look the same at 2x (box-filtered
+            # edges within 28/255, mean 0.2) with a quarter of the buffer and drawing time
+            scale = 2 if width * height > 200_000 else 4
 
         image = Image.new("RGBA", (width * scale, height * scale), (0, 0, 0, 0))
         border_width *= scale
@@ -1120,7 +1177,8 @@ class UIImage(AnimationMixin, UICanvasWidget, CTkBaseClass):
             draw.rounded_rectangle(box, radius=radius * scale, outline=border_color, width=border_width)
 
         if scale != 1:
-            image = image.resize((width, height), Image.LANCZOS)
+            # Integer supersampling: a box average is the anti-aliasing filter, at half LANCZOS's cost
+            image = image.resize((width, height), Image.BOX)
 
         if bg_image:
             bg_image.alpha_composite(image, (self.get_pad_value(padx), self.get_pad_value(pady)))
@@ -1135,6 +1193,29 @@ class UIImage(AnimationMixin, UICanvasWidget, CTkBaseClass):
         y = (bg.height - fg.height) // 2
         bg.alpha_composite(fg, (x, y))
         return bg
+
+    def _prepare_static_image(self, image: Image.Image) -> Image.Image:
+        """`_prepare_image` for a static (non-animated) image, reusing earlier identical results."""
+        size = (max(1, int(self._apply_widget_scaling(self._width))),
+                max(1, int(self._apply_widget_scaling(self._height))))
+        key = _prepared_images.key(image, size, self.opacity, self.brightness)
+        prepared = _prepared_images.get(key) if key else None
+        if prepared is not None:
+            return prepared
+        if isinstance(image, _StaticImageSource) and key is None:
+            image = image.open()
+        if key is None:
+            return self._prepare_image(image)
+        # Prepared results also persist on disk between launches; large ones (backgrounds) are
+        # kept only there, not in memory
+        from_disk = _disk_cache().load(key)
+        if from_disk is None and isinstance(image, _StaticImageSource):
+            image = image.open()
+        prepared = from_disk if from_disk is not None else self._prepare_image(image)
+        if from_disk is None:
+            _disk_cache().store_async(key, prepared)
+        _prepared_images.put(key, prepared)
+        return prepared
 
     def _prepare_image(self, image: Image.Image) -> Image.Image:
         """Modify image size, opacity and/or brightness."""

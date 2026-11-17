@@ -18,7 +18,7 @@ for name in ('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll'):
 hiddenimports = ['app', 'pythoncom', 'pywintypes', 'win32timezone']
 for package in ('core', 'gui'):
     hiddenimports += collect_submodules(package)
-for package in ('av', 'customtkinter', 'tkinterweb', 'tkinterweb_tkhtml', 'tkinterweb_tkhtml_extras', 'pyglet'):
+for package in ('av', 'customtkinter', 'tkinterweb', 'tkinterweb_tkhtml', 'tkinterweb_tkhtml_extras'):
     package_datas, package_binaries, package_imports = collect_all(package)
     datas += package_datas
     binaries += package_binaries

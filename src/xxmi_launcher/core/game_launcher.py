@@ -22,6 +22,7 @@ from core.platforms.epic.epic_manager import EpicManager
 from core.packages.model_importers.model_importer import ModelImporterPackage
 from core.packages.migoto_package import MigotoPackage, MigotoInjector, InjectorContext, MigotoIdentity, MigotoFork
 from core.utils.process_manager import ProcessManager, ProcessPriorityClass, LaunchContext, ExecutableLaunch, CommandLaunch
+from core.mod_prefetch import ModPrefetcher
 
 log = logging.getLogger(__name__)
 
@@ -315,6 +316,9 @@ class GameLauncher:
 
             # Optimize ini files in Mods and ShaderFixes folders
             Events.Fire(Events.ModelImporter.OptimizeMods())
+
+            # Read the mod files the DLL is about to load while the game boots (background priority)
+            ModPrefetcher.start_for_importer(Config.Active.Importer.importer_path, Config.Launcher.prefetch_mod_files)
 
         # Configure game settings.
         Events.Fire(Events.Application.StatusUpdate(
