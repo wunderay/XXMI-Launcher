@@ -115,6 +115,10 @@ class LauncherUserFlowTests(unittest.TestCase):
         self.gui = ctk.CTk()
         self.gui_destroyed = False
         self.addCleanup(self.destroy_gui)
+        # Cleanups run last-in first-out: queued prepared-image cache writes into the temporary
+        # Resources folder finish before that folder is removed
+        from gui.classes import widgets
+        self.addCleanup(widgets.flush_prepared_image_writes)
         self.gui.withdraw()
         self.gui.cfg = SimpleNamespace(width=1280, height=720)
         self.gui.get_resource_path = lambda: Path('MainWindow/LauncherFrame')
