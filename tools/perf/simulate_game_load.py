@@ -11,6 +11,7 @@ import argparse
 import fnmatch
 import json
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -50,17 +51,31 @@ def purge_windows_standby_list() -> bool:
     class TOKEN_PRIVILEGES(ctypes.Structure):
         _fields_ = [("PrivilegeCount", wintypes.DWORD), ("Luid", LUID), ("Attributes", wintypes.DWORD)]
 
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    advapi32.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+    advapi32.LookupPrivilegeValueW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR, ctypes.POINTER(LUID)]
+    advapi32.AdjustTokenPrivileges.argtypes = [wintypes.HANDLE, wintypes.BOOL, ctypes.POINTER(TOKEN_PRIVILEGES),
+                                               wintypes.DWORD, ctypes.c_void_p, ctypes.c_void_p]
+    ntdll.NtSetSystemInformation.restype = ctypes.c_long
+    ntdll.NtSetSystemInformation.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_ulong]
     token = wintypes.HANDLE()
     if not advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), 0x0020 | 0x0008, ctypes.byref(token)):
+        print(f"cache purge: OpenProcessToken failed ({ctypes.get_last_error()})", file=sys.stderr)
         return False
     privileges = TOKEN_PRIVILEGES(1, LUID(), 0x00000002)
     if not advapi32.LookupPrivilegeValueW(None, "SeProfileSingleProcessPrivilege", ctypes.byref(privileges.Luid)):
+        print(f"cache purge: LookupPrivilegeValue failed ({ctypes.get_last_error()})", file=sys.stderr)
         return False
     advapi32.AdjustTokenPrivileges(token, False, ctypes.byref(privileges), 0, None, None)
+    if ctypes.get_last_error():
+        print(f"cache purge: privilege not granted ({ctypes.get_last_error()})", file=sys.stderr)
+        return False
     # SystemMemoryListInformation (80): flush modified pages to disk (3), then purge standby (4)
     for command in (3, 4):
         value = ctypes.c_int(command)
-        if ntdll.NtSetSystemInformation(80, ctypes.byref(value), ctypes.sizeof(value)) != 0:
+        status = ntdll.NtSetSystemInformation(80, ctypes.byref(value), ctypes.sizeof(value))
+        if status != 0:
+            print(f"cache purge: NtSetSystemInformation({command}) failed (0x{status & 0xffffffff:08x})", file=sys.stderr)
             return False
     return True
 
