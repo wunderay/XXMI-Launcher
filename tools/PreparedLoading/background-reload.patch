@@ -1,0 +1,1050 @@
+THIS PATCH IS UNBUILT AND UNTESTED. IT HAS NEVER BEEN COMPILED, RUN IN A GAME,
+OR EXERCISED BY ANY NATIVE TEST. DO NOT SHIP OR SIGN A LIBRARY BUILT FROM IT
+UNTIL THE MEASUREMENTS BELOW HAVE BEEN COLLECTED AND REVIEWED.
+
+Background F10 reload (design and best-effort patch)
+=====================================================
+
+Status
+  * Separate, optional design patch. tools/PreparedLoading/native.patch is
+    unchanged and remains the qualified source patch; nothing here is part of
+    the candidate described in COMPLETION-STATUS.md.
+  * Applies ON TOP OF the tree produced by native.patch (pinned base
+    SpectrumQT/XXMI-Libs-Package a7847eae82aaac32175c9a7d199673d5c9323bcd plus
+    native.patch). It is not a patch against the upstream base.
+  * Every hunk, including DirectX11/IniHandler.cpp, is generated with git diff
+    against the full pinned upstream tree with native.patch applied, and
+    `git apply --check` passes on that tree.
+  * Upstream identifiers used here were checked against that tree:
+    RegisterKeyBinding(iniKey, keyName, shared_ptr<InputListener>, auto_repeat,
+    down_delay, up_delay, scope, configuration_owned) with InputCallbacks,
+    G->gWipeUserConfig, CustomResource::resource/view, and the CustomShader
+    stage/state members (from native.patch's ATTACH_SHADER). Nothing has been
+    compiled, so a build may still need small fixes.
+  * Expected usage after a build:
+        git apply --check background-reload.patch   (on the post-native tree)
+        git apply background-reload.patch
+    git apply ignores this text before the first per-file header.
+
+Configuration ([ModLoading] in the importer's d3dx.ini)
+  background_reload = 0      default; F10 is the unchanged legacy reload
+  background_reload = 1      F10 becomes a background reload (see a)
+  legacy_reload_key =        optional; default ctrl no_alt no_shift VK_F10
+  background_reload requires mode != off, transactional_activation = 1 and
+  general_fast_refresh = 1. The launcher writes background_reload only when
+  the signed capability metadata lists the "background_reload" feature, which
+  tools/preparation-capabilities.py adds for a build of this patch.
+
+Design
+  (a) F10 as a background reload.
+      FlagConfigReload notes an explicit key press (NoteReloadKeyPressed).
+      ReloadConfig first calls ModLoading::TryBeginBackgroundReload. It
+      accepts only a key press, never the delayed initial load, the
+      wipe-user-config variant (G->gWipeUserConfig), a SINGLETHREADED device,
+      a disabled/admission-blocked general pipeline, or a pending forced
+      legacy request. When accepted, ReloadConfig returns without touching the
+      live generation. At the next Present, PumpRuntime (which already runs
+      before frame commands take the configuration pin in RunFrameActions)
+      calls PumpBackgroundReload. It either claims the already valid pending
+      general candidate or schedules a forced full build through the existing
+      ScheduleGeneralBuild / GeneralBuildWorker (detached production
+      parser/linker, dependency closure, watches). PumpGeneralConfiguration
+      treats the claimed candidate as activation-requested, so it publishes
+      through the existing StageConfigurationRuntime /
+      PublishStagedConfiguration path at the frame boundary as soon as the
+      complete-graph proof holds. The old generation stays live until then.
+      Fallback to the legacy synchronous reload on the next frame (overlay
+      notice) when: the candidate becomes invalid (any compatibility reason
+      from the general pipeline, e.g. arbitrary initializers, pools, mutable
+      resources, shader-regex changes), bounded migration fails, GPU
+      preparation is unavailable, or no candidate publishes within 10 s.
+      A separate key, legacy_reload_key (default Ctrl+F10), always forces the
+      legacy reload/reset, as does the wipe-user-config binding.
+      Semantic difference: a background publication carries the latest
+      persistent variables and recomputes bounded pure initializers only. It
+      does not re-run arbitrary [Constants] initialization, re-parse process
+      settings ([System], [Rendering], [Hunting] ...), or reset overrides the
+      way the legacy route does. Those cases must use the legacy key.
+  (b) GPU resource creation on worker threads.
+      For a claimed candidate, PreparationPlanner::PumpWorker replaces the
+      per-frame Pump when the device is not D3D11_CREATE_DEVICE_SINGLETHREADED
+      and D3D11_FEATURE_THREADING reports DriverConcurrentCreates. The owner
+      thread keeps all admission and bookkeeping (process budget, cache room,
+      per-frame upload_budget_mb cap, failure keys, cache insertion, alias
+      keys); one detached worker per planner only calls the shared Create()
+      code (CreateDetached) on the original, unhooked ID3D11Device that
+      PumpRuntime already receives (GetPassThroughOrigDevice1), always with
+      initial data and never with a device context. Each job holds an AddRef on
+      the device; retirement cancels without joining, so the owner never waits
+      for the worker. Each worker creation holds LockResourceCreationMode for
+      that one driver call. Without concurrent-create support the existing
+      bounded per-frame Pump runs (create_budget_ms / upload_budget_mb), with
+      the F10 press acting as an explicit loading window for that candidate
+      only. preparation_loading_window keeps its meaning for everything else.
+      SINGLETHREADED devices keep the legacy F10 (native.patch already refuses
+      complete-graph GPU preparation for them).
+  (c) Paced release of old generations.
+      CompleteGraphRetirement already frees a retired graph only after its GPU
+      event query completes and no reader pins it. With background_reload on,
+      that graph goes to one of four fixed slots; PumpRuntime then releases at
+      most 16 CustomResource/CustomShader entries' COM children per frame on
+      the owner thread before the remaining CPU-only teardown takes the
+      existing Disposal() path. A full table, or a recreated device, keeps the
+      original one-shot release.
+      Slots never outlive their owner: a device mismatch is detected before
+      the owner-thread check (so a replacement owner/device still reaches the
+      cleanup), and every retirement path drains every slot back to the
+      one-shot release: RetireRuntimeDevice (before its early return),
+      RuntimeOwnerScope when it carries out a deferred retirement, and a
+      legacy reload. The drain never blocks (a COM Release inside the pump can
+      reenter device retirement): on the pump's own thread it is recorded and
+      done by that pump before it returns; if another thread holds the slot
+      mutex, the next pump takes every slot first. Slots are not drained at
+      process exit. tests/test_background_reload_patch.py compiles these exact
+      functions into a mock-type C++ harness (not D3D) and checks each path.
+
+Risks
+  * Worker creation and the render thread contend for the driver and for the
+    creation-mode lock; a single large texture creation can still block the
+    render thread for its duration. Drivers that report concurrent creates may
+    still serialize internally.
+  * The original device can outlive its HackerDevice wrapper until an in-flight
+    worker job drops its reference; the final Release may then run on the
+    worker thread.
+  * Cache insertion happens after MakeRoom on a later frame, so the cache can
+    briefly exceed its cap and an insert can fail (counted as a failure).
+  * Peak VRAM is old + new generation until the swap and paced release
+    complete. The general GPU budget still bounds the candidate, not driver
+    overhead or residency.
+  * Behavioral difference from legacy F10 (see a). Users must know the legacy
+    key; an overlay notice is shown on request and on every fallback.
+  * Releasing CustomResource/CustomShader children early assumes their
+    destructors tolerate null members (upstream checks for null).
+
+Must be measured in game before any release (per game, same scene, paired
+legacy vs background, at least 20 F10 presses each, several mod sets)
+  * PresentMon frame time: p50, p99 and max over the 2 s around each F10 press
+    and over the release window afterwards; the goal is p99 within normal
+    gameplay variance.
+  * Stall counts: frames above 2x and 4x the median frame time per reload,
+    plus native LoadTrace Activation/GpuCreation/ViewCreation durations and
+    time spent waiting on the creation-mode lock on the render thread.
+  * VRAM: peak dedicated GPU memory (PresentMon/GPUView or DXGI
+    QueryVideoMemoryInfo) during build, swap and release; compare with the
+    general GPU budget.
+  * Time from key press to visible change, fallback rate and reasons, and
+    first-correct-frame visual comparison against a legacy reload.
+  * Device-removed, alt-tab and resolution-change behavior during a pending
+    background reload; repeated presses while a build is in flight.
+
+diff --git a/DirectX11/IniHandler.cpp b/DirectX11/IniHandler.cpp
+index 2480dd0..958377e 100644
+--- a/DirectX11/IniHandler.cpp
++++ b/DirectX11/IniHandler.cpp
+@@ -4779,6 +4779,9 @@ void FlagConfigReload(HackerDevice *device, void *private_data)
+ 	// We defer wiping the user config (if requested) until the reload in
+ 	// case something marks the user config as dirty between now and then:
+ 	G->gWipeUserConfig = !!private_data;
++	// background-reload.patch: only an explicit reload key press may become a
++	// background reload; the delayed initial load and other callers stay legacy.
++	ModLoading::NoteReloadKeyPressed();
+ }
+ 
+ static void RequestFullPreparationRescanAction(HackerDevice*, void*) { ModLoading::RequestFullPreparationRescan(); }
+@@ -4788,6 +4791,14 @@ static void RequestResourceFilenameRefresh(HackerDevice*, void*)
+ 	ModLoading::RequestPreparedRefresh();
+ }
+ 
++// background-reload.patch: separate key that always runs the legacy full
++// reload/reset, also while [ModLoading] background_reload = 1.
++static void RequestLegacyForcedReload(HackerDevice *device, void *private_data)
++{
++	ModLoading::ForceLegacyReload();
++	FlagConfigReload(device, NULL);
++}
++
+ void ToggleInput(HackerDevice *device, void *private_data)
+ {
+ 	G->disable_input = !G->disable_input;
+@@ -5941,6 +5952,17 @@ void LoadConfigFile()
+ 	// No default key; this action is distinct from legacy reload/reset semantics.
+ 	RegisterIniKeyBinding(L"ModLoading", L"refresh_key", RequestResourceFilenameRefresh, NULL, 0, NULL);
+     RegisterIniKeyBinding(L"ModLoading", L"full_rescan_key", RequestFullPreparationRescanAction, NULL, 0, NULL);
++	// background-reload.patch: with background_reload on, F10 keeps the live
++	// mods; this key (default Ctrl+F10) keeps the legacy full reload/reset.
++	if (GetIniBool(L"ModLoading", L"background_reload", false, NULL)) {
++		wchar_t legacy_key[MAX_PATH] = {};
++		GetIniString(L"ModLoading", L"legacy_reload_key", L"", legacy_key, MAX_PATH);
++		if (!legacy_key[0])
++			wcscpy_s(legacy_key, L"ctrl no_alt no_shift VK_F10");
++		RegisterKeyBinding(L"legacy_reload_key", legacy_key,
++			make_shared<InputCallbacks>(RequestLegacyForcedReload, nullptr, nullptr),
++			0, 0, 0, InputDisableScope::INVALID, false);
++	}
+ }
+ 
+ static void ResetUnknownSettingsCache()
+@@ -6169,6 +6191,12 @@ static void MarkAllShadersDeferredUnprocessed()
+ void ReloadConfig(HackerDevice *device)
+ {
+ 	ScopedIniThreadLocale localeScope;
++	// background-reload.patch: an F10 press with background_reload = 1 keeps
++	// the live generation; PumpRuntime swaps a complete candidate later.
++	if (ModLoading::TryBeginBackgroundReload(device->GetPassThroughOrigDevice1())) {
++		G->gReloadConfigPending = false;
++		return;
++	}
+     if (!ModLoading::AdmitConfigurationRetirement(device->GetPassThroughOrigDevice1())) return;
+ 	ConfigLegacyWriteScope configuration_write;
+ 	if (!configuration_write) { ModLoading::CancelConfigurationRetirement(); return; } // Keep pending: retry at a quiescent frame.
+diff --git a/DirectX11/ModLoading/BackgroundReload.inl b/DirectX11/ModLoading/BackgroundReload.inl
+new file mode 100644
+index 0000000..0cf7489
+--- /dev/null
++++ b/DirectX11/ModLoading/BackgroundReload.inl
+@@ -0,0 +1,351 @@
++// background-reload.patch: UNBUILT AND UNTESTED. Private part of Runtime.cpp,
++// included inside namespace ModLoading after GeneralConfigPipeline.inl.
++//
++// With [ModLoading] background_reload = 1, an explicit F10 press becomes an
++// activation request for the detached general pipeline: the live generation
++// stays published, a complete candidate is parsed/linked off-thread, its GPU
++// objects are created by a worker (or the bounded per-frame pump) and it is
++// swapped at the PumpRuntime frame boundary. Every unsupported state falls
++// back to the legacy synchronous ReloadConfig on the next frame.
++namespace {
++constexpr size_t IncrementalReleasePerFrame = 16;
++constexpr std::chrono::milliseconds BackgroundReloadTimeout(10000);
++
++struct BackgroundReloadControl {
++	std::mutex mutex;
++	bool enabled = false;
++	bool requested = false; // F10 accepted; consumed by the next owner pump
++	bool active = false;    // candidates with id >= minimumCandidate may publish
++	uint64_t minimumCandidate = 0;
++	std::chrono::steady_clock::time_point requestedAt, deadline;
++	std::atomic<bool> keyPressed{false}, forceLegacy{false};
++};
++BackgroundReloadControl& BackgroundControl()
++{
++	static auto* control = new BackgroundReloadControl; // No static destructor under the loader lock.
++	return *control;
++}
++
++void DisableBackgroundReload()
++{
++	auto& control = BackgroundControl();
++	std::lock_guard<std::mutex> lock(control.mutex);
++	control.enabled = control.requested = control.active = false;
++}
++
++void ConfigureBackgroundReload(const RuntimeState& state)
++{
++	const bool requested = GetIniBool(L"ModLoading", L"background_reload", false, nullptr);
++	const bool usable = requested && state.mode != PreparationMode::Off &&
++		state.generalEnabled && state.transactionalActivation;
++	if (requested && !usable)
++		LogOverlayW(LOG_INFO, L"ModLoading background_reload requires general_fast_refresh and transactional_activation; F10 uses the full reload\n");
++	auto& control = BackgroundControl();
++	std::lock_guard<std::mutex> lock(control.mutex);
++	control.enabled = usable;
++	control.requested = control.active = false;
++}
++
++bool BackgroundReloadClaims(uint64_t candidateId)
++{
++	auto& control = BackgroundControl();
++	std::lock_guard<std::mutex> lock(control.mutex);
++	return control.active && candidateId >= control.minimumCandidate;
++}
++
++void BackgroundReloadFallback(uint64_t candidateId, const std::string& reason)
++{
++	auto& control = BackgroundControl();
++	{
++		std::lock_guard<std::mutex> lock(control.mutex);
++		if (!control.active || candidateId < control.minimumCandidate)
++			return;
++		control.active = false;
++	}
++	control.forceLegacy.store(true);
++	LogOverlayW(LOG_INFO, L"> Background reload unavailable (%S); running full reload\n", reason.c_str());
++	// Consumed by the next RunFrameActions; ForceLegacyReload makes it synchronous.
++	G->gReloadConfigPending = true;
++}
++
++void BackgroundReloadPublished(uint64_t candidateId)
++{
++	auto& control = BackgroundControl();
++	std::chrono::steady_clock::time_point requestedAt;
++	{
++		std::lock_guard<std::mutex> lock(control.mutex);
++		if (!control.active || candidateId < control.minimumCandidate)
++			return;
++		control.active = false;
++		requestedAt = control.requestedAt;
++	}
++	const std::chrono::duration<float> elapsed = std::chrono::steady_clock::now() - requestedAt;
++	LogOverlayW(LOG_INFO, L"> Reloaded config in background in %.3fs\n", elapsed.count());
++}
++
++// Owner thread, inside PumpRuntimeImpl with the planner lock held.
++void PumpBackgroundReload(const std::shared_ptr<RuntimeState>& state, DeviceEpoch epoch)
++{
++	auto& control = BackgroundControl();
++	const auto now = std::chrono::steady_clock::now();
++	bool schedule = false, timedOut = false;
++	uint64_t minimum = 0;
++	{
++		std::lock_guard<std::mutex> lock(control.mutex);
++		if (control.requested) {
++			control.requested = false;
++			control.active = true;
++			control.deadline = now + BackgroundReloadTimeout;
++			const auto& pending = Services().pendingGeneral;
++			// An already valid candidate was verified against the current watched
++			// sources; PumpGeneralConfiguration rechecks that proof every frame.
++			if (pending && pending->valid) {
++				control.minimumCandidate = pending->id;
++			} else {
++				control.minimumCandidate = Services().nextGeneration.load() + 1;
++				schedule = true;
++			}
++		} else if (control.active && now > control.deadline) {
++			timedOut = true;
++			minimum = control.minimumCandidate;
++		}
++	}
++	if (schedule && state->monitor) {
++		ReconcileRequest request;
++		request.token = state->monitor->CurrentToken();
++		request.fullReconcile = true; // forceFull: re-read every source like F10
++		ScheduleGeneralBuild(state, request, epoch);
++	}
++	if (timedOut)
++		BackgroundReloadFallback(minimum, "no complete candidate within the timeout");
++}
++
++bool BackgroundWorkerCreation(PreparationPlanner& planner, ID3D11Device* device,
++	const GpuPumpLimits& limits, GpuPumpResult& result)
++{
++	if (!device || (device->GetCreationFlags() & D3D11_CREATE_DEVICE_SINGLETHREADED) ||
++		!planner.WorkerCreationAvailable())
++		return false;
++	// Each worker creation holds the same creation-mode lock as legacy
++	// resource creation, for one driver call at a time. The render thread can
++	// wait for at most that call; this is a measured risk, not a guarantee.
++	result = planner.PumpWorker(limits, [](const std::function<void()>& create) {
++		LockResourceCreationMode();
++		struct Unlock { ~Unlock() { UnlockResourceCreationMode(); } } unlock;
++		create();
++	});
++	return true;
++}
++
++// Incremental release of retired generations. Fixed slots: no allocation on
++// the render thread. A full table keeps the original one-shot destructor path.
++struct IncrementalRelease {
++	std::shared_ptr<ConfigGenerationPin> graph;
++	ID3D11Device* device = nullptr; // Identity only; never dereferenced here.
++	std::thread::id owner;
++	bool started = false;
++	decltype(ConfigurationState::resources)::iterator resource;
++	decltype(ConfigurationState::shaders)::iterator shader;
++};
++std::mutex& IncrementalReleaseMutex()
++{
++	static auto* mutex = new std::mutex;
++	return *mutex;
++}
++std::array<IncrementalRelease, 4>& IncrementalReleaseSlots()
++{
++	static auto* slots = new std::array<IncrementalRelease, 4>;
++	return *slots;
++}
++
++void QueueIncrementalRelease(std::shared_ptr<ConfigGenerationPin>& graph, ID3D11Device* device, std::thread::id owner)
++{
++	if (!graph || !*graph)
++		return;
++	{
++		auto& control = BackgroundControl();
++		std::lock_guard<std::mutex> lock(control.mutex);
++		if (!control.enabled)
++			return;
++	}
++	std::lock_guard<std::mutex> lock(IncrementalReleaseMutex());
++	for (auto& slot : IncrementalReleaseSlots()) {
++		if (slot.graph)
++			continue;
++		slot.graph = std::move(graph);
++		slot.device = device;
++		slot.owner = owner;
++		slot.started = false;
++		return;
++	}
++}
++
++void ReleaseResourceChildren(CustomResource& resource)
++{
++	if (resource.view) { resource.view->Release(); resource.view = nullptr; }
++	if (resource.resource) { resource.resource->Release(); resource.resource = nullptr; }
++	resource.preparation_pin.reset();
++	resource.substantiated = false;
++}
++
++void ReleaseShaderChildren(CustomShader& shader)
++{
++#define RELEASE_CHILD(Member) if (shader.Member) { shader.Member->Release(); shader.Member = nullptr; }
++	RELEASE_CHILD(vs) RELEASE_CHILD(hs) RELEASE_CHILD(ds)
++	RELEASE_CHILD(gs) RELEASE_CHILD(ps) RELEASE_CHILD(cs)
++	RELEASE_CHILD(blend_state) RELEASE_CHILD(depth_stencil_state)
++	RELEASE_CHILD(rs_state) RELEASE_CHILD(sampler_state)
++#undef RELEASE_CHILD
++	shader.preparation_pin.reset();
++	shader.substantiated = false;
++}
++
++// Set while this thread's PumpIncrementalRelease holds IncrementalReleaseMutex(). A COM
++// Release() inside the pump can reenter a drain on the same thread, and try_lock on a
++// std::mutex the caller already owns is undefined behaviour, so reentry is detected here.
++thread_local bool pumpHoldsReleaseLock = false;
++
++std::atomic<bool>& IncrementalDrainRequested()
++{
++	static std::atomic<bool> requested{false};
++	return requested;
++}
++
++// Moves every queued graph out of the slots; caller holds IncrementalReleaseMutex().
++void TakeAllIncrementalReleases(std::array<std::shared_ptr<ConfigGenerationPin>, 4>& drained)
++{
++	size_t index = 0;
++	for (auto& slot : IncrementalReleaseSlots()) {
++		if (!slot.graph)
++			continue;
++		drained[index++].swap(slot.graph);
++		slot = IncrementalRelease();
++	}
++}
++
++// Owner thread, every Present. Releases at most IncrementalReleasePerFrame
++// resource/shader entries; the remaining CPU-only teardown keeps Disposal().
++void PumpIncrementalRelease(ID3D11Device* device)
++{
++	std::shared_ptr<ConfigGenerationPin> finished;
++	std::array<std::shared_ptr<ConfigGenerationPin>, 4> drained, drainedDuringPump;
++	{
++		if (pumpHoldsReleaseLock)
++			return; // Reentered from a Release() below; the outer pump continues.
++		std::unique_lock<std::mutex> lock(IncrementalReleaseMutex(), std::try_to_lock);
++		if (!lock.owns_lock())
++			return;
++		pumpHoldsReleaseLock = true;
++		struct ClearFlag { ~ClearFlag() { pumpHoldsReleaseLock = false; } } clearFlag;
++		// A drain that could not take the lock (see DrainIncrementalRelease) is done here.
++		if (IncrementalDrainRequested().exchange(false))
++			TakeAllIncrementalReleases(drained);
++		size_t budget = IncrementalReleasePerFrame;
++		for (auto& slot : IncrementalReleaseSlots()) {
++			if (!slot.graph || !budget)
++				continue;
++			// Checked before the owner thread: a replacement owner/device must still reach this
++			// cleanup, or the slot would pin the retired graph indefinitely.
++			if (slot.device && slot.device != device) {
++				// Device recreated: no pacing benefit; keep the original release.
++				finished.swap(slot.graph);
++				slot = IncrementalRelease();
++				break;
++			}
++			if (slot.owner != std::this_thread::get_id())
++				continue;
++			auto& graph = **slot.graph;
++			if (!slot.started) {
++				slot.resource = graph.resources.begin();
++				slot.shader = graph.shaders.begin();
++				slot.started = true;
++			}
++			for (; budget && slot.resource != graph.resources.end(); ++slot.resource, --budget)
++				ReleaseResourceChildren(slot.resource->second);
++			for (; budget && slot.shader != graph.shaders.end(); ++slot.shader, --budget)
++				ReleaseShaderChildren(slot.shader->second);
++			if (slot.resource == graph.resources.end() && slot.shader == graph.shaders.end()) {
++				finished.swap(slot.graph);
++				slot = IncrementalRelease();
++				break;
++			}
++		}
++		// A Release() above may have retired the device and requested a drain (deferred because
++		// this thread holds the lock); honour it now instead of waiting for the next Present.
++		if (IncrementalDrainRequested().exchange(false))
++			TakeAllIncrementalReleases(drainedDuringPump);
++	}
++	finished.reset(); // Outside the lock; the outer pin's deleter is asynchronous.
++	for (auto& graph : drained)
++		graph.reset();
++	for (auto& graph : drainedDuringPump)
++		graph.reset();
++}
++
++// Any thread. Hands every queued graph back to the normal
++// Disposal() release, like the device-recreated case above. Called when the runtime
++// device is retired and when a legacy reload disables background reload, so slots never
++// wait for a Present that may not come and all four are free again afterwards. At process
++// exit the (intentionally leaked) slots are not drained; process teardown releases them.
++// Never blocks: a COM Release() inside PumpIncrementalRelease (which holds the mutex) can
++// reenter RetireRuntimeDevice on the same thread. On that thread the mutex is not touched
++// (see pumpHoldsReleaseLock); if it is busy on another thread, the drain is left to the next
++// pump, which takes every slot before releasing anything else.
++void DrainIncrementalRelease()
++{
++	std::array<std::shared_ptr<ConfigGenerationPin>, 4> drained;
++	{
++		if (pumpHoldsReleaseLock) {
++			IncrementalDrainRequested().store(true);
++			return;
++		}
++		std::unique_lock<std::mutex> lock(IncrementalReleaseMutex(), std::try_to_lock);
++		if (!lock.owns_lock()) {
++			IncrementalDrainRequested().store(true);
++			return;
++		}
++		IncrementalDrainRequested().store(false);
++		TakeAllIncrementalReleases(drained);
++	}
++	for (auto& graph : drained)
++		graph.reset(); // Outside the lock; the outer pin's deleter is asynchronous.
++}
++} // namespace
++
++void NoteReloadKeyPressed()
++{
++	BackgroundControl().keyPressed.store(true);
++}
++
++void ForceLegacyReload()
++{
++	BackgroundControl().forceLegacy.store(true);
++}
++
++bool TryBeginBackgroundReload(ID3D11Device* realDevice)
++{
++	try {
++		auto& control = BackgroundControl();
++		// Always consume both edges so a stale press never diverts a later reload.
++		const bool keyPressed = control.keyPressed.exchange(false);
++		const bool forced = control.forceLegacy.exchange(false);
++		if (!keyPressed || forced || G->gWipeUserConfig || !realDevice ||
++			(realDevice->GetCreationFlags() & D3D11_CREATE_DEVICE_SINGLETHREADED))
++			return false;
++		auto state = Current();
++		if (!state || !state->enabled.load() || !state->generalEnabled || state->generalAdmissionBlocked ||
++			!state->semanticBuilder || !state->config || !state->monitor || !state->gpuEnabled || !state->generalGpuBytes)
++			return false;
++		{
++			std::lock_guard<std::mutex> lock(control.mutex);
++			if (!control.enabled)
++				return false;
++			control.requested = true;
++			control.requestedAt = std::chrono::steady_clock::now();
++		}
++		LogOverlayW(LOG_INFO, L"> Background reload requested; current mods stay active\n");
++		return true;
++	} catch (...) {
++		return false;
++	}
++}
+diff --git a/DirectX11/ModLoading/GeneralConfigPipeline.inl b/DirectX11/ModLoading/GeneralConfigPipeline.inl
+index b09bc81..e37cc6f 100644
+--- a/DirectX11/ModLoading/GeneralConfigPipeline.inl
++++ b/DirectX11/ModLoading/GeneralConfigPipeline.inl
+@@ -4,6 +4,12 @@ namespace {
+ int ReserveGraphRetirement(ID3D11Device* device);
+ void CancelGraphRetirement(int slot);
+ void SubmitGraphRetirement(int slot, ConfigGenerationPin previous);
++// background-reload.patch hooks, defined in BackgroundReload.inl.
++bool BackgroundReloadClaims(uint64_t candidateId);
++void BackgroundReloadFallback(uint64_t candidateId, const std::string& reason);
++void BackgroundReloadPublished(uint64_t candidateId);
++bool BackgroundWorkerCreation(PreparationPlanner& planner, ID3D11Device* device,
++	const GpuPumpLimits& limits, GpuPumpResult& result);
+ 
+ // A slot is reserved when an object is allocated, so its final deleter never
+ // allocates or joins a watcher on a rendering thread. Capacity is bounded.
+@@ -707,7 +713,9 @@ bool AttachGeneralAsset(GeneralAsset& asset, ID3D11Device* device) {
+ bool PrepareGeneralIni(GeneralBuildResult& candidate, ID3D11Device* device) {
+ 	auto& graph = *candidate.next->graph;
+ 	if (candidate.iniPrepared) return true;
+-	if (!candidate.next->loadingWindow) return false;
++	// An explicit background F10 request is a user-declared loading window for
++	// this candidate only; create/upload budgets still apply.
++	if (!candidate.next->loadingWindow && !BackgroundReloadClaims(candidate.id)) return false;
+ 	graph.iniDevice = device;
+ 	if (graph.iniParams.empty()) { graph.ownsIniResources = true; candidate.iniPrepared = true; return true; }
+ 	const uint64_t bytes = graph.iniParams.size() * sizeof(DirectX::XMFLOAT4) + 128 * 1024;
+@@ -771,6 +779,7 @@ void PumpGeneralConfiguration(const std::shared_ptr<RuntimeState>& state, ID3D11
+ 		return;
+ 	}
+ 	if (!candidate->valid) {
++		BackgroundReloadFallback(candidate->id, candidate->reason);
+ 		service.refreshActivation.SetReady(0); service.refreshActivation.Consume();
+ 		GeneralStatus(state, candidate, PreparationStatusState::Compatibility, candidate->reason, statusTicket);
+ 		return;
+@@ -785,6 +794,7 @@ void PumpGeneralConfiguration(const std::shared_ptr<RuntimeState>& state, ID3D11
+ 		return;
+ 	}
+ 	if (!state->gpuEnabled || !state->generalGpuBytes || (device->GetCreationFlags() & D3D11_CREATE_DEVICE_SINGLETHREADED)) {
++		BackgroundReloadFallback(candidate->id, "complete GPU preparation is unavailable for this device");
+ 		GeneralStatus(state, candidate, PreparationStatusState::Compatibility, "Complete GPU preparation disabled or device owner unsupported", statusTicket); return;
+ 	}
+ 	service.device = device; service.epoch = epoch; service.owner = std::this_thread::get_id();
+@@ -814,10 +824,16 @@ void PumpGeneralConfiguration(const std::shared_ptr<RuntimeState>& state, ID3D11
+ 			profile.source = asset.source; profile.pinnedGpu = asset.gpu; profile.observedGpu = asset.gpu; profile.key = asset.key;
+ 		}
+ 	}
+-	if (state->loadingWindow) {
++	const bool backgroundReload = BackgroundReloadClaims(candidate->id);
++	if (state->loadingWindow || backgroundReload) {
+ 		EnsureCOM();
+ 		struct CreationGuard { CreationGuard() { LockResourceCreationMode(); } ~CreationGuard() { UnlockResourceCreationMode(); } } guard;
+-		const auto pumped = candidate->planner->Pump(true, state->gpuLimits);
++		// A background F10 hands creation to a worker on free-threaded devices
++		// whose driver reports concurrent creates; otherwise the same bounded
++		// per-frame pump runs. Neither path runs without an explicit request.
++		GpuPumpResult pumped;
++		if (!backgroundReload || !BackgroundWorkerCreation(*candidate->planner, device, state->gpuLimits, pumped))
++			pumped = candidate->planner->Pump(true, state->gpuLimits);
+ 		if (pumped.deviceRemoved) { candidate->valid = false; candidate->reason = "Device was removed during candidate preparation"; return; }
+ 		if (candidate->readyAssets == candidate->assets.size() && !candidate->iniPrepared) PrepareGeneralIni(*candidate, device);
+ 		// Query allocation occurs before Ready, never within the final source
+@@ -842,6 +858,8 @@ void PumpGeneralConfiguration(const std::shared_ptr<RuntimeState>& state, ID3D11
+ 	if (!readyProof) { service.refreshActivation.SetReady(0); return; }
+ 	const auto requested = service.refreshActivation.Consume();
+ 	if (requested == candidate->id && state->transactionalActivation) candidate->activationRequested = true;
++	// The F10 press that started a background reload is the activation request.
++	if (BackgroundReloadClaims(candidate->id)) candidate->activationRequested = true;
+ 	if (!candidate->activationRequested) return;
+ 	// Activation duration measures one owner-side attempt, excluding preparation
+ 	// and readiness waits: 0 = published, 1 = retry, -1 = compatible reload needed.
+@@ -895,9 +913,11 @@ void PumpGeneralConfiguration(const std::shared_ptr<RuntimeState>& state, ID3D11
+ 		service.refreshActivation.SetReady(0); service.pendingGeneral.reset();
+ 		GeneralStatus(candidate->next, {}, PreparationStatusState::Ready, "Complete prepared configuration activated", statusTicket);
+ 		LoadTrace::Get().RecordInstant(LoadStage::Activation, candidate->id, 0, 0);
++		BackgroundReloadPublished(candidate->id);
+ 	} else if (staged == ConfigPublishResult::MigrationBudget || staged == ConfigPublishResult::Invalid) {
+ 		activationTrace.SetResult(-1);
+ 		candidate->valid = false; candidate->reason = "Bounded runtime migration/initializer validation requires compatible reload";
++		BackgroundReloadFallback(candidate->id, candidate->reason);
+ 		service.refreshActivation.SetReady(0);
+ 	}
+ }
+diff --git a/DirectX11/ModLoading/PreparationPlanner.cpp b/DirectX11/ModLoading/PreparationPlanner.cpp
+index 38942ec..827b25b 100644
+--- a/DirectX11/ModLoading/PreparationPlanner.cpp
++++ b/DirectX11/ModLoading/PreparationPlanner.cpp
+@@ -4,6 +4,7 @@
+ #include <algorithm>
+ #include <atomic>
+ #include <chrono>
++#include <condition_variable>
+ #include <cstring>
+ #include <limits>
+ #include <mutex>
+@@ -355,6 +356,88 @@ PreparationPlanner::PreparationPlanner(uint64_t cacheBytes, size_t maxQueued, ui
+ 	: cache_(cacheBytes), maxQueued_((std::min)(size_t(4096), maxQueued)), maxShaderBytecodeBytes_(maxRetainedShaderBytecodeBytes), enabled_(cacheBytes != 0) {}
+ PreparationPlanner::~PreparationPlanner() { RetireDevice(); }
+ bool PreparationPlanner::OnOwner() const { return owner_ == std::this_thread::get_id(); }
++// background-reload.patch (UNBUILT, UNTESTED): one creation worker per planner.
++// Jobs own their request, reservations and an AddRef on the original device,
++// so retirement never waits on the worker while holding the creation-mode lock.
++struct PlannerWorkerCreation {
++	struct Job {
++		GpuPreparationRequest request;
++		DeviceResourceKey key;
++		std::shared_ptr<const LiveGpuAllocationLedger::Lease> retainedReservation;
++		std::shared_ptr<const void> cpuScratchReservation;
++		uint64_t reservedBytes = 0, shaderBytes = 0;
++		ID3D11Device* device = nullptr;
++	};
++	struct Finished {
++		Job job;
++		std::shared_ptr<PreparedGpuObject> object;
++		HRESULT result = E_FAIL;
++	};
++	std::mutex mutex;
++	std::condition_variable wake;
++	std::deque<Job> jobs;
++	std::deque<Finished> finished;
++	std::function<void(const std::function<void()>&)> creationScope;
++	bool cancelled = false, busy = false;
++};
++static void RunWorkerCreation(std::shared_ptr<PlannerWorkerCreation> worker)
++{
++	// WIC decoding inside the memory loader needs COM on this thread.
++	const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
++	for (;;) {
++		PlannerWorkerCreation::Job job;
++		{
++			std::unique_lock<std::mutex> lock(worker->mutex);
++			worker->wake.wait(lock, [&] { return worker->cancelled || !worker->jobs.empty(); });
++			if (worker->cancelled)
++				break;
++			job = std::move(worker->jobs.front());
++			worker->jobs.pop_front();
++			worker->busy = true;
++		}
++		PlannerWorkerCreation::Finished done;
++		try {
++			worker->creationScope([&] {
++				done.object = PreparationPlanner::CreateDetached(job.device, job.request,
++					job.retainedReservation, job.cpuScratchReservation, done.result);
++			});
++		} catch (...) {
++			done.object.reset();
++			done.result = E_FAIL;
++		}
++		job.device->Release();
++		job.device = nullptr;
++		done.job = std::move(job);
++		std::lock_guard<std::mutex> lock(worker->mutex);
++		worker->busy = false;
++		// A cancelled result is released here; legal on a free-threaded device.
++		if (!worker->cancelled)
++			worker->finished.push_back(std::move(done));
++	}
++	std::deque<PlannerWorkerCreation::Job> abandoned;
++	{
++		std::lock_guard<std::mutex> lock(worker->mutex);
++		abandoned.swap(worker->jobs);
++		worker->finished.clear();
++	}
++	for (auto& job : abandoned)
++		job.device->Release();
++	if (SUCCEEDED(com))
++		CoUninitialize();
++}
++static void CancelWorkerCreation(std::shared_ptr<PlannerWorkerCreation>& worker)
++{
++	if (!worker)
++		return;
++	{
++		std::lock_guard<std::mutex> lock(worker->mutex);
++		worker->cancelled = true;
++	}
++	worker->wake.notify_all();
++	// Never joined: an in-flight driver call finishes on the worker, which
++	// then drops its own device reference and exits.
++	worker.reset();
++}
+ bool PreparationPlanner::BeginDevice(ID3D11Device* device, DeviceEpoch epoch) {
+ 	if (!device || !epoch || (device_ && !OnOwner())) return false;
+ 	if (device_ == device && cache_.Epoch() == epoch) return true;
+@@ -365,6 +448,7 @@ bool PreparationPlanner::BeginDevice(ID3D11Device* device, DeviceEpoch epoch) {
+ 	return true;
+ }
+ void PreparationPlanner::RetireDevice() {
++	CancelWorkerCreation(workerCreation_);
+ 	queue_.clear(); resolvedKeys_.clear(); failedKeys_.clear(); queuedBytes_ = 0; queuedShaderBytecodeBytes_ = 0; budget_ = MemoryBudgetController(128ull * 1024 * 1024, safetyHeadroom_);
+ 	cache_.BeginEpoch(0); device_ = nullptr; singleThreaded_ = false; concurrentCreates_ = false;
+ }
+@@ -678,6 +762,103 @@ GpuPumpResult PreparationPlanner::Pump(bool knownLoadingWindow, GpuPumpLimits li
+ 	}
+ 	return result;
+ }
++std::shared_ptr<PreparedGpuObject> PreparationPlanner::CreateDetached(ID3D11Device* device, const GpuPreparationRequest& request,
++	const std::shared_ptr<const LiveGpuAllocationLedger::Lease>& retainedReservation,
++	const std::shared_ptr<const void>& cpuScratchReservation, HRESULT& result) {
++	result = E_INVALIDARG;
++	if (!device || (device->GetCreationFlags() & D3D11_CREATE_DEVICE_SINGLETHREADED))
++		return nullptr;
++	// Create() reads only device_ and process-wide ledgers. This throwaway
++	// planner owns no queue, cache or epoch and never retires the device.
++	PreparationPlanner detached(0);
++	detached.device_ = device;
++	auto object = detached.Create(request, retainedReservation, cpuScratchReservation, result);
++	detached.device_ = nullptr;
++	return object;
++}
++GpuPumpResult PreparationPlanner::PumpWorker(GpuPumpLimits limits,
++	std::function<void(const std::function<void()>&)> creationScope) {
++	GpuPumpResult result;
++	if (!WorkerCreationAvailable() || !OnOwner() || !creationScope || !limits.operations || !limits.bytes) return result;
++	if (!workerCreation_) {
++		auto worker = std::make_shared<PlannerWorkerCreation>();
++		worker->creationScope = std::move(creationScope);
++		std::thread(RunWorkerCreation, worker).detach();
++		workerCreation_ = std::move(worker);
++	}
++	auto& worker = *workerCreation_;
++	std::deque<PlannerWorkerCreation::Finished> finished;
++	size_t inFlight = 0;
++	{
++		std::lock_guard<std::mutex> lock(worker.mutex);
++		finished.swap(worker.finished);
++		inFlight = worker.jobs.size() + (worker.busy ? 1 : 0);
++	}
++	// Adopt completed objects exactly as Pump would after its own Create().
++	for (auto& done : finished) {
++		budget_.Complete(done.job.reservedBytes);
++		queuedShaderBytecodeBytes_ = queuedShaderBytecodeBytes_ >= done.job.shaderBytes ?
++			queuedShaderBytecodeBytes_ - done.job.shaderBytes : 0;
++		if (done.object) {
++			const auto canonical = CanonicalKey(done.job.key, *done.object);
++			if (cache_.Insert(canonical, std::move(done.object), done.job.request.estimatedBytes)) {
++				if (canonical < done.job.key || done.job.key < canonical) resolvedKeys_[done.job.key] = canonical;
++				++result.created;
++			} else ++result.failed;
++		} else {
++			++result.failed;
++			const HRESULT hr = done.result;
++			if (FAILED(hr) && hr != E_OUTOFMEMORY && hr != E_PENDING &&
++				hr != DXGI_ERROR_DEVICE_REMOVED && hr != DXGI_ERROR_DEVICE_RESET && hr != DXGI_ERROR_DEVICE_HUNG &&
++				hr != DXGI_ERROR_WAS_STILL_DRAWING && failedKeys_.size() < (std::max)(size_t(1), maxQueued_ * 4))
++				failedKeys_.insert(done.job.key);
++		}
++		if (done.result == DXGI_ERROR_DEVICE_REMOVED || done.result == DXGI_ERROR_DEVICE_RESET ||
++			FAILED(device_->GetDeviceRemovedReason())) {
++			result.deviceRemoved = true; RetireDevice(); return result;
++		}
++	}
++	// Admission mirrors Pump: per-request byte cap, process budget recheck and
++	// cache room. The frame pays only for this bookkeeping, not driver calls.
++	uint64_t dispatchedBytes = 0;
++	size_t dispatched = 0;
++	std::deque<PlannerWorkerCreation::Job> jobs;
++	while (!queue_.empty() && inFlight + dispatched < limits.operations) {
++		const auto& next = queue_.front();
++		if (next.request.estimatedBytes > limits.bytes || !cache_.MakeRoom(next.request.estimatedBytes)) {
++			budget_.Complete(next.request.estimatedBytes + next.request.pendingGenerationOverlap);
++			queuedBytes_ -= next.request.estimatedBytes;
++			queuedShaderBytecodeBytes_ -= RetainedShaderBytecodeBytes(next.request);
++			queue_.pop_front(); ++result.compatibilitySkipped;
++			continue;
++		}
++		if (next.request.estimatedBytes > limits.bytes - dispatchedBytes) break;
++		budget_.Complete(next.request.estimatedBytes + next.request.pendingGenerationOverlap);
++		budget_.Update(QueryBudget());
++		if (!budget_.Reserve({next.request.estimatedBytes, next.request.pendingGenerationOverlap})) {
++			queue_.clear(); queuedBytes_ = 0; queuedShaderBytecodeBytes_ = 0;
++			budget_ = MemoryBudgetController(128ull * 1024 * 1024, safetyHeadroom_); break;
++		}
++		auto work = std::move(queue_.front()); queue_.pop_front();
++		dispatchedBytes += work.request.estimatedBytes; queuedBytes_ -= work.request.estimatedBytes;
++		PlannerWorkerCreation::Job job;
++		job.reservedBytes = work.request.estimatedBytes + work.request.pendingGenerationOverlap;
++		job.shaderBytes = RetainedShaderBytecodeBytes(work.request);
++		job.request = std::move(work.request); job.key = std::move(work.key);
++		job.retainedReservation = std::move(work.retainedReservation);
++		job.cpuScratchReservation = std::move(work.cpuScratchReservation);
++		device_->AddRef(); job.device = device_;
++		jobs.push_back(std::move(job)); ++dispatched;
++	}
++	if (!jobs.empty()) {
++		{
++			std::lock_guard<std::mutex> lock(worker.mutex);
++			for (auto& job : jobs) worker.jobs.push_back(std::move(job));
++		}
++		worker.wake.notify_one();
++	}
++	return result;
++}
+ bool PreparationPlanner::Protect(const DeviceResourceKey& key) {
+ 	if (!device_ || !OnOwner()) return false;
+ 	const auto resolved = resolvedKeys_.find(key);
+diff --git a/DirectX11/ModLoading/PreparationPlanner.h b/DirectX11/ModLoading/PreparationPlanner.h
+index 784b57f..779fed5 100644
+--- a/DirectX11/ModLoading/PreparationPlanner.h
++++ b/DirectX11/ModLoading/PreparationPlanner.h
+@@ -120,8 +120,10 @@ bool AttachPreparedAllocation(ID3D11DeviceChild* child, uint64_t bytes,
+ // Conservative encoded metadata estimate; zero means unsupported/malformed.
+ uint64_t EstimateEncodedTextureBytes(const SourceSnapshot& source, GpuPreparationKind kind);
+ struct GpuPumpResult { size_t created = 0, failed = 0, compatibilitySkipped = 0; bool deviceRemoved = false; };
++struct PlannerWorkerCreation;
+ // Render-owner only. DriverConcurrentCreates is diagnostic, never worker-call
+-// authorization. No immediate/deferred-context calls occur here.
++// authorization, except through PumpWorker below (background-reload.patch).
++// No immediate/deferred-context calls occur here.
+ class PreparationPlanner {
+ public:
+ 	explicit PreparationPlanner(uint64_t cacheBytes = 256ull * 1024 * 1024, size_t maxQueued = 32,
+@@ -140,6 +142,18 @@ public:
+ 	// stall inside the driver; adaptive budgets cannot preempt one driver call.
+ 	// Default strict gate executes zero driver calls outside loading windows.
+ 	GpuPumpResult Pump(bool knownLoadingWindow, GpuPumpLimits limits = {});
++	// background-reload.patch (UNBUILT, UNTESTED). Owner-only. Collects objects a
++	// worker finished into the cache, then hands up to limits.operations admitted
++	// requests (within limits.bytes) to one creation worker. The worker calls the
++	// borrowed original device with initial data; it never touches a context.
++	// Available only for a non-SINGLETHREADED device whose driver reports
++	// DriverConcurrentCreates; callers otherwise keep the per-frame Pump.
++	bool WorkerCreationAvailable() const { return device_ && enabled_ && !singleThreaded_ && concurrentCreates_; }
++	GpuPumpResult PumpWorker(GpuPumpLimits limits, std::function<void(const std::function<void()>&)> creationScope);
++	// Free-threaded device only: the same creation as Pump, without queue/cache access.
++	static std::shared_ptr<PreparedGpuObject> CreateDetached(ID3D11Device* device, const GpuPreparationRequest& request,
++		const std::shared_ptr<const LiveGpuAllocationLedger::Lease>& retainedReservation,
++		const std::shared_ptr<const void>& cpuScratchReservation, HRESULT& result);
+ 	std::shared_ptr<PreparedGpuObject> TryAcquire(const DeviceResourceKey& key);
+ 	bool Protect(const DeviceResourceKey& key);
+ 	void Unprotect(const DeviceResourceKey& key);
+@@ -172,6 +186,7 @@ private:
+ 	uint64_t maxShaderBytecodeBytes_, queuedShaderBytecodeBytes_ = 0;
+ 	uint64_t queuedBytes_ = 0, safetyHeadroom_ = 128ull * 1024 * 1024;
+ 	bool singleThreaded_ = false, concurrentCreates_ = false, enabled_ = true;
++	std::shared_ptr<PlannerWorkerCreation> workerCreation_;
+ };
+ }
+ #endif
+diff --git a/DirectX11/ModLoading/Runtime.cpp b/DirectX11/ModLoading/Runtime.cpp
+index b4778ae..e51549f 100644
+--- a/DirectX11/ModLoading/Runtime.cpp
++++ b/DirectX11/ModLoading/Runtime.cpp
+@@ -232,6 +232,8 @@ struct TryGlobalConfigGuard {
+ 	explicit TryGlobalConfigGuard(bool enter = true) : acquired(enter && TryEnterCriticalSection(&G->mCriticalSection) != FALSE) {}
+ 	~TryGlobalConfigGuard() { if (acquired) LeaveCriticalSection(&G->mCriticalSection); }
+ };
++// background-reload.patch: defined in BackgroundReload.inl (same anonymous namespace)
++void DrainIncrementalRelease();
+ struct RuntimeOwnerScope {
+ 	std::unique_lock<std::recursive_mutex>& lock;
+ 	explicit RuntimeOwnerScope(std::unique_lock<std::recursive_mutex>& held) : lock(held) { runtimeBusy = true; }
+@@ -253,6 +255,9 @@ struct RuntimeOwnerScope {
+ 			service.epoch = 0;
+ 			service.plannerGeneration = 0;
+ 			retired.reset();
++			// background-reload.patch: a retirement deferred to this scope (busy runtime or
++			// planner lock held) must free paced old generations too, without another Present
++			DrainIncrementalRelease();
+ 			retiringDevice = false;
+ 		}
+ 		// A foreign Release may request retirement after the final exchange
+@@ -936,6 +941,7 @@ bool SourcesCurrent(const std::shared_ptr<RuntimeState>& state) {
+ }
+ 
+ #include "GeneralConfigPipeline.inl"
++#include "BackgroundReload.inl"
+ 
+ unsigned PreparedWICFlags(const std::vector<uint8_t>& bytes,
+ 	CustomColorSpace colorSpace, bool detectPngSRGB) {
+@@ -1036,6 +1042,10 @@ bool CompleteGraphRetirement(size_t slot, const std::shared_ptr<ConfigGeneration
+ 		discarded = std::move(entry);
+ 		entry = {};
+ 	}
++	// background-reload.patch: with background_reload on, release the retired
++	// graph's COM children a few per frame instead of in one destructor burst.
++	// The slot is already free and no reader pins the graph (use_count == 1).
++	QueueIncrementalRelease(discarded.graph, discarded.device, discarded.owner);
+ 	return true;
+ }
+ void SubmitGraphRetirement(int slot, ConfigGenerationPin previous)
+@@ -1226,6 +1236,8 @@ static void ConfigureRuntimeImpl() {
+ 	GetIniString(L"ModLoading", L"mode", L"off", mode, 64);
+ 	const bool enabledMode = !_wcsicmp(mode, L"adaptive") || !_wcsicmp(mode, L"prepared_profile");
+ 	auto state = enabledMode ? Disposal().Make<RuntimeState>() : std::make_shared<RuntimeState>();
++	DisableBackgroundReload(); // A legacy reload supersedes any background request.
++	DrainIncrementalRelease();
+ 	state->graph = PinConfiguration();
+ 	state->generation = ++Services().nextGeneration;
+ 	state->legacyConfigEpoch = Services().legacyConfigEpoch.load();
+@@ -1303,6 +1315,7 @@ static void ConfigureRuntimeImpl() {
+ 		state->gpuLimits.milliseconds = (std::max)(0.1f, (std::min)(50.0f,
+ 			GetIniFloat(L"ModLoading", L"create_budget_ms", 2.0f, nullptr)));
+ 		state->loadingWindow = GetIniBool(L"ModLoading", L"preparation_loading_window", false, nullptr);
++		ConfigureBackgroundReload(*state);
+ 		if (GetIniBool(L"ModLoading", L"auto_activate", false, nullptr))
+ 			LogOverlayW(LOG_WARNING, L"ModLoading auto_activate is unsupported; use explicit compatible reload\n");
+ 		static int statusModuleAnchor;
+@@ -1526,6 +1539,7 @@ std::shared_ptr<const PreparedAsset> TryGetPreparedAsset(const std::wstring& pat
+ }
+ static void PumpRuntimeImpl(ID3D11Device* device, DeviceEpoch epoch, ID3D11DeviceContext* realContext) {
+ 	PollGraphRetirement(device);
++	PumpIncrementalRelease(device);
+ 	auto state = Current();
+ 	if (!state || !state->enabled.load() || !device || !epoch || runtimeBusy) return;
+ 	// The same global lock protects legacy config destruction. Never retain
+@@ -1578,6 +1592,7 @@ static void PumpRuntimeImpl(ID3D11Device* device, DeviceEpoch epoch, ID3D11Devic
+ 		}
+ 	}
+ 	if (state->generalEnabled) {
++		PumpBackgroundReload(state, epoch);
+ 		PumpGeneralConfiguration(state, device, epoch, realContext);
+ 		return;
+ 	}
+@@ -1735,6 +1750,11 @@ void RetireRuntimeDevice(ID3D11Device* device) {
+ 	// application device release. Keeping one aggregate retirement flag avoids
+ 	// losing a concurrent current-device request behind a probe-device release.
+ 	(void)device;
++	// Paced old generations must not outlive the device, even when they are the only
++	// preparation ownership left (the early return below does not look at them).
++	retiringDevice = true;
++	DrainIncrementalRelease();
++	retiringDevice = false;
+ 	if (!service.planner && !service.refreshPlanner && !service.pendingRefresh && !service.pendingGeneral && service.profileGpuPins.empty()) {
+ 		service.retirementRequested.store(false); return;
+ 	}
+diff --git a/DirectX11/ModLoading/Runtime.h b/DirectX11/ModLoading/Runtime.h
+index a3d0650..f807ce4 100644
+--- a/DirectX11/ModLoading/Runtime.h
++++ b/DirectX11/ModLoading/Runtime.h
+@@ -21,6 +21,15 @@ void ConfigureRuntime();
+ void CancelRuntimeGeneration();
+ void RequestPreparedRefresh();
+ void RequestFullPreparationRescan();
++// background-reload.patch (UNBUILT, UNTESTED). Only an explicit reload key
++// press may become a background reload; call from the key callback.
++void NoteReloadKeyPressed();
++// With [ModLoading] background_reload = 1, keeps the live generation and asks
++// the detached general pipeline for a complete candidate swapped at a frame
++// boundary. False means the caller must run the legacy ReloadConfig now.
++bool TryBeginBackgroundReload(ID3D11Device* realDevice);
++// The separate legacy key: the next ReloadConfig takes the synchronous path.
++void ForceLegacyReload();
+ bool AdmitConfigurationRetirement(ID3D11Device* device);
+ void CancelConfigurationRetirement();
+ void RetainRetiredConfiguration(ConfigGenerationPin generation);
+diff --git a/docs/mod-loading/prepared-loading.md b/docs/mod-loading/prepared-loading.md
+index a5f4a96..b1f2c94 100644
+--- a/docs/mod-loading/prepared-loading.md
++++ b/docs/mod-loading/prepared-loading.md
+@@ -125,6 +125,18 @@ unqualified dynamic expressions retain the last-good generation and report a
+ compatibility reason. F10 remains the explicit full legacy reload/reset route.
+ The selected profile never authorizes a partial configuration publication.
+ 
++Experimental and unverified: `background_reload = 1` (requires
++`general_fast_refresh` and `transactional_activation`) turns an F10 key press
++into an activation request for the latest complete detached candidate. The
++current generation stays live until the candidate publishes at the Present
++frame boundary. Its GPU objects are created by a worker on free-threaded
++devices that report concurrent creates, otherwise by the bounded per-frame
++pump. Retired graphs then release a few objects per frame. Any compatibility
++reason, a timeout, a SINGLETHREADED device, the wipe-user-config variant or
++`legacy_reload_key` (default `ctrl no_alt no_shift VK_F10`) runs the legacy
++reload/reset. Background F10 does not re-run arbitrary initialization or
++re-parse process settings the way the legacy route does.
++
+ The general pipeline is implemented but still requires Windows integration and
+ real-game qualification. Prepared readiness is an internal proof boundary, not
+ evidence of first-correct-frame timing or visual correctness. Incremental parsing
+diff --git a/tests/preparation_capabilities/test_cli.py b/tests/preparation_capabilities/test_cli.py
+index 01161ed..ffc2eb6 100644
+--- a/tests/preparation_capabilities/test_cli.py
++++ b/tests/preparation_capabilities/test_cli.py
+@@ -58,6 +58,7 @@ class PreparationCapabilitiesCliTests(unittest.TestCase):
+                     "full_rescan_key",
+                     "profile_members",
+                     "profile_name",
++                    "background_reload",
+                 ],
+             )
+             self.assertEqual(metadata["package_version"], "1.2.3-rc1")
+diff --git a/tools/preparation-capabilities.py b/tools/preparation-capabilities.py
+index aa8511d..618f862 100644
+--- a/tools/preparation-capabilities.py
++++ b/tools/preparation-capabilities.py
+@@ -46,6 +46,7 @@ def build_metadata(dll_path: Path, package_version: str) -> dict:
+             "full_rescan_key",
+             "profile_members",
+             "profile_name",
++            "background_reload",
+         ],
+         "package_version": normalized_version,
+         "release_stage": "development",

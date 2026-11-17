@@ -4,6 +4,7 @@ on:
     branches: [codex/prepared-mod-launcher]
     paths:
       - 'tools/PreparedLoading/native.patch'
+      - 'tools/PreparedLoading/background-reload.patch'
       - 'tools/PreparedLoading/native-candidate.json'
       - 'tools/PreparedLoading/*.py'
       - 'tools/PreparedLoading/*.ps1'
@@ -106,6 +107,13 @@ jobs:
           git -C native apply --check ../launcher/tools/PreparedLoading/native.patch
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git -C native apply ../launcher/tools/PreparedLoading/native.patch
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Check the background-reload design patch still applies
+        # The unbuilt design patch (including its IniHandler.cpp hunks) must keep applying on top
+        # of native.patch; this checks only, the build below uses native.patch alone
+        shell: pwsh
+        run: |
+          git -C native apply --check ../launcher/tools/PreparedLoading/background-reload.patch
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
         with:

@@ -18,7 +18,7 @@ from core.locale_manager import L, Locale
 
 from core.config.enums import InjectMode, InputDisableMode, LogLevel
 from core.packages.migoto_package import MigotoFork
-from core.prepared_loading import MODES, REFRESH_KEYS, LIMITS, STATUS_FILE, PreparationCapability, validate_limit, read_preparation_status
+from core.prepared_loading import MODES, REFRESH_KEYS, LIMITS, STATUS_FILE, BACKGROUND_RELOAD, PreparationCapability, validate_limit, read_preparation_status
 
 from gui.windows.settings.settings_content_frame import SettingsContentFrame, SettingsSection, SettingsOption, OptionWidget, Condition
 
@@ -218,6 +218,18 @@ class ModelImporterSettingsFrame(SettingsContentFrame):
                             tooltip='Enable only during a known loading window. Disabled by default. '
                                 'GPU cache memory and creation/upload budgets still apply.',
                             enabled_if=Condition(variables=('Vars.Active.Migoto.manage_xxmi_dll_config',), predicate=self.can_prepare),
+                        ),
+                        SettingsOption(
+                            label_text=L('importer_settings_preparation_background_reload', 'Background F10 reload'),
+                            widget=OptionWidget.CHECKBOX,
+                            value_variable='Vars.Active.Migoto.preparation_background_reload',
+                            tooltip=L('importer_settings_preparation_background_reload_tooltip',
+                                'Experimental. F10 prepares the new configuration in the background and switches at a '
+                                'frame boundary while the current mods stay active. Requires transactional and general '
+                                'configuration refresh. Unsupported changes fall back to the normal F10 reload. '
+                                'Disabled by default and only available when the authenticated library declares support.'),
+                            enabled_if=Condition(variables=('Vars.Active.Migoto.manage_xxmi_dll_config',),
+                                predicate=lambda: self.can_prepare_feature(BACKGROUND_RELOAD)),
                         ),
                         SettingsOption(
                             label_text='XXMI libraries recovery',
