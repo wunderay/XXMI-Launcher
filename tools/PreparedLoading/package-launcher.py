@@ -68,6 +68,39 @@ def source_status(root: Path) -> str:
     ], text=True).strip()
 
 
+# Windows refuses to start an executable whose manifest requires administrator rights from a
+# process that is not elevated (ERROR_ELEVATION_REQUIRED)
+ELEVATION_REQUIRED = 740
+REQUIRED_EXECUTION_LEVEL = 'requireAdministrator'
+
+
+def execution_level_from_manifest(manifest: bytes) -> str | None:
+    """The `level` of the manifest's requestedExecutionLevel, or None without one."""
+    match = re.search(rb'<(?:\w+:)?requestedExecutionLevel\b[^>]*\blevel\s*=\s*["\']([A-Za-z]+)["\']', manifest)
+    return match.group(1).decode('ascii') if match else None
+
+
+def requested_execution_level(executable: Path) -> str | None:
+    """The UAC execution level the executable's embedded manifest requests (None without one)."""
+    import pefile  # Build environment only; the version-resource step runs without it
+    pe = pefile.PE(str(executable), fast_load=True)
+    try:
+        pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_RESOURCE']])
+        resources = getattr(pe, 'DIRECTORY_ENTRY_RESOURCE', None)
+        for resource_type in resources.entries if resources else []:
+            if resource_type.id != pefile.RESOURCE_TYPE['RT_MANIFEST']:
+                continue
+            for name in resource_type.directory.entries:
+                for language in name.directory.entries:
+                    data = language.data.struct
+                    level = execution_level_from_manifest(pe.get_data(data.OffsetToData, data.Size))
+                    if level:
+                        return level
+        return None
+    finally:
+        pe.close()
+
+
 def stage_payload(root: Path, output: Path) -> Path:
     frozen = output / 'build/dist/XXMI Launcher'
     if not (frozen / 'XXMI Launcher.exe').is_file():
@@ -102,6 +135,11 @@ def main() -> None:
     (output / 'LAUNCHER-PACKAGING.json').unlink(missing_ok=True)
     (output / 'LAUNCHER-SELF-TEST.json').unlink(missing_ok=True)
     bundle = stage_payload(root, output)
+    # The launcher must run elevated to inject into the game; never ship a build that does not ask
+    execution_level = requested_execution_level(bundle / 'Resources/Bin/XXMI Launcher.exe')
+    if execution_level != REQUIRED_EXECUTION_LEVEL:
+        raise RuntimeError(f'XXMI Launcher.exe requests execution level {execution_level!r}, '
+                           f'not {REQUIRED_EXECUTION_LEVEL!r}')
     status = source_status(root)
     manifest = {
         'format': 1,
@@ -111,6 +149,7 @@ def main() -> None:
         'source_has_local_changes': bool(status),
         'source_input_status': status,
         'requirements_sha256': digest(root / 'requirements.txt'),
+        'requested_execution_level': execution_level,
         'build_dependencies': subprocess.check_output([os.sys.executable, '-m', 'pip', 'freeze'], text=True).splitlines(),
         'qualification': 'Development packaging only; no real game compatibility or performance qualification.',
         'files': file_hashes(bundle),
@@ -132,6 +171,11 @@ def main() -> None:
         try:
             completed = subprocess.run([str(extracted / 'Resources/Bin/XXMI Launcher.exe'), '--self-test'],
                                        cwd=smoke, env=environment, check=False, timeout=120)
+        except OSError as error:
+            if getattr(error, 'winerror', None) == ELEVATION_REQUIRED:
+                raise RuntimeError('XXMI Launcher.exe requires administrator rights; run the build from an '
+                                   'elevated shell so its self-test can start') from error
+            raise
         except subprocess.TimeoutExpired as error:
             result = {'format': 1, 'passed': False, 'error': 'Frozen self-test timed out after 120 seconds'}
             (output / 'LAUNCHER-SELF-TEST.json').write_text(json.dumps(result, indent=4) + '\n', encoding='utf-8')
