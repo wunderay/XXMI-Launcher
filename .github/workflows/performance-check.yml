@@ -38,13 +38,22 @@ jobs:
           echo "Base: $base"
           echo "Base: \`$base\`" >> "$GITHUB_STEP_SUMMARY"
           git worktree add --detach "$RUNNER_TEMP/base" "$base"
-      - name: Install portable dependencies of base and head
-        # Everything both versions import except Windows-only packages, the Windows PyAV wheel URL
-        # and the build tool; PyAV comes from PyPI for Linux.
+      - name: Install each version's portable dependencies in its own environment
+        # Each side runs with exactly its own pins, so a pull request that changes a dependency is
+        # measured against the base's versions. Windows-only packages, the Windows PyAV wheel URL
+        # and the build tool are left out; PyAV comes from PyPI for Linux.
         run: |
-          # (requirements.txt has no trailing newline: separate the files explicitly)
-          { cat requirements.txt; echo; cat "$RUNNER_TEMP/base/requirements.txt"; echo; } |
-            grep -viE '^(pywin32|wmi|winshell|nuitka)==|^av @' | sort -u > "$RUNNER_TEMP/perf-requirements.txt"
-          python -m pip install --disable-pip-version-check -r "$RUNNER_TEMP/perf-requirements.txt" av==19.0.1
+          for side in base head; do
+            if [ "$side" = base ]; then tree="$RUNNER_TEMP/base"; else tree=.; fi
+            python -m venv "$RUNNER_TEMP/venv-$side"
+            # (requirements.txt has no trailing newline: add one before filtering)
+            { cat "$tree/requirements.txt"; echo; } |
+              grep -viE '^(pywin32|wmi|winshell|nuitka)==|^av @' > "$RUNNER_TEMP/requirements-$side.txt"
+            "$RUNNER_TEMP/venv-$side/bin/python" -m pip install --disable-pip-version-check \
+              -r "$RUNNER_TEMP/requirements-$side.txt" av==19.0.1
+          done
       - name: Compare base and head
-        run: python tools/perf/compare.py --base "$RUNNER_TEMP/base/src/xxmi_launcher" --head src/xxmi_launcher --runs 7
+        run: >-
+          python tools/perf/compare.py --base "$RUNNER_TEMP/base/src/xxmi_launcher" --head src/xxmi_launcher
+          --base-python "$RUNNER_TEMP/venv-base/bin/python" --head-python "$RUNNER_TEMP/venv-head/bin/python"
+          --runs 7

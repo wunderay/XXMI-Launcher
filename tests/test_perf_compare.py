@@ -41,11 +41,16 @@ class InterleavingTests(unittest.TestCase):
     def test_rounds_alternate_order_after_a_warm_up_and_keep_each_best(self):
         calls, values = [], {'base': iter([9, 5, 7, 3, 4]), 'head': iter([9, 6, 2, 8, 5])}
 
-        def fake_measure(src, mods, game_mods, runs):
+        def fake_measure(src, mods, game_mods, runs, python=None):
             calls.append((src, runs))
+            pythons.append((src, python))
             return {'m': next(values[src])}
 
-        base, head = compare.measure_interleaved('base', 'head', None, None, 7, 4, fake_measure)
+        pythons = []
+        base, head = compare.measure_interleaved('base', 'head', None, None, 7, 4, fake_measure,
+                                                 base_python='py-base', head_python='py-head')
+        self.assertEqual({src: {p for s2, p in pythons if s2 == src} for src in ('base', 'head')},
+                         {'base': {'py-base'}, 'head': {'py-head'}})  # each side always runs its own interpreter
         self.assertEqual([src for src, _ in calls], ['base', 'head', 'base', 'head', 'head', 'base',
                                                      'base', 'head', 'head', 'base'])
         self.assertEqual([runs for _, runs in calls[:2]], [1, 1])  # warm-up is cheap and unmeasured
@@ -69,6 +74,20 @@ class ExitStatusTests(unittest.TestCase):
         self.assertEqual(self.run_main(base, dict(base)), 0)
         self.assertEqual(self.run_main(base, dict(base, gui_open_repeat_s=200.0)), 1)
 
+    def test_each_versions_interpreter_reaches_the_measurement(self):
+        base = {key: 100.0 for key in compare.METRICS}
+        with mock.patch.object(compare.shutil, 'which', return_value='/usr/bin/tool'), \
+                mock.patch.object(compare.subprocess, 'run'), \
+                mock.patch.object(compare, 'measure_interleaved', return_value=(base, dict(base))) as interleaved, \
+                mock.patch.object(sys, 'argv', ['compare.py', '--base', 'b', '--head', 'h',
+                                                '--base-python', '/venvs/base/bin/python',
+                                                '--head-python', '/venvs/head/bin/python']), \
+                mock.patch.dict(compare.os.environ, {}, clear=False), mock.patch('builtins.print'):
+            compare.os.environ.pop('GITHUB_STEP_SUMMARY', None)
+            self.assertEqual(compare.main(), 0)
+        self.assertEqual(str(interleaved.call_args.kwargs['base_python']), '/venvs/base/bin/python')
+        self.assertEqual(str(interleaved.call_args.kwargs['head_python']), '/venvs/head/bin/python')
+
     def test_a_failing_benchmark_raises_instead_of_passing(self):
         failed = SimpleNamespace(returncode=1, stdout='{"x": 1}', stderr='boom')
         with mock.patch.object(compare.subprocess, 'run', return_value=failed):
@@ -79,7 +98,7 @@ class ExitStatusTests(unittest.TestCase):
 class MeasureCommandTests(unittest.TestCase):
     gui = {'gui_open_s': 1, 'cpu_s': 1, 'max_rss_mb': 1, 'rss_mb': 1, 'image_resize_calls': 1}
 
-    def measure(self, src):
+    def measure(self, src, python=None):
         calls = []
 
         def fake_run_json(command, env=None, xvfb=False):
@@ -95,7 +114,7 @@ class MeasureCommandTests(unittest.TestCase):
             return {'stable': {'body_bytes': 1, 'counted_requests': 0}}
 
         with mock.patch.object(compare, 'run_json', fake_run_json):
-            compare.measure(src, Path('/mods'), Path('/game'), 3)
+            compare.measure(src, Path('/mods'), Path('/game'), 3, python)
         return {Path(command[1]).name: (command, env) for command, env in calls}
 
     def test_each_version_starts_with_its_own_themes_and_locale(self):
@@ -103,6 +122,18 @@ class MeasureCommandTests(unittest.TestCase):
         gui_command, _ = self.measure(src)['bench_gui_startup.py']
         self.assertEqual(gui_command[gui_command.index('--assets') + 1], str(Path('/trees/base')))
         self.assertEqual(gui_command[gui_command.index('--src') + 1], str(src))
+
+    def test_without_an_interpreter_every_benchmark_uses_this_one(self):
+        calls = self.measure(Path('/trees/head/src/xxmi_launcher'))
+        for name, (command, _) in calls.items():
+            with self.subTest(benchmark=name):
+                self.assertEqual(command[0], sys.executable)
+
+    def test_each_benchmark_runs_with_the_versions_interpreter(self):
+        calls = self.measure(Path('/trees/head/src/xxmi_launcher'), python='/venvs/head/bin/python')
+        for name, (command, _) in calls.items():
+            with self.subTest(benchmark=name):
+                self.assertEqual(command[0], '/venvs/head/bin/python')
 
     def test_each_benchmark_imports_the_version_it_measures(self):
         src = Path('/trees/head/src/xxmi_launcher')

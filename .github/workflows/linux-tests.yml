@@ -22,7 +22,7 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
       # Pillow (pinned as in requirements.txt) lets the image-cache tests run here
-      - run: python -m pip install cryptography psutil pillow==12.3.0
+      - run: python -m pip install cryptography psutil pillow==13.0.0
       - name: Run Linux-runnable tests
         env:
           PYTHONPATH: src/xxmi_launcher
