@@ -68,7 +68,9 @@ The staging smoke test copies the exact payload to a separate path containing
 spaces and runs its executable with only Windows System32 on PATH. It verifies
 the PE version, every packaged file, bundled native dependencies, localization,
 images and hidden CTk/Tkhtml widgets. It does not start Application, access the
-network, invoke Windows Installer, launch a game or request elevation. Additional
+network, invoke Windows Installer or launch a game. The executable's manifest requests
+administrator rights (`requireAdministrator`), so the build and this smoke test run from an
+elevated shell, and the packager refuses a build without that request. Additional
 Windows tests construct the actual Importer settings and normal update buttons.
 
 ## Remaining release prerequisites

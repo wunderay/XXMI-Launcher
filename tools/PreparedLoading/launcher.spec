@@ -1,4 +1,5 @@
-'''Windows x64 directory bundle; deliberately no UAC elevation request.'''
+'''Windows x64 directory bundle. The executable requests administrator rights (UAC): the launcher
+writes into the game process to load XXMI, which needs at least the game's privileges.'''
 from pathlib import Path
 import sys
 import os
@@ -42,7 +43,7 @@ exe = EXE(
     debug=False,
     strip=False,
     upx=False,
-    uac_admin=False,
+    uac_admin=True,
     icon=str(root / 'Themes/Default/window-icon.ico'),
     version=os.environ.get('XXMI_LAUNCHER_VERSION_RESOURCE',
                            str(root / 'tools/PreparedLoading/launcher-version.txt')),

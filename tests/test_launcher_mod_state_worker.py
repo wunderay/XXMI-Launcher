@@ -60,6 +60,13 @@ sys.stdin.readline()
 @unittest.skipUnless(sys.platform == 'win32' and bool(BUNDLE),
                      'Requires Windows and explicit XXMI_MOD_STATE_TEST_BUNDLE build')
 class PackagedModStateWorkerTests(unittest.TestCase):
+    def setUp(self):
+        import ctypes
+        # The packaged launcher requests administrator rights: Windows refuses to start it from
+        # an unelevated shell (error 740), which would otherwise surface deep inside the harness
+        if not ctypes.windll.shell32.IsUserAnAdmin():
+            self.fail('The packaged launcher requires administrator rights: run these tests elevated')
+
     def remaining(self, ceiling=40):
         available = self.deadline - time.monotonic()
         self.assertGreater(available, 0, 'Packaged snapshot smoke exceeded its bounded deadline')
