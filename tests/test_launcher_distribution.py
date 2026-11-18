@@ -210,6 +210,8 @@ class ElevationTests(unittest.TestCase):
                     self.ran_self_test = run.called
                     built = bundle / 'LAUNCHER-BUILD.json'
                     self.build_manifest = built.read_text(encoding='utf-8') if built.is_file() else None
+                    receipt = output / 'LAUNCHER-SELF-TEST.json'
+                    self.self_test_receipt = receipt.read_text(encoding='utf-8') if receipt.is_file() else None
 
     def test_a_build_without_the_administrator_request_is_rejected(self):
         for level in ('asInvoker', 'highestAvailable', None):
@@ -219,11 +221,39 @@ class ElevationTests(unittest.TestCase):
 
     def test_an_unelevated_build_gets_a_clear_error(self):
         error = OSError('The requested operation requires elevation')
-        error.winerror = packager.ELEVATION_REQUIRED
+        error.winerror = 740  # ERROR_ELEVATION_REQUIRED
         with self.assertRaisesRegex(RuntimeError, 'elevated shell'):
             self.run_packager('requireAdministrator', self_test_error=error)
         self.assertTrue(self.ran_self_test)
         self.assertIn('"requested_execution_level": "requireAdministrator"', self.build_manifest)
+        # The staged payload is left behind, so the failure must be on record
+        self.assertIsNotNone(self.self_test_receipt)
+        self.assertIn('"passed": false', self.self_test_receipt)
+        self.assertIn('elevated shell', self.self_test_receipt)
+
+    def run_version_step(self, elevated, require):
+        with tempfile.TemporaryDirectory() as temporary:
+            resource = Path(temporary) / 'version.txt'
+            argv = ['package-launcher.py', '--version', '2.5.2', '--version-resource', str(resource)]
+            if require:
+                argv.append('--require-elevation')
+            with patch.object(sys, 'argv', argv), patch.object(packager, 'is_elevated', return_value=elevated), \
+                    patch('sys.stderr'):
+                try:
+                    packager.main()
+                    return 0, resource.is_file()
+                except SystemExit as stop:
+                    return stop.code, resource.is_file()
+
+    def test_an_unelevated_build_stops_before_freezing(self):
+        self.assertEqual(self.run_version_step(elevated=False, require=True), (1, False))
+        self.assertEqual(self.run_version_step(elevated=True, require=True), (0, True))
+        self.assertEqual(self.run_version_step(elevated=False, require=False), (0, True))
+
+    def test_the_build_script_asks_for_the_elevation_check(self):
+        script = (ROOT / 'tools/PreparedLoading/build-launcher.ps1').read_text(encoding='utf-8')
+        line = next(line for line in script.splitlines() if '--version-resource' in line)
+        self.assertIn('--require-elevation', line)
 
 
 if __name__ == '__main__':

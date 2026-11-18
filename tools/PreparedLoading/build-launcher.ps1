@@ -15,8 +15,9 @@ try {
     & $Python -c 'import struct, sys; assert sys.version_info[:2] == (3, 12) and struct.calcsize("P") == 8, "Python 3.12 x64 required"'
     if ($LASTEXITCODE -ne 0) { throw 'Unsupported build interpreter.' }
     $versionResource = Join-Path $build 'launcher-version.txt'
-    & $Python (Join-Path $PSScriptRoot 'package-launcher.py') --version $Version --version-resource $versionResource
-    if ($LASTEXITCODE -ne 0) { throw 'Invalid launcher version or resource generation failed.' }
+    # The built launcher requires administrator rights, so its self-test does too: stop before freezing
+    & $Python (Join-Path $PSScriptRoot 'package-launcher.py') --version $Version --version-resource $versionResource --require-elevation
+    if ($LASTEXITCODE -ne 0) { throw 'Not elevated, invalid launcher version or resource generation failed.' }
     $env:XXMI_LAUNCHER_VERSION_RESOURCE = $versionResource
     $venv = Join-Path $build 'venv'
     & $Python -m venv $venv

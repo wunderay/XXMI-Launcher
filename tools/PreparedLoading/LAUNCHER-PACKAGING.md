@@ -31,7 +31,10 @@ update behavior or package trust is changed. The build contains no prepared-load
 native DLL and does not establish real game compatibility or performance.
 Normal application startup can access the network and write its configuration.
 
-To rebuild, use Windows x64 with Python 3.12 x64 from the repository root:
+To rebuild, use Windows x64 with Python 3.12 x64 from the repository root, in an elevated
+(administrator) shell. The executable requests administrator rights, because the launcher writes
+into the game process, so Windows only starts it, and so its staging self-test, from an elevated
+process; the build stops at once otherwise.
 
 ```powershell
 ./tools/PreparedLoading/build-launcher.ps1 -OutputDirectory ./work/launcher-package
